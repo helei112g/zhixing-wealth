@@ -15,6 +15,9 @@ ROOT_FILES = {'README.md','AGENTS.md','.gitignore','LICENSE','requirements.txt',
 AREAS = {'backend': {'.py'}, 'tests': {'.py'}, 'scripts': {'.py','.cjs'}, 'native': {'.swift'}, 'docs': {'.md'},
          'frontend/src': {'.ts','.tsx','.css'}, 'migrations': {'.py'}, '.github/workflows': {'.yml'}}
 STATIC = {'frontend/public/zhixing-logo.png', '.githooks/pre-commit', '.githooks/pre-push'}
+SHOWCASE_IMAGES = {f'docs/images/{name}.jpg' for name in (
+    'assets-overview', 'asset-trends', 'portfolio-overview', 'holdings', 'investment-notes')}
+STATIC |= SHOWCASE_IMAGES | {'.github/pull_request_template.md'}
 SKILLS = {'zhixing-assets', 'zhixing-portfolios', 'zhixing-notes'}
 STATIC |= {f'.agents/skills/{name}/{part}' for name in SKILLS for part in ('SKILL.md','agents/openai.yaml')}
 FRONTEND = {'package.json','package-lock.json','index.html','tsconfig.json','tsconfig.app.json','tsconfig.node.json','vite.config.ts'}
@@ -53,6 +56,10 @@ def public_metadata(info):
 
 
 def sensitive(relative, data):
+    if relative in SHOWCASE_IMAGES:
+        # Only these reviewed, synthetic screenshots may be published. Other
+        # image paths remain outside the allowlist; bytes cannot prove privacy.
+        return not (data.startswith(b'\xff\xd8\xff') and data.endswith(b'\xff\xd9')) or len(data) > 2 * 1024 * 1024
     if relative == 'frontend/public/zhixing-logo.png':
         return not data.startswith(b'\x89PNG\r\n\x1a\n') or len(data) > 4 * 1024 * 1024
     content = data.decode('utf-8')

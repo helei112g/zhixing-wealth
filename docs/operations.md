@@ -45,8 +45,8 @@ macOS 在源码目录执行 `launchers --environment dev`（完整命令前缀�
 
 ## 准备和发布
 
-1. 在开发目录完成修改和版本号调整。有Git时提交干净版本；无Git时固定源码清单哈希。
-2. 执行 `.venv/bin/python scripts/manage.py prepare`。它按源码白名单生成新版本，创建独立虚拟环境、安装锁定依赖，执行回归、构建和浏览器验收；正式实例继续运行。
+1. 按 [开发与审阅流程](development.md) 在需求分支完成开发、测试并提交 MR / PR。用户 review 通过、合并到 `master` 后，切回干净且跟踪 `origin/master` 的 master，执行 `git pull --ff-only`。不从需求分支部署正式环境。无 Git 源码包需核对来自已合并 master / 正式版本并固定源码清单哈希。
+2. 从 master 执行 `.venv/bin/python scripts/manage.py prepare`。它核对本地 HEAD、跟踪引用及远端实时 master 一致，按源码白名单生成新版本，创建独立虚拟环境、安装锁定依赖，重新执行完整回归、构建和浏览器验收；正式实例继续运行。准备前后均核对来源，记录在 `release.json.provenance`。
 3. 查看验证结果和 `release.json`，确认源码标识、数据库版本和迁移内容；有数据库变化时先用最新正式备份在私人副本演练。候选版本源码或构建改变后必须重新准备。
 4. 在安装／升级授权范围内执行 `.venv/bin/python scripts/manage.py apply VERSION_ID`。VERSION_ID 使用prepare返回的完整标识，例如 `v0.8.0-源码哈希`。管理工具复核文件，停止写入及同步，用最新正式数据做完整备份，在隔离副本演练并核验后再迁移正式库；切换后只读验收并保存升级后保护备份，通过才开放业务。已有完整授权不重复确认；只要求准备版本时不擅自apply。
 5. 查看 `.venv/bin/python scripts/manage.py status --environment production`，核对实际环境和版本。macOS 同时更新正式启动/停止应用及图标；若仅入口更新失败，服务保持已验证的新版本，并显示独立警告，可重新执行 `launchers --environment production` 修复。
@@ -94,7 +94,7 @@ Alembic迁移位于 `migrations/versions/`，支持schema1–6逐步迁移到sch
 
 源码目录是唯一仓库根。公开内容为代码、运行Logo、合成测试和通用文档；整个工作区和任何真实数据都不进入Git。准备本地版本不要求先公开。
 
-将来经授权初始化仓库后，可设置 `git config core.hooksPath .githooks` 启用提交/推送检查。GitHub CI执行合成测试、构建和源码检查。首次推送仍须人工核对所有待提交内容和历史；忽略规则及扫描器不能证明绝无私人信息。
+设置 `git config core.hooksPath .githooks` 启用提交/推送检查：主分支禁止直接提交和推送，需求分支检查公开源码边界。GitHub CI 执行合成测试、构建和源码检查。待提交内容、合成截图和历史仍须人工核对；忽略规则及扫描器不能证明绝无私人信息。Hooks 不替代服务端分支保护或人工 review。
 
 作者：Leo · 2026.10.28
 

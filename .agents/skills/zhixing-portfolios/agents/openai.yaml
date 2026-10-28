@@ -1,0 +1,4 @@
+interface:
+  display_name: "知行财富组合记账"
+  short_description: "查询和维护投资组合、买卖分红流水与投入计划，保持组合隔离和修订校验"
+  default_prompt: "使用 $zhixing-portfolios 按我的要求查询或维护知行财富的本机账本。"

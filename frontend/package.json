@@ -1,0 +1,32 @@
+{
+  "name": "zhixing-wealth",
+  "version": "0.8.4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test:notes": "node ../scripts/test_note_markdown.cjs",
+    "test:amounts": "node ../scripts/test_amount_display.cjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "playwright": "1.56.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.0"
+  },
+  "license": "Apache-2.0",
+  "overrides": {
+    "@reduxjs/toolkit": "2.11.2",
+    "@standard-schema/utils": "0.3.0"
+  }
+}

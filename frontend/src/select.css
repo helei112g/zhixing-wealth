@@ -1,0 +1,82 @@
+/* Shared single-choice control. Keep the native select for keyboard, forms and
+   system pickers; reserve a separate area so long labels never hit the chevron. */
+select:not([multiple]):not([size]),
+select:not([multiple])[size="1"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: var(--select-height, 42px);
+  padding: 8px 46px 8px 12px;
+  border: 1px solid #d6dfe9;
+  border-radius: 8px;
+  background-color: var(--panel);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23f0f4f8'/%3E%3Cpath d='m8 10 4 4 4-4' fill='none' stroke='%2365758a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 24px 24px;
+  color: var(--text);
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+select:not([multiple]):not([size]):enabled:hover,
+select:not([multiple])[size="1"]:enabled:hover {
+  border-color: #aebfd2;
+  background-color: #fcfdff;
+}
+
+select:not([multiple]):not([size]):focus,
+select:not([multiple])[size="1"]:focus {
+  border-color: var(--blue);
+  outline: 2px solid #afc4df;
+  outline-offset: 2px;
+}
+
+select:not([multiple]):not([size]):disabled,
+select:not([multiple])[size="1"]:disabled {
+  color: var(--muted);
+  border-color: var(--line);
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23e8edf3'/%3E%3Cpath d='m8 10 4 4 4-4' fill='none' stroke='%2396a3b3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  cursor: not-allowed;
+}
+
+select option, select optgroup {
+  color: var(--text);
+  background-color: var(--panel);
+}
+
+.transaction-filters, .ranking-filters, .trade-switch { --select-height: 36px; }
+.transaction-pagination { --select-height: 34px; }
+
+@media (max-width: 700px) {
+  select:not([multiple]):not([size]),
+  select:not([multiple])[size="1"] {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  select { transition: none !important; }
+}
+
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]),
+  select:not([multiple])[size="1"] {
+    -webkit-appearance: auto;
+    appearance: auto;
+    background-image: none;
+    padding-right: 12px;
+    border-color: ButtonText;
+  }
+  select:not([multiple]):not([size]):disabled,
+  select:not([multiple])[size="1"]:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+  select:not([multiple]):not([size]):focus,
+  select:not([multiple])[size="1"]:focus { outline-color: Highlight; }
+}

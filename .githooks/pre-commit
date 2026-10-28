@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec .venv/bin/python scripts/source_check.py

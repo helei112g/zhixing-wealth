@@ -1,0 +1,13 @@
+import {money,Obj,percent} from './api';
+const palette=['#7db8ed','#83d5be','#f3bf77','#bba3e8','#7ed2df','#f29f9b','#c4d685','#b5c5e8'];
+const named:Record<string,string>={'现金':'#a8d8f4','剩余可投金额':'#a8d8f4','权益':'#7db8ed','债券':'#83d5be','未分类':'#e7cf99','A股':'#7db8ed','美股':'#83d5be','港股':'#bba3e8','海外其他':'#f3bf77','应收及在途':'#7ed2df'};
+function sliceColors(slices:Obj[]){const colors=new Map<string,string>(),used=new Set<string>();for(const g of slices){if(named[g.label]){colors.set(g.key,named[g.label]);used.add(named[g.label]);}}const free=palette.filter(c=>!used.has(c));let n=0;for(const g of slices.slice().sort((a,b)=>a.label.localeCompare(b.label))){if(!colors.has(g.key)){colors.set(g.key,free[n]||'hsl('+((n*137.508)%360).toFixed(1)+' 58% 74%)');n++;}}return colors;}
+export function TagPie({data,onGroup}:Obj){
+ const slices=(data.pie_groups||[]).filter((g:Obj)=>Number(g.value)>0).map((g:Obj)=>({...g,chartValue:Number(g.value)}));
+ if(!data.pie_eligible||!slices.length)return <div className="pie-unavailable"><b>暂不绘制饼图</b><p>{data.incomplete?'部分估值缺失，补齐数据后展示完整构成。':Number(data.total_assets)<=0?'暂无正值资产可展示。':'存在负值资产，饼图无法准确表达；下表保留实际金额。'}</p></div>;
+ const colors=sliceColors(slices),total=slices.reduce((sum:number,g:Obj)=>sum+g.chartValue,0),cx=160,cy=160,r=146;
+ let angle=-Math.PI/2;const arcs=slices.map((g:Obj)=>{const start=angle;angle+=g.chartValue/total*2*Math.PI;return{...g,start,end:angle};});
+ return <div className="tag-pie-block"><div className="tag-pie-chart" data-pie-slices={slices.length}><svg viewBox="0 0 320 320" role="img" aria-label="总资产构成饼图，完整占比和金额见旁侧图例">
+ {arcs.map((g:Obj)=>{const x1=cx+r*Math.cos(g.start),y1=cy+r*Math.sin(g.start),x2=cx+r*Math.cos(g.end),y2=cy+r*Math.sin(g.end);return <g key={g.key} className="tag-pie-slice" role="button" tabIndex={0} aria-label={g.label+' '+percent(g.weight)} onClick={()=>onGroup(g)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onGroup(g);}}}><title>{g.label} · {percent(g.weight)} · {money(g.value)} CNY</title>{arcs.length===1?<circle cx={cx} cy={cy} r={r} fill={colors.get(g.key)}/>:<path d={`M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${g.end-g.start>Math.PI?1:0} 1 ${x2} ${y2} Z`} fill={colors.get(g.key)} stroke="#fff" strokeWidth={2}/>}</g>;})}
+ </svg></div><div className="tag-pie-legend">{slices.map((g:Obj)=><button type="button" className="pie-legend-item" key={g.key} onClick={()=>onGroup(g)} aria-label={'查看'+g.label+'组成'}><i style={{background:colors.get(g.key)}}/><span className="legend-name">{g.label}<small>{money(g.value)} CNY</small></span><b>{percent(g.weight)}</b></button>)}</div><small className="pie-hint muted">点击扇区或图例查看持仓组成；图例保留全部分类、占比与金额。</small></div>;
+}

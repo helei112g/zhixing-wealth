@@ -1,0 +1,47 @@
+.venv/
+node_modules/
+data/
+.runtime/
+.cache/
+work/
+__pycache__/
+*.pyc
+frontend/dist/
+.DS_Store
+# Local ledgers, exports, backups and logs are never source files (at any depth).
+*.sqlite*
+*.db
+*.db-*
+*.csv
+*.tsv
+*.xlsx
+*.zip
+*.tar
+*.tar.gz
+*.log
+*.pid
+*.lock.local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+coverage/
+.pytest_cache/
+playwright-report/
+test-results/
+*.tsbuildinfo
+exports/
+backups/
+screenshots/
+*.bak
+*.sql
+
+# Markdown investment notes are private data, including external data directories.
+notes/
+
+# macOS launchers are generated locally from public source and logo.
+*.app/
+native-build/

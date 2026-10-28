@@ -1,0 +1,4 @@
+interface:
+  display_name: "知行财富资产管理"
+  short_description: "查询和维护资产快照、负债、保险、收入与组合关联，保留版本及精确金额"
+  default_prompt: "使用 $zhixing-assets 按我的要求查询或维护知行财富的本机账本。"

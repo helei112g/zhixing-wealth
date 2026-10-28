@@ -1,0 +1,38 @@
+import {useState} from 'react';
+import {api, money, readableMoney, Obj} from './api';
+import {Button, Empty, ErrorBox, Field, Notice, Panel} from './components';
+
+export const ledgerCategories:Obj={cash:'现金',fixed:'固定资产',investment:'投资理财',receivable:'应收款',debt:'负债',insurance:'保险'};
+
+export function SnapshotEditor({row,catalog,today,onSaved}:Obj){
+ const[amount,A]=useState(String(row.draftAmount??row.household_amount??'')),[date,D]=useState(row.draftDate||today),[preview,P]=useState<Obj|null>(null),[error,E]=useState(''),[busy,B]=useState(false),[revision,R]=useState(catalog.revision);
+ const item=catalog.items.find((i:Obj)=>i.id===row.id),first=item?.versions.reduce((a:string,v:Obj)=>a<v.effective_on?a:v.effective_on,today);
+ const extend=date<first,canExtend=['cash','fixed','investment','receivable'].includes(row.category);
+ async function save(){B(true);E('');try{
+   if(amount==='')throw Error('请填写这一天的余额，金额为零时请填 0');
+   if(!date||date>today||(!canExtend&&extend))throw Error('请选择项目有效期内的金额日期');
+   const command={operation:'valuation',payload:{item_id:row.id,effective_on:date,household_amount:amount,...(extend?{extend_start:true}:{})},expected_revision:preview?.revision??revision};
+   const result=await api('/family/'+(preview?'commands':'preview'),command);
+   if(preview){P(null);await onSaved();}else P(result);
+ }catch(e:any){E(e.message);if(e.status===409){P(null);R((await api('/family/catalog')).revision);}}finally{B(false);}}
+ return <div className="snapshot-editor"><p className="muted small">填写这一天的实际余额，不是增加或减少的金额。补录旧日期会保留后来的余额；同一天再次保存以最后一次为准。</p><div className="snapshot-fields"><Field label={'余额 · '+row.currency+'（必填）'}><input type="number" min="0" step="any" value={amount} onChange={e=>{A(e.target.value);P(null);}}/></Field><Field label="金额日期"><input type="date" value={date} min={canExtend?undefined:first} max={today} onChange={e=>{D(e.target.value);P(null);}}/></Field></div>
+ {extend&&canExtend&&<Notice>将补录这个项目的第一笔余额，统计起始日期会提前到 {date}。已有金额与资料保留。</Notice>}
+ <ErrorBox error={error}/>{preview&&<div className="family-preview"><b>{date} 的余额：{money(amount)} {row.currency}</b><div>{date<row.source_date?'这笔补录不会覆盖之后日期的余额。':'保存后此项目按这笔余额统计。'}</div></div>}
+ <div className="snapshot-actions"><Button primary disabled={busy} onClick={save}>{preview?'确认保存':'检查余额并继续'}</Button></div></div>;
+}
+
+export function FamilyLedger({data,catalog,today,filter,setFilter,selected,setSelected,onEdit,onUnlink,openPortfolio,onReload}:Obj){
+ const items:Obj[]=data.items,chosen=items.find(r=>r.id===selected),visible=items.filter(r=>filter==='all'||r.category===filter);
+ function category(k:string){setFilter(k);setSelected('');}
+ function select(r:Obj){setFilter(r.category);setSelected(r.id);}
+ const debt=data.debt_summary;
+ const history=(catalog.values||[]).map((v:Obj,i:number)=>({...v,index:i})).filter((v:Obj)=>v.item_id===chosen?.id).sort((a:Obj,b:Obj)=>b.effective_on.localeCompare(a.effective_on)||b.index-a.index);
+ const latestDates=new Set<string>();
+ return <div className="family-ledger-layout"><nav className="ledger-tree" aria-label="台账分类与项目"><button className={filter==='all'?'active':''} aria-pressed={filter==='all'} onClick={()=>category('all')}>全部项目 <small>{items.length}</small></button>{Object.entries(ledgerCategories).map(([key,name])=>{const group=items.filter(r=>r.category===key);return <div key={key}><button className={filter===key&&!chosen?'active':''} aria-label={'分类：'+name} aria-pressed={filter===key&&!chosen} onClick={()=>category(key)}>{String(name)} <small>{group.length}</small></button><div className="ledger-projects">{group.map(r=><button key={r.id} title={r.name} aria-label={'项目：'+r.name} aria-current={selected===r.id?'true':undefined} onClick={()=>select(r)}>{r.name}{r.linked&&<small>自动</small>}</button>)}</div></div>;})}</nav>
+ <div className="ledger-content">
+ {filter==='debt'&&<Panel title="负债概况" className="ledger-debt-summary"><div className="ledger-totals"><div><span>总负债 · CNY</span><strong>{money(debt.total_debt)}</strong></div><div><span>本月应还 · CNY</span><strong>{money(debt.month_due)}</strong></div><div><span>现金可覆盖本月还款</span><strong>{debt.cash_coverage!==null?money(debt.cash_coverage,1)+' 倍':debt.month_due==='0'?'本月无需还款':'待补充'}</strong><small>可用现金 {money(debt.available_cash)} CNY</small></div></div><p className="muted small">{debt.month} 整月计划金额，包含本月已过日期；仅用于估算，不代表实际扣款。现金覆盖＝可用现金 ÷ 本月应还。</p>{(debt.unconfigured.length>0||debt.missing_fx)&&<Notice>已有计划合计 {money(debt.known_month_due)} CNY。{debt.unconfigured.length>0&&debt.unconfigured.length+' 项负债尚未设置本月还款，完整金额与覆盖倍数暂不计算。'}{debt.missing_fx&&'缺少换算汇率，请在全局设置更新。'}</Notice>}</Panel>}
+ {chosen?<Panel title={chosen.name} right={<Button small onClick={()=>setSelected('')}>返回列表</Button>}><div className="ledger-item-heading"><div><span className="muted">当前{chosen.category==='debt'?'欠款':'余额'} · {chosen.currency}</span><strong title={money(chosen.household_amount)+" "+chosen.currency}>{readableMoney(chosen.household_amount)}</strong><small>金额日期：{chosen.source_date||'未记录'}{chosen.currency!=='CNY'?' · 折合 '+money(chosen.value)+' CNY':''}</small></div><div className="inline-actions">{chosen.linked?<><Button small onClick={()=>openPortfolio(chosen.portfolio_id)}>查看组合</Button><Button small onClick={()=>onUnlink(chosen)}>解除关联</Button></>:<Button small onClick={()=>onEdit(chosen)}>编辑资料与设置</Button>}</div></div>
+ {chosen.linked?<Notice>金额由关联组合自动更新。资产页面不能修改组合余额。</Notice>:<><h3>更新余额</h3><SnapshotEditor key={chosen.id+':'+catalog.revision} row={chosen} catalog={catalog} today={today} onSaved={onReload}/><h3>余额历史</h3><div className="table-wrap"><table className="snapshot-history"><thead><tr><th>金额日期</th><th>余额 · {chosen.currency}</th><th>说明</th></tr></thead><tbody>{history.map((v:Obj)=>{const old=latestDates.has(v.effective_on);latestDates.add(v.effective_on);const item=catalog.items.find((i:Obj)=>i.id===chosen.id),meta=[...item.versions].reverse().filter((m:Obj)=>m.effective_on<=v.effective_on).sort((a:Obj,b:Obj)=>b.effective_on.localeCompare(a.effective_on))[0];return <tr key={v.id}><td>{v.effective_on}</td><td>{v.amount==null?'未知':money((Number(v.amount)+Number(v.interest)+Number(v.fees))*Number(meta?.share??1))}</td><td>{old?'同日旧记录':'余额快照'}</td></tr>;})}</tbody></table></div></>}
+ </Panel>:<Panel title={filter==='all'?'全部台账明细':ledgerCategories[filter]+'明细'}><p className="muted small">点击项目查看余额历史、补录或更新某一天的余额。关联组合自动更新。</p><div className="table-wrap"><table className="family-asset-table"><thead><tr><th>项目</th><th>金额 · CNY</th><th>金额日期</th><th className="family-action-cell">操作</th></tr></thead><tbody>{visible.map(r=><tr key={r.id}><td><button className="text-button ledger-project-name" onClick={()=>select(r)}>{r.name}</button><small>{ledgerCategories[r.category]}{r.linked?' · 自动更新':''}</small></td><td><b title={money(r.value)+" CNY"}>{money(r.value)}</b>{Math.abs(Number(r.value))>=10000&&<small className="asset-amount-hint">≈ {readableMoney(r.value)} CNY</small>}{r.currency!=='CNY'&&<small>{money(r.household_amount)} {r.currency}</small>}</td><td>{r.source_date||'未记录'}</td><td className="family-action-cell"><div className="family-row-actions">{r.linked?<><button className="text-button" onClick={()=>openPortfolio(r.portfolio_id)}>查看组合</button><button className="text-button" onClick={()=>onUnlink(r)}>解除关联</button></>:<button className="text-button" onClick={()=>select(r)}>更新余额</button>}</div></td></tr>)}</tbody></table>{!visible.length&&<Empty title="这个分类还没有项目">可切换左侧分类，或使用顶部“新增记录”。</Empty>}</div></Panel>}
+ </div></div>;
+}

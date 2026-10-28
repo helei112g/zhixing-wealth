@@ -1,0 +1,4 @@
+interface:
+  display_name: "知行财富投资笔记"
+  short_description: "按投资组合和标的维护投资笔记原文，保留历史与作用域，支持删除和撤销"
+  default_prompt: "使用 $zhixing-notes 按我的要求查询或维护知行财富的本机账本。"

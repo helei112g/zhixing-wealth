@@ -91,6 +91,7 @@ class Client:
         return value
 
     def preview(self, payload, path='/api/events/preview'):
+        """Return the full preview, including split_changes after historical backfills."""
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
         if path not in ('/api/events/preview', '/api/family/preview'):
             raise ValueError('Use a documented preview endpoint')

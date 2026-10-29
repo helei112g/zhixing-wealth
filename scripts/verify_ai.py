@@ -149,6 +149,33 @@ def main():
     try:client.write('/api/events',dict(split,expected_revision=preview['revision']),'POST')
     except RuntimeError as error:check('HTTP 409' in str(error),'AI stale share-action confirmation cannot double shares')
     else:raise AssertionError('stale share-action write accepted')
+    split_id=saved['id']
+    split_saved=saved
+    changed=client.write('/api/events/'+split_id,dict(split_saved,date='2024-01-02',fx_source_date='2024-01-02',change_reason='AI合成误填登记日',expected_revision=revision()),'PUT')
+    review=client.request(endpoint)['todos'][0]
+    check(review['type']=='verify_split' and review['event']['id']==split_id and changed['source_split_id']==split_saved['source_split_id'],'AI date correction preserves announcement identity and reviews original split')
+    correction=dict(review['event'],date=review['notice']['date'],change_reason='AI合成核对除权日')
+    preview=client.preview(correction)
+    client.write('/api/events/'+split_id,dict(correction,expected_revision=preview['revision']),'PUT')
+    check(not client.request(endpoint)['todos'],'AI source-date correction clears reminder under original event ID')
+    original=client.request('/api/portfolios/'+p['id']+'/transactions/'+stock['id'])['event']
+    backfill=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument_id=stock['instrument_id'],quantity='60',gross_amount='600',fx_rate='1',expected_revision=revision()),'POST')
+    sale=dict(portfolio_id=p['id'],kind='SELL',date='2024-01-02',instrument_id=stock['instrument_id'],sell_lots=[dict(buy_event_id=stock['id'],quantity='100')],gross_amount='3200',fx_rate='1')
+    before=revision();preview=client.preview(sale)
+    change=preview['split_changes'][0]
+    check(revision()==before and change['before']['quantity_after']=='480' and change['after']['quantity_after']=='180','AI backfilled sale previews split remainder without writing')
+    check([r['buy_event_id'] for r in change['after']['lots']]==[backfill['id']],'AI split excludes sold batch and includes backfilled remaining batch')
+    sale_saved=client.write('/api/events',dict(sale,expected_revision=preview['revision']),'POST')
+    split_path='/api/portfolios/'+p['id']+'/transactions/'+split_id
+    detail=client.request(split_path)
+    check(detail['facts']['split']==change['after'] and detail['event']['factor']=='3','AI split effect matches preview under original event ID')
+    check(client.request('/api/portfolios/'+p['id']+'/transactions/'+stock['id'])['event']==original,'AI backfill preserves original purchase fields')
+    check(not client.request(endpoint)['todos'],'AI backfill does not reopen confirmed split reminder')
+    try:client.write('/api/events',dict(split,allow_duplicate=True,expected_revision=revision()),'POST')
+    except RuntimeError as error:check('HTTP 422' in str(error),'AI fresh revision still cannot confirm duplicate split')
+    else:raise AssertionError('duplicate split accepted')
+    client.write('/api/events/'+sale_saved['id'],dict(reason='合成取消补录',expected_revision=revision()),'DELETE')
+    check(client.request(split_path)['facts']['split']['quantity_after']=='480','AI cancellation replays split without rewriting confirmation')
     (output/'ai-passed.json').write_text(json.dumps({'checks':len(checks),'passed':checks},ensure_ascii=False,indent=2))
 
 

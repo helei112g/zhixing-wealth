@@ -60,6 +60,7 @@ class SellLot(BaseModel):
 
 class EventRequest(WriteRequest):
     factor: Amount | None = Field(None, description='SPLIT 专项核对：送转/拆股后的数量倍数，10送8转12为3；保留总成本，先于除权日买卖执行。现金红利单独核对。')
+    source_split_id: str | None = Field(None, max_length=128, description='SPLIT 所核对的公告ID，来自todo；修改日期后仍关联原公告，避免重复确认')
     portfolio_id: str
     kind: str = Field(description='日常只用 BUY、SELL、DIVIDEND、REINVEST；其他类型仅兼容历史或专项核对')
     date: str = Field(description='成交日或除息日，YYYY-MM-DD')
@@ -145,7 +146,43 @@ class CancelRequest(WriteRequest):
     reason: str = Field(description='取消原因，保留修订记录')
 
 
+class SplitLotEffect(BaseModel):
+    buy_event_id: str
+    date: str
+    quantity_before: str
+    quantity_after: str
+    quantity_change: str
+
+
+class SplitEffect(BaseModel):
+    event_id: str
+    instrument_id: str
+    date: str
+    factor: str
+    quantity_before: str
+    quantity_after: str
+    quantity_change: str
+    cost_native: str = Field(description='送转前后的持仓总成本不变；标的币种')
+    currency: str
+    status: Literal['applied', 'no_position']
+    lots: list[SplitLotEffect] = Field(description='按当前历史流水重放的参与批次，仅除权日前剩余份额；不含已售份额和除权日新买入')
+
+
+class SplitChange(BaseModel):
+    event_id: str
+    before: SplitEffect | None
+    after: SplitEffect | None
+
+
+class EventPreview(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    revision: int
+    event: dict[str, Any]
+    split_changes: list[SplitChange] = Field(description='本次记账或更正引起的送转效果变化，含后续已确认记录；预览不写入')
+
+
 class TransactionFacts(BaseModel):
+    split: SplitEffect | None = None
     quantity: str | None
     unit_price: str | None
     unit_after_costs: str | None = Field(description='买入/再投含费税成本除以份额；卖出为扣费税净回款除以份额')

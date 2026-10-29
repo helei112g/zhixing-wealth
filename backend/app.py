@@ -18,7 +18,7 @@ from .common import ConflictError, DomainError, now, today, wire
 from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
-from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate
+from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -186,6 +186,11 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                       'pending_in': ['dashboard.todos', 'instrument_detail.todos'],
                                       'factor': 'new shares / old shares; 10 bonus 8 plus conversion 12 = 3',
                                       'cost_basis': 'preserve total cost; cash dividend and tax recorded separately',
+                                      'effect_field': 'transactions[].facts.split; transaction_detail.facts.split',
+                                      'preview_changes': 'split_changes: before/after quantities and remaining lots for affected SPLIT records',
+                                      'backfill': 'replay remaining lots before ex-date; retain confirmed event; never confirm again for backfills',
+                                      'duplicate_policy': 'one new SPLIT per portfolio/instrument/date; correct the existing event',
+                                      'notice_link': 'source_split_id; date/factor mismatch reopens verify_split on the original event',
                                       'reference_price': 'prefer adjusted stock series; valuation uses raw prices and confirmed shares'},
                 'reinvestment_estimate': {'endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/reinvestment-estimate',
                                          'query': ['date', 'gross_amount'], 'market': 'FUND', 'exact_date': True,
@@ -263,7 +268,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def restore_note(portfolio_id: str, instrument_id: str, note_id: str, payload: NoteMutationRequest):
         return service.notes.set_deleted(portfolio_id, instrument_id, note_id, deleted=False, expected_revision=payload.expected_revision)
 
-    @app.post('/api/events/preview')
+    @app.post('/api/events/preview', response_model=EventPreview)
     def preview(payload: EventRequest):
         payload = payload.model_dump(exclude_unset=True)
         return reply(service.preview_event(payload, payload.get('id')))

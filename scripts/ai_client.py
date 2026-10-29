@@ -119,6 +119,10 @@ class Client:
         # Never retry a mutation or replace its expected_revision automatically.
         return self.request(path, payload, method)
 
+    def deletion_preview(self, event_id):
+        """Read the complete causal deletion list; submit its original revision and IDs."""
+        return self.request('/api/events/' + urllib.parse.quote(event_id, safe='') + '/deletion-preview')
+
     def reinvestment_estimate(self, portfolio_id, instrument_id, date, gross_amount):
         """Read an estimate only; caller must review quantity before event preview/write."""
         path = ('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'

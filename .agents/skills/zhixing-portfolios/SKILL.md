@@ -12,7 +12,7 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 - 日常录入使用BUY、SELL、DIVIDEND、REINVEST；送转/拆股专项待办使用SPLIT。买卖金额、费用、日期及锁定汇率按 [接口文档](../../../docs/api.md) 核对；不同分红日期分别读取reference-rate。不得拿当前汇率覆盖历史锁定值。
 - 红利再投可读 `GET /api/portfolios/P/instruments/I/reinvestment-estimate?date=YYYY-MM-DD&gross_amount=...`：同日场外基金单位净值估算，按两位小数四舍五入。只读、不自动入账；null不补0，缺当日净值或其他市场按实际确认单填。核对后显式传reinvest_quantity，再走交易预览与提交；金额为不含手续费的再投总价，不重复扣税费。已有确认份额优先，不用估算覆盖。
 - 用`preview REQUEST.json`预览交易；编辑请求包含原事件id，提交PUT时路径使用同一id。保存前核对份额、费用、现金与收益影响，以及用户授权。
-- 保存使用`write POST /api/events REQUEST.json --confirm-write`，更正用PUT，取消用DELETE并提供原因；所有请求带预览/读取的expected_revision。取消影响关联分红与后续交易，范围不明时先确认。
+- 保存使用`write POST /api/events REQUEST.json --confirm-write`，更正用PUT。删除先 GET `/api/events/ID/deletion-preview`（或客户端 deletion_preview），核对完整 items 和共享批次，再用DELETE带 reason、cascade=true、原event_ids及原expected_revision提交；不拆分共享流水金额，不删除其他买入父批次。旧单条删除兼容保留，不能跳过预览静默扩大范围。按deleted_event_ids回读cancelled与持仓，409不自动重试。
 - 新建组合用`write POST /api/portfolios`，编辑用`PUT /api/portfolios/ID`，先读取并核对拟变字段和revision。组合/笔记没有独立服务端预览接口时，展示读取值与拟保存差异，不声称已完成服务端预览。
 - 投入计划先调用`GET /api/portfolios/P/instruments/I/plan-check?target_pct=...`，再按返回revision提交PUT；缺口仅提醒，不自动加预算或卖出。
 - 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理不代表行情更新成功，应看jobs逐项状态。

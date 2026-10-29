@@ -143,7 +143,30 @@ class NotePage(BaseModel):
 
 
 class CancelRequest(WriteRequest):
-    reason: str = Field(description='取消原因，保留修订记录')
+    reason: str = Field(description='删除原因，保留修订记录')
+    cascade: bool = Field(default=False, description='显式关联删除，必须先读取 deletion-preview 并核对全部清单')
+    event_ids: list[str] | None = Field(default=None, description='关联删除预览的完整 event_ids；必须原样提交并带原 revision')
+
+
+class EventDeletionItem(BaseModel):
+    event: dict[str, Any]
+    instrument_name: str
+    portfolio_name: str
+    is_root: bool
+    dependency_ids: list[str]
+    shared_with_other_lots: bool
+    other_buy_event_ids: list[str]
+
+
+class EventDeletionPreview(BaseModel):
+    event_id: str
+    revision: int
+    event_ids: list[str]
+    items: list[EventDeletionItem]
+    total: int
+    audit_preserved: bool
+    can_delete: bool
+    validation_error: str | None
 
 
 class SplitLotEffect(BaseModel):

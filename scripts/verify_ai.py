@@ -86,6 +86,13 @@ def main():
     except RuntimeError as error: check('HTTP 422' in str(error),'cross-portfolio note access refused')
     else: raise AssertionError('note escaped portfolio scope')
     check(client.request(transactions)['items']==rows['items'],'notes never modify transactions')
+    before = client.request(transactions)
+    deletion = client.deletion_preview(saved['id'])
+    check(client.request(transactions)==before and deletion['event_ids']==[saved['id']], 'deletion preview is read-only and scoped')
+    removed = client.write('/api/events/'+saved['id'],dict(reason='合成AI删除', cascade=True,
+        event_ids=deletion['event_ids'], expected_revision=deletion['revision']),'DELETE')
+    check(removed['deleted_event_ids']==deletion['event_ids'], 'AI submits reviewed deletion IDs and revision')
+    check(client.request('/api/portfolios/'+p['id']+'/transactions/'+saved['id'])['cancelled'], 'AI deletion audit read back')
     debt,_=command('item',dict(category='debt',currency='CNY',name='AI合成还款规则',effective_on=str(date.today()),household_amount='12000',payment_plan={'mode':'annuity','first_due':str(date.today()),'periods':12,'annual_rate':'0'}))
     check(debt['payment_preview']['periods']==12 and debt['payment_preview']['total']=='12000','debt rule calculates installments')
     policy,_=command('item',dict(category='insurance',currency='CNY',name='AI合成保费规则',effective_on=str(date.today()),household_amount='0',insured='合成被保人',coverage_amount='1000000',payment_plan={'mode':'annual','first_due':str(date.today()),'periods':3,'amount':'100'}))

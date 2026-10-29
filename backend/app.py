@@ -18,7 +18,7 @@ from .common import ConflictError, DomainError, now, today, wire
 from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
-from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview
+from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -182,6 +182,11 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                      'operations': ['list', 'read', 'create', 'edit', 'delete', 'undo_delete'],
                                      'expected_revision_required': True, 'included_in_full_backup': True},
                 'event_kinds': ['BUY', 'SELL', 'DIVIDEND', 'REINVEST'], 'manual_prices': False,
+                'event_deletion': {'preview': '/api/events/{event_id}/deletion-preview', 'preview_method': 'GET',
+                                   'write': '/api/events/{event_id}', 'method': 'DELETE',
+                                   'cascade_fields': ['cascade', 'event_ids', 'expected_revision', 'reason'],
+                                   'shared_records': 'whole records listed explicitly; other purchase parents are retained',
+                                   'audit_preserved': True, 'legacy_default': 'single event or transfer pair'},
                 'corporate_actions': {'confirmation_kind': 'SPLIT', 'automatic_ledger_write': False,
                                       'cash_only_plans': 'full cash-only text including shareholder classes; cash amount conflicts remain review notes',
                                       'sync_recovery': 'latest successful corporate_actions item clears the same instrument sync reminder; retain job history',
@@ -289,10 +294,15 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         if auto_sync and value.get('instrument_id'):service.start_sync(value['instrument_id'],full=True,trigger='event_edit')
         return reply(value)
 
+    @app.get('/api/events/{event_id}/deletion-preview', response_model=EventDeletionPreview, summary='只读预览关联删除清单及账务校验结果')
+    def preview_deletion(event_id: str):
+        return service.preview_deletion(event_id)
+
     @app.delete('/api/events/{event_id}')
     def delete_event(event_id: str, payload: CancelRequest):
         payload = payload.model_dump(exclude_unset=True)
-        return reply(service.delete_event(event_id, payload.get('reason'), payload.get('expected_revision')))
+        return reply(service.delete_event(event_id, payload.get('reason'), payload.get('expected_revision'),
+                                          cascade=payload.get('cascade', False), event_ids=payload.get('event_ids')))
 
     @app.post('/api/reservations')
     def reserve(payload: dict): return reply(service.save_reservation(payload))

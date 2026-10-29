@@ -20,3 +20,5 @@ export function OverviewSummary({dash,capital=false}:Obj){
 export function PeriodQuality({period:r}:Obj){if(!r.estimated&&!r.incomplete)return null;return <details className="period-quality"><summary>{r.incomplete?'数据不完整':'暂估'} · 查看原因</summary><ul>{r.quality_reasons?.length?r.quality_reasons.map((q:Obj)=><li key={q.message}><b>{q.from}{q.to!==q.from?' 至 '+q.to:''}</b><span>{q.message}</span></li>):<li>该期间有缺失或待核对数据，请查看组合的数据提示。</li>}</ul></details>;}
 
 export function CapitalSummary({dash}:Obj){return <OverviewSummary dash={dash} capital/>;}
+
+export function CurveQuality({quality,onReminders,onSettings,hasTodos}:Obj){if(!quality?.missing_days)return null;return <div className="curve-warning" role="status"><b>部分组合收益曲线暂无法展示：{quality.from} 至 {quality.to}</b><ul>{quality.reasons.map((r:Obj)=><li key={r.message}>{r.from}{r.to!==r.from?' 至 '+r.to:''}：{r.message}</li>)}</ul><p>{quality.note}</p><button className="text-button" onClick={hasTodos?onReminders:onSettings}>{hasTodos?'前往提醒中心核对 →':'前往全局设置补齐历史数据 →'}</button></div>;}

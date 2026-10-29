@@ -17,7 +17,7 @@ sys.path.insert(0,str(ROOT))
 from backend.environment import LedgerProcessLock, claim_environment, workspace_for
 from backend.deployment_guard import require_empty
 
-SCENARIOS = ('empty','acceptance','pagination','profit','holdings','entry','reinvestment','notes','plan_forward','brand','family','settings')
+SCENARIOS = ('empty','acceptance','pagination','profit','holdings','refinements','entry','reinvestment','notes','plan_forward','brand','family','settings')
 
 
 def run(command, **kwargs):
@@ -70,7 +70,7 @@ def main():
                     run(['node',f'scripts/browser_{name}.cjs'],env=env)
                     if name == 'empty':
                         (case_output/'empty-install.json').write_text(json.dumps(require_empty(data),indent=2))
-                    if name in ('family', 'reinvestment'): run([sys.executable,'scripts/verify_ai.py'],env=env)
+                    if name in ('family', 'reinvestment', 'refinements'): run([sys.executable,'scripts/verify_ai.py'],env=env)
                 finally:
                     process.terminate()
                     try:process.wait(timeout=15)

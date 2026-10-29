@@ -68,7 +68,7 @@ macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当
 - 日期 `YYYY-MM-DD`；时间戳含时区。基础币种 CNY；HKD/USD 的汇率方向均为 `1 foreign = x CNY`。
 - `return_on_cost`、`xirr`、`weight` 为比例：`0.05` 是5%。`target_pct`、`target_annual_pct` 为百分数：`5` 是5%。
 - 交易、计划始终绑定 `portfolio_id`；投资笔记同时绑定 `portfolio_id` 和 `instrument_id`。相同证券在不同组合的交易和标签独立。不要用名称猜测 ID。
-- 读取不改写旧流水。更正/取消会保留审计记录；分红公告未经确认不改变资产。
+- 读取不改写旧流水。更正/删除会保留审计记录；分红公告未经确认不改变资产。
 - 组合/标的/逐笔收益都含实际入账净分红和费税。投资累计收益率与 XIRR 排除未投入现金；API 为审计仍返回逐笔分红分摊，UI 在持仓列表和顶部收益等式中汇总展示，不增加逐笔累计分红列。
 
 ## 读取接口
@@ -124,7 +124,8 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 | POST `/api/events/preview` | 拟写入的完整事件；更正带 id。只读计算，返回 revision、event、现金变化、warnings、duplicate_of、instrument_merge |
 | POST `/api/events` | 与已核对预览相同的输入；expected_revision；服务端再校验 |
 | PUT `/api/events/{id}` | 更正后的完整事件、change_reason、expected_revision；从原记录合并，不丢弃隐藏历史字段 |
-| DELETE `/api/events/{id}` | reason、expected_revision；逻辑取消，保留修订 |
+| GET `/api/events/{id}/deletion-preview` | 只读关联删除预览：revision、event_ids、items、can_delete、validation_error |
+| DELETE `/api/events/{id}` | reason、expected_revision；cascade=true 时必须提交预览全部 event_ids，逻辑删除并保留修订；默认兼容单条/转移对 |
 | POST `/api/dividends/{notice_id}/confirm` | 在候选 suggested_event 上核对税前总额、税费、到账、再投信息，保留 dividend_basis，附 expected_revision；权益变更时拒绝旧核对 |
 
 旧交易/计划接口的 `expected_revision` 兼容为可选；资产、投资笔记接口和 AI 客户端写入强制提供。不能把 CSRF token 当作并发版本。
@@ -305,3 +306,11 @@ A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_
 
 - 流水列表（含分页）、标的详情交易列表与单笔详情的 `facts.split` 返回该 SPLIT 的 `event_id/instrument_id/date/factor`、`quantity_before/quantity_after/quantity_change`、`cost_native/currency`、`status=applied|no_position`、`lots[]`；每批包含 `buy_event_id/date` 和上述三个数量字段。数值均为 Decimal 字符串，cost_native 为该次送转前后保持不变的持仓总成本。非送转或已取消流水为 null；这是当前历史重算结果，不是确认时的存档。
 - `POST /api/events/preview` 的 `split_changes[]` 返回受本次记账／更正影响的送转记录，包含 `event_id`、`before`、`after`；before/after 使用同一 SplitEffect 结构，新记录的 before 为 null，更正移除送转效果时 after 为 null。补录买卖也可能改变后续送转，需核对批次而不仅是总量。预览不写入，保存仍用预览 revision；并发补录导致409时重新核对。
+
+### 关联删除与曲线缺失说明
+
+删除预览以原账本重放买入批次、实际卖出（含旧 FIFO）、登记日分红权益及送转参与份额，递归列出关联分红、再投、送转、卖出、费税和成对组合转移。只跟随依赖方向；其他买入批次、其他组合和公开公告缓存保留。共享分红/卖出/送转按整条记录删除，不拆分金额、不重写剩余记录；`items[].shared_with_other_lots` 与 `other_buy_event_ids` 明示影响。`items[].event` 为原流水，`dependency_ids` 是本清单内的直接依赖，`is_root` 标注所选记录。尚未关联到任何权益批次的旧分红不猜测归属。
+
+先 GET 预览（无副作用），核对全部清单，再 DELETE 同一ID，例如 `{"reason":"重复录入，已核对关联流水","cascade":true,"event_ids":["BUY_ID","SALE_ID"],"expected_revision":42}`。服务端在同一事务重新推导并核对清单、revision 和剩余账务；清单不一致或账务失败返回422，过期revision返回409，均无写入。预览 `can_delete=false` 时返回具体 `validation_error`，不允许确认。返回兼容字段 `cancelled` 和完整 `deleted_event_ids`；每条记录保留审计，删除记录可按原ID从交易详情读回 `cancelled=true`。省略cascade保留旧单条/转移对删除语义，不自动扩大旧客户端删除范围。
+
+Dashboard 增加 `curve_quality`：`missing_days`、`from/to` 和 `reasons[{message,from,to}]`。仅统计已投入或估值不完整时无法展示的组合曲线点；未投资的空白不当作故障。原因取自对应历史日期（如送转待核对、缺价格/汇率），不借用今天的状态解释历史；缺口后的累计曲线不补零、不跨缺口连接。图旁红色说明有待办时提供提醒中心入口，否则进入全局设置补齐历史数据。持仓分页为完整 dashboard 数据上的本地分页，默认20，可选10/20/50；汇总和排行榜使用全量数据。排行榜宽屏紧凑多列，默认展示前50，更多可展开。

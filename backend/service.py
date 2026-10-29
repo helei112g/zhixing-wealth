@@ -19,6 +19,7 @@ from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES
 from .version import VERSION, NAME
 from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
+from .event_deletion import deletion_plan
 from . import market
 from . import dividends
 from .sync_meta import TRIGGERS, trigger_metadata
@@ -377,12 +378,33 @@ class Service:
             self.store.audit(db, 'event', event['id'], before, event, payload.get('change_reason', '记账'))
         return wire(event)
 
-    def delete_event(self, event_id, reason, expected_revision=None):
-        if not str(reason or '').strip(): raise DomainError('取消流水必须填写原因')
+    def preview_deletion(self, event_id, state=None):
+        state = self.store.state() if state is None else state
+        plan = deletion_plan(state, event_id)
+        candidate = dict(state, events=[e for e in state['events'] if e['id'] not in plan['event_ids']])
+        try:
+            self.validate_fee_links(candidate)
+            for pid in {item['event']['portfolio_id'] for item in plan['items']}:
+                Ledger(candidate, self.portfolio(state, pid)).validate()
+            plan.update(can_delete=True, validation_error=None)
+        except DomainError as exc:
+            plan.update(can_delete=False, validation_error=str(exc))
+        return wire(plan)
+
+    def delete_event(self, event_id, reason, expected_revision=None, *, cascade=False, event_ids=None):
+        if not str(reason or '').strip(): raise DomainError('删除流水必须填写原因')
+        if cascade and expected_revision is None: raise DomainError('关联删除必须提供预览的 expected_revision')
         with self.store.transaction(expected_revision=expected_revision) as db:
             state = self.store.state(db); event = next((e for e in state['events'] if e['id'] == event_id), None)
             if not event: raise DomainError('流水不存在')
-            related = [e for e in state['events'] if e.get('transfer_id') == event.get('transfer_id')] if event.get('transfer_id') else [event]
+            if cascade:
+                plan = self.preview_deletion(event_id, state)
+                if not isinstance(event_ids, list) or sorted(event_ids) != plan['event_ids']:
+                    raise DomainError('删除清单与预览不一致，请重新预览并核对全部关联流水')
+                if not plan['can_delete']: raise DomainError(plan['validation_error'])
+                related = [e for e in state['events'] if e['id'] in plan['event_ids']]
+            else:
+                related = [e for e in state['events'] if e.get('transfer_id') == event.get('transfer_id')] if event.get('transfer_id') else [event]
             ids = {e['id'] for e in related}
             candidate = dict(state, events=[e for e in state['events'] if e['id'] not in ids])
             self.validate_fee_links(candidate)
@@ -391,7 +413,7 @@ class Service:
             for item in related:
                 db.execute('UPDATE events SET deleted=1 WHERE id=?', (item['id'],))
                 self.store.audit(db, 'event', item['id'], item, None, reason)
-        return {'cancelled': event_id}
+        return {'cancelled': event_id, 'deleted_event_ids': sorted(ids)}
 
     def save_reservation(self, payload, reservation_id=None):
         raise DomainError('预留资金功能已移除，可投入预算直接等于预算余额')
@@ -416,6 +438,19 @@ class Service:
                           'segment': 1, 'estimated': r['estimated'] or r['incomplete']})
         result = {k: v for k, v in snap.items() if k != 'history'}
         result['curve'] = curve
+        missing_points = [p for p, r in zip(curve, selected_history)
+                          if p['portfolio_return'] is None and (r['investment_cost'] > ZERO or r['incomplete'])]
+        reasons = {}
+        for r in selected_history:
+            if not r['incomplete'] and r['day_profit'] is not None: continue
+            for message in r.get('quality_reasons', []) or ['缺少连续的历史估值，无法计算当日收益']:
+                detail = reasons.setdefault(message, {'message': message, 'from': r['date'], 'to': r['date']})
+                detail['to'] = r['date']
+        result['curve_quality'] = {'missing_days': len(missing_points),
+            'from': missing_points[0]['date'] if missing_points else None,
+            'to': missing_points[-1]['date'] if missing_points else None,
+            'reasons': list(reasons.values()) if missing_points else [],
+            'note': '缺口后的累计收益无法连续衔接；请核对待办或补齐历史行情、汇率后重算。基准和目标线仍独立展示。'}
         result['target'], target_points = target_path(selected_history, portfolio)
         for point, target in zip(curve, target_points): point['target_return'] = target
         result['periods'] = periods(snap['history'], grain, start, as_of, investment_basis=True)

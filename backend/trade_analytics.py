@@ -104,6 +104,24 @@ def dividend_segments(event,market,end):
     return parts
 
 
+def dividend_entitlement(state, portfolio, event):
+    """The same registry-day lots for profit attribution and deletion planning."""
+    ledger = Ledger(state, portfolio)
+    inst = ledger.instruments[event['instrument_id']]
+    notices = [n for n in state['corporate_actions'] if n.get('kind') == 'dividend_notice']
+    notice = next((n for n in notices if n['id'] == event.get('source_dividend_id')), None)
+    notice = notice or next((n for n in notices if n['instrument_id'] == inst['id'] and n['ex_date'] == event['date']), None)
+    cutoff = event.get('record_date') or (notice or {}).get('record_date')
+    if inst['market'] in ('HK', 'US') or not cutoff:
+        cutoff = (day(event['date']) - timedelta(days=1)).isoformat()
+    for op in ledger.ops:
+        if op[0] > cutoff: break
+        ledger.apply(op)
+    owned = [r for r in ledger.position(inst['id'])['lots'] if r['quantity'] > 0
+             and (inst['market'] != 'FUND' or r['available_on'] <= cutoff)]
+    return cutoff, owned
+
+
 def lot_projection(state,portfolio,as_of=None):
     end=str(as_of or today());ledger=Ledger(state,portfolio);market=ledger.market
     source={e['id']:e for e in ledger.events};lots={};sales={};legacy=False
@@ -145,23 +163,13 @@ def lot_projection(state,portfolio,as_of=None):
                     if kind=='ADJUSTMENT':lot['ambiguous']=True
     snap=ledger.snapshot(end);holdings={h['instrument_id']:h for h in snap['holdings']}
     # Entitlement belongs to registry-day owners, including sales before ex/payment.
-    notices={n['id']:n for n in state['corporate_actions'] if n.get('kind')=='dividend_notice'}
     unallocated=[]
     for event in ledger.events:
         is_div=event['kind'] in ('DIVIDEND','REINVEST')
         if not is_div or event['date']>end:continue
         if not event.get('instrument_id'):
             unallocated.append('另记的组合级费税未归属具体买入批次');continue
-        inst=ledger.instruments[event['instrument_id']];notice=notices.get(event.get('source_dividend_id'))
-        notice=notice or next((n for n in notices.values() if n['instrument_id']==inst['id'] and n['ex_date']==event['date']),None)
-        cutoff=(event.get('record_date') or (notice or {}).get('record_date')) if is_div else event['date']
-        if is_div and (inst['market'] in ('HK','US') or not cutoff):cutoff=(day(event['date'])-timedelta(days=1)).isoformat()
-        eligible=Ledger(state,portfolio)
-        for op in eligible.ops:
-            if op[0]>cutoff:break
-            if not is_div and op[0]==cutoff and op[1]>event['sequence']:continue
-            eligible.apply(op)
-        pos=eligible.position(inst['id']);owned=[r for r in pos['lots'] if r['quantity']>0 and (inst['market']!='FUND' or r['available_on']<=cutoff)]
+        cutoff, owned = dividend_entitlement(state, portfolio, event)
         total=sum((r['quantity'] for r in owned),ZERO)
         if total==0:
             unallocated.append('存在无法匹配权益批次的分红或费用，请核对登记日及历史记录');continue

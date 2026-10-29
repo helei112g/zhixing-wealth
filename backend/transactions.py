@@ -1,9 +1,21 @@
 """One factual projection for both transaction tables; no browser money arithmetic."""
 from .common import ZERO, dec, today
 from .trade_analytics import dividend_segments
+from .ledger import Ledger
 
 
-def transaction_facts(event, market, events, as_of=None):
+def split_effects(state, portfolio):
+    """Read-only, current-revision projection using the accounting replay itself."""
+    if not any(e['portfolio_id'] == portfolio['id'] and e['kind'] == 'SPLIT' for e in state['events']):
+        return {}
+    ledger = Ledger(state, portfolio)
+    for op in ledger.ops:
+        if op[0] > str(today()): break
+        ledger.apply(op)
+    return ledger.split_effects
+
+
+def transaction_facts(event, market, events, as_of=None, *, split=None):
     end=str(as_of or today());kind=event['kind'];currency=event['currency']
     quantity=event.get('reinvest_quantity') if kind=='REINVEST' else event.get('quantity')
     unit=event.get('reinvest_price') if kind=='REINVEST' else event.get('price')
@@ -30,7 +42,7 @@ def transaction_facts(event, market, events, as_of=None):
         if distribution is not None:
             distribution-=sum((dec(e['amount'])*dec(e['fx_rate']) for e in events if e['kind'] in ('FEE','TAX') and e.get('related_event_id')==event['id'] and e['date']<=end),ZERO)
     unit_after_costs=native/dec(quantity) if kind in ('BUY','SELL','REINVEST') and quantity and dec(quantity)>0 else None
-    return {'quantity':quantity,'unit_price':unit,'unit_after_costs':unit_after_costs,
+    return {'split':split,'quantity':quantity,'unit_price':unit,'unit_after_costs':unit_after_costs,
             'unit_after_costs_label':'扣费税净回款' if kind=='SELL' else '含费税成本价',
             'currency':currency,'fees_native':fees,
             'native_total':native,'base_total':amount,'amount_label':label,'fx_rate':fx,

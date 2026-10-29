@@ -296,3 +296,10 @@ A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_
 `dashboard.todos` 和 `GET /api/portfolios/P/instruments/I` 的 `todos` 提供 `confirm_split` / `verify_split`。核对登记日持仓、除权日与倍数后，使用普通交易预览和 `/api/events` 提交 `kind=SPLIT`、`factor`、`instrument_id`、`portfolio_id`、`date`、`expected_revision`；10送8转12的倍数为3。顶部系统提醒统一汇总待核对项，通过“查看提醒”进入中心处理；组合页面不重复展示独立通知区。确认后新增独立送转流水，保留原买入数量和总成本，除权当日先调整隔夜持仓，再处理当日买卖；现金分红及实际扣税单独核对。已知未确认或比例不一致时，相关估值/收益留空提示核对，不以错误份额展示暴跌。
 
 标的详情新增 `price_basis`（`raw` / `adjusted`），有复权数据的股票默认 adjusted。A股标注前复权参考，港美股按数据源标注复权参考；基金单位净值不强行复权。`curves` 中仍保留原有两种序列。同步时复权参考刷新完整记账区间，避免除权前后的缓存调整基准混用；未复权行情继续增量同步。复权仅用于价格走势及后续行情参考，不替换真实成交价、估值现价、收益、现金红利或 XIRR。
+
+送转参与批次由当前 revision 的历史流水按日期重放：先扣除除权日前的卖出，再对剩余份额应用倍数；除权日新买入不参与，当日卖出使用调整后的份额。补录、更正、取消交易都会重新计算，不把确认时的批次或数量固化到数据库。确认后待办消失，独立 SPLIT 流水保留；补录后除权前已全部卖出时，该流水显示无持仓、数量变化为0。新增同组合、同标的、同日第二条 SPLIT 返回422（allow_duplicate也不能放行）；更正应 PUT 原ID，已有历史记录不自动删除或合并。
+
+`todo.notice` 提供公告登记日 `record_date`、除权日 `date` 与倍数；新确认携带 `prefill.source_split_id`。更正日期后仍保留此公告关联；日期／比例不一致时返回 `verify_split` 和原事件，不生成第二条确认。旧记录没有关联ID时，若同标的同倍数记录误填在公告登记日，作为需核对候选返回原记录，禁止再新增该公告的送转；读取不改写或合并历史。UI明确区分登记日与除权日，可显式选用公告值、预览并更正原ID。不能仅因提醒仍存在再次送转，也不能自动忽略日期差异；若更正影响后续卖出合法性仍由完整账本校验阻止。
+
+- 流水列表（含分页）、标的详情交易列表与单笔详情的 `facts.split` 返回该 SPLIT 的 `event_id/instrument_id/date/factor`、`quantity_before/quantity_after/quantity_change`、`cost_native/currency`、`status=applied|no_position`、`lots[]`；每批包含 `buy_event_id/date` 和上述三个数量字段。数值均为 Decimal 字符串，cost_native 为该次送转前后保持不变的持仓总成本。非送转或已取消流水为 null；这是当前历史重算结果，不是确认时的存档。
+- `POST /api/events/preview` 的 `split_changes[]` 返回受本次记账／更正影响的送转记录，包含 `event_id`、`before`、`after`；before/after 使用同一 SplitEffect 结构，新记录的 before 为 null，更正移除送转效果时 after 为 null。补录买卖也可能改变后续送转，需核对批次而不仅是总量。预览不写入，保存仍用预览 revision；并发补录导致409时重新核对。

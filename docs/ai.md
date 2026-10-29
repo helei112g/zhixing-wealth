@@ -58,6 +58,10 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 
 后续迭代须按 [AGENTS.md](../AGENTS.md) 同步维护能力契约、客户端、文档、技能和验证。
 
+历史买卖补录、更正时核对 preview.split_changes 的 before/after 及 lots；确认后按 SPLIT 原ID读取交易详情 facts.split，对照 quantity_before/quantity_after 和参与批次。此前卖出份额、除权日及之后新买入不参与；当日卖出使用已调整份额。补录后全部平仓可返回 no_position，保留历史记录且不新增送转。提醒消失与流水保留含义不同；不能因为已确认记录仍在列表就再次确认，同日重复送转返回422。
+
+确认请求保留 todo.prefill.source_split_id；verify_split 必须更正 todo.event.id。核对 todo.notice 的登记日和除权日，送转日期用经核对的除权日；已录日期／倍数与公告不符时不重复新增。旧记录只凭登记日与同倍数匹配是核对候选，不能当作已证实关联或自动修正日期。更正也使用预览原 revision，按用户授权保存并回读。
+
 收入累计和占比读取 `/api/family/income?year=YYYY` 的 `summary`（字段见 docs/api.md），不在客户端把缺失金额补零或重复汇总更正版本。关联台账金额用 `items[].value`，分类金额用 `categories[].value`；预算型未投入预算不计入资产。
 
 送转股/拆股：读取 capabilities.corporate_actions 与 dashboard/instrument_detail 的 todos。先核对公开公告和实际持仓，使用 `SPLIT` 专项预览，再按原 revision 提交并回读份额、成本和收益。10送8转12填 factor=3，总成本保持不变；现金分红、扣税另行核对。若送转没有出现在 todos 中，先检查 jobs 中 corporate_actions 同步状态并重试，不要用前复权价格掩盖缺失的份额调整。确认后回读独立 SPLIT 流水；原 BUY 数量仍是历史成交数量，不应变成送转后的数量。同步公告不等于确认记账，不得因价格骤降自动造流水或用前复权价格改写历史买入。资产相邻期变化包含新增/移除/份额调整，原样报告 scope_changed/reason，不能称为投资收益率。

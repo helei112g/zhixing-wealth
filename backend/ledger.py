@@ -20,6 +20,23 @@ def recorded_split_factor(events,instrument_id,date):
     return prod((dec(e['factor']) for e in events if e['kind']=='SPLIT' and e.get('instrument_id')==instrument_id and e['date']==date),start=ONE)
 
 
+def split_notice_records(events, action):
+    """Find confirmations, or conservative legacy candidates needing review.
+
+    A registry-day candidate is never treated as confirmed: surface a correction
+    instead of offering a second split. Callers pass one portfolio's events.
+    """
+    records = [e for e in events if e['kind']=='SPLIT' and e.get('instrument_id')==action['instrument_id']]
+    matched = [e for e in records if e.get('source_split_id')==action['id'] or e['date']==action['date']]
+    if matched: return matched
+    return [e for e in records if not e.get('source_split_id') and e['date']==action.get('record_date')
+            and dec(e['factor'])==dec(action['factor'])]
+
+
+def split_notice_confirmed(records, action):
+    return bool(records) and all(e['date']==action['date'] for e in records) and recorded_split_factor(records,action['instrument_id'],action['date'])==dec(action['factor'])
+
+
 def normalize_event(payload, portfolio, instruments, defaults=None):
     p = dict(payload)
     kind = str(p.get('kind', '')).upper()
@@ -188,7 +205,7 @@ def normalize_event(payload, portfolio, instruments, defaults=None):
                'amount','quantity','price','gross_amount','net_amount','tax_known','ex_date_known','pay_fx_rate',
                'reinvest_quantity','reinvest_price','reinvest_gross_amount','reinvest_fx_rate','pay_fx_source_date','pay_fx_type','reinvest_fx_source_date','reinvest_fx_type','from_currency','to_currency','from_amount',
                'to_amount','from_fx_rate','to_fx_rate','factor','new_quantity','new_cost','historical_cost',
-               'initial_net_invested','asset_class','region','tags','locked_base_amount','reservation_id','transfer_id','source_dividend_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined'}
+               'initial_net_invested','asset_class','region','tags','locked_base_amount','reservation_id','transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined'}
     return {k: v for k, v in p.items() if k in allowed and v != ''}
 
 
@@ -304,6 +321,7 @@ class Ledger:
         self.reset()
 
     def reset(self):
+        self.split_effects = {}
         self.cash = defaultdict(lambda: ZERO)
         self.positions = {}
         self.receivables = {}
@@ -523,7 +541,20 @@ class Ledger:
             self.receive(event_id + ':pending', c, value, inst, '赎回金额待确认', True)
             self.notes.append('有赎回估计金额待确认，请更正为正式卖出')
         elif kind == 'SPLIT':
-            factor = dec(e['factor']); p['quantity'] *= factor
+            factor = dec(e['factor'])
+            # Derive from the replayed remainder, never from original purchases or
+            # a saved confirmation-time snapshot. Backfills can change the lots.
+            lots = [{'buy_event_id': lot['event_id'], 'date': lot['date'],
+                     'quantity_before': lot['quantity'], 'quantity_after': lot['quantity'] * factor,
+                     'quantity_change': lot['quantity'] * (factor - ONE)}
+                    for lot in p['lots'] if lot['quantity'] > ZERO]
+            self.split_effects[event_id] = {
+                'event_id': event_id, 'instrument_id': inst, 'date': d, 'factor': factor,
+                'quantity_before': p['quantity'], 'quantity_after': p['quantity'] * factor,
+                'quantity_change': p['quantity'] * (factor - ONE),
+                'cost_native': p['cost_native'], 'currency': c,
+                'status': 'applied' if lots else 'no_position', 'lots': lots}
+            p['quantity'] *= factor
             for lot in p['lots']: lot['quantity'] *= factor
             if inst in self.last_trades:
                 prev = self.last_trades[inst]
@@ -546,7 +577,7 @@ class Ledger:
     def has_unconfirmed_split(self, instrument_id, as_of):
         for action in self.data['corporate_actions']:
             if action.get('kind')!='split_notice' or action['instrument_id']!=instrument_id or action['date']>str(as_of):continue
-            if recorded_split_factor(self.events,instrument_id,action['date'])==dec(action['factor']):continue
+            if split_notice_confirmed(split_notice_records(self.events,action),action):continue
             key=(instrument_id,action['date'])
             if key not in self._split_entitlements:
                 # Check overnight ownership, including positions sold since the action.

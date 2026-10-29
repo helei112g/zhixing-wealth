@@ -31,7 +31,7 @@ for(const width of [1024,390,320]){await page.setViewportSize({width,height:1000
 await page.setViewportSize({width:1600,height:1050});
 const corp=await api('/portfolios',{name:'合成送转股验收',planned_amount:'10000',start_date:'2026-01-01'});
 const corpBuy=await api('/events',{portfolio_id:corp.id,kind:'BUY',date:'2026-01-02',instrument:{market:'CN',code:'600000',name:'送转股 · 合成股票'},quantity:'100',gross_amount:'3000',fx_rate:'1'});
-const corporateFixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Service(Store(d));s.cache_prices(sys.argv[2],[{'date':day,'price':price,'kind':kind,'source':'synthetic'} for day,price,kind in [('2026-01-02','30','raw'),('2026-01-05','10','raw'),(sys.argv[3],'11','raw'),('2026-01-02','10','adjusted'),('2026-01-05','10','adjusted'),(sys.argv[3],'11','adjusted')]]);s.cache_actions(sys.argv[2],[{'kind':'split_notice','date':'2026-01-05','factor':'3','source':'synthetic'}])",health.data_directory,corpBuy.instrument_id,boot.today],{cwd:root,encoding:'utf8'});assert.equal(corporateFixture.status,0,corporateFixture.stderr);
+const corporateFixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Service(Store(d));s.cache_prices(sys.argv[2],[{'date':day,'price':price,'kind':kind,'source':'synthetic'} for day,price,kind in [('2026-01-02','30','raw'),('2026-01-05','10','raw'),(sys.argv[3],'11','raw'),('2026-01-02','10','adjusted'),('2026-01-05','10','adjusted'),(sys.argv[3],'11','adjusted')]]);s.cache_actions(sys.argv[2],[{'kind':'split_notice','date':'2026-01-05','record_date':'2026-01-04','factor':'3','source':'synthetic'}])",health.data_directory,corpBuy.instrument_id,boot.today],{cwd:root,encoding:'utf8'});assert.equal(corporateFixture.status,0,corporateFixture.stderr);
 await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(corp.id);await page.locator('.system-reminder-banner .banner-valuation').waitFor();check(await page.locator('.system-reminder-banner').count()===1&&await page.locator('.corporate-action-notice,.quality-warning').count()===0,'share and valuation notices share the single top banner');await page.locator('.banner-valuation summary').click();check((await page.locator('.banner-valuation').innerText()).includes('待确认送转/拆股'),'top banner retains concrete valuation reasons');for(const width of [390,320]){await page.setViewportSize({width,height:900});await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'expanded unified notification fits '+width);}await page.setViewportSize({width:1600,height:1050});await page.screenshot({path:path.join(out,'corporate-pending.png'),fullPage:false});await nav('持仓与计划');await page.locator('.holding-row').filter({hasText:'送转股 · 合成股票'}).click();await page.locator('.instrument-identity').waitFor();
 check(await page.getByRole('button',{name:'前复权参考',exact:true}).getAttribute('class').then(c=>c.includes('active')),'stock price chart defaults to adjusted reference');
 check((await api('/portfolios/'+corp.id+'/dashboard')).capital_summary.profit===null,'unconfirmed share action cannot show a fake loss');
@@ -39,6 +39,7 @@ check(await page.locator('.todo-actions').count()===0,'instrument page has no du
 check(await splitDialog.getByLabel('送转 / 拆股后倍数',{exact:false}).inputValue()==='3','split confirmation prefills new-to-old share multiplier');
 const beforeSplit=(await api('/portfolios/'+corp.id+'/transactions')).length;
 await splitDialog.getByRole('button',{name:'预览记账结果',exact:true}).click();await splitDialog.locator('.preview-box').waitFor();
+check((await splitDialog.locator('.split-effect').innerText()).includes('100 → 300份')&&await splitDialog.locator('.split-effect tbody tr').count()===1,'confirmation preview shows exact participating batch and before/after shares');
 check((await api('/portfolios/'+corp.id+'/transactions')).length===beforeSplit,'share preview does not write an event');
 await splitDialog.getByRole('button',{name:'确认记账',exact:true}).click();await splitDialog.waitFor({state:'hidden'});
 const corrected=await api('/portfolios/'+corp.id+'/dashboard');check(corrected.holdings[0].quantity==='300'&&Number(corrected.holdings[0].cost_including_fees_native)===3000&&Number(corrected.capital_summary.profit)===300,'confirmed distribution changes shares, preserves cost and corrects gain');
@@ -48,6 +49,42 @@ check(corrected.curve.every(r=>r.portfolio_return===null||Number(r.portfolio_ret
 await nav('组合总览');await page.getByRole('heading',{name:'收益表现',exact:true}).waitFor();check(!(await api('/reminders')).items.some(r=>r.id===notice.id),'confirmation clears the same global reminder');
 
 await page.screenshot({path:path.join(out,'corporate-confirmed.png'),fullPage:true});
+// Confirm first, then backfill a second buy and a sale of the first batch.
+const splitEvent=ledgerRows.find(e=>e.kind==='SPLIT');
+await api('/events/'+splitEvent.id,{...splitEvent,date:'2026-01-04',fx_source_date:'2026-01-04',change_reason:'合成登记日误填'},'PUT');
+await page.reload();await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'提醒中心',exact:true}).click();
+const mismatch=(await api('/reminders')).items.find(r=>r.action?.portfolio_id===corp.id&&r.kind==='verify_split');
+check(mismatch?.action.todo.event.id===splitEvent.id,'date mismatch reviews the original split instead of offering a second confirmation');
+await page.locator('[data-reminder-id="'+mismatch.id+'"]').getByRole('button',{name:'核对送转/拆股记录',exact:true}).click();
+const correction=page.getByRole('dialog');await correction.locator('.split-source').waitFor();
+check((await correction.locator('.split-source').innerText()).includes('除权日 2026-01-05'),'correction shows source ex-date separately from registry day');
+await correction.getByRole('button',{name:'使用公告除权日与倍数',exact:true}).click();await correction.getByLabel(/^此次更正原因/).fill('合成核对原送转除权日');
+await correction.getByRole('button',{name:'预览记账结果',exact:true}).click();await correction.locator('.split-change').waitFor();
+await page.screenshot({path:path.join(out,'split-date-correction.png'),fullPage:true});
+await correction.getByRole('button',{name:'确认更正并重算',exact:true}).click();await correction.waitFor({state:'hidden'});
+check(!(await api('/reminders')).items.some(r=>r.id===notice.id)&&(await api('/portfolios/'+corp.id+'/transactions')).filter(r=>r.event.kind==='SPLIT').length===1,'correcting original split clears reminder without a duplicate record');
+const backfilledBuy=await api('/events',{portfolio_id:corp.id,kind:'BUY',date:'2026-01-03',instrument_id:corpBuy.instrument_id,quantity:'60',gross_amount:'1200',fx_rate:'1'});
+await page.reload();await nav('资金与流水');await ready();
+await page.getByRole('button',{name:'记录一笔',exact:true}).click();const backfillDialog=page.getByRole('dialog');
+await backfillDialog.getByLabel(/^流水类型/).selectOption('SELL');await backfillDialog.getByLabel('发生日期',{exact:true}).fill('2026-01-04');await backfillDialog.getByLabel('当前组合内标的',{exact:false}).selectOption(corpBuy.instrument_id);
+await backfillDialog.getByLabel('选择买入批次 '+corpBuy.id,{exact:true}).check();await backfillDialog.getByLabel('成交总价（不含费税）',{exact:false}).fill('3100');
+await backfillDialog.getByRole('button',{name:'预览记账结果',exact:true}).click();await backfillDialog.locator('.split-change').waitFor();
+const backfillPreview=await backfillDialog.locator('.split-change').innerText();
+check(backfillPreview.includes('160 → 480份')&&backfillPreview.includes('60 → 180份')&&await backfillDialog.locator('.split-effect tbody tr').count()===1,'backfilled sale preview reduces two split batches to one remaining batch');
+check((await backfillDialog.locator('.split-effect tbody').innerText()).includes(backfilledBuy.id.slice(0,8))&&!(await backfillDialog.locator('.split-effect tbody').innerText()).includes(corpBuy.id.slice(0,8)),'sold batch is absent from split preview');
+await page.screenshot({path:path.join(out,'split-backfill-preview.png'),fullPage:true});
+await backfillDialog.getByRole('button',{name:'确认记账',exact:true}).click();await backfillDialog.waitFor({state:'hidden'});await ready();
+const splitRow=page.locator('[data-ledger-event="'+splitEvent.id+'"]');
+check((await splitRow.innerText()).includes('60 → 180份')&&(await splitRow.innerText()).includes('总成本不变'),'ledger split row shows recalculated quantities instead of zero cash');
+check((await page.locator('[data-ledger-event="'+backfilledBuy.id+'"]').innerText()).includes('当前剩余 180份')&&(await page.locator('[data-ledger-event="'+corpBuy.id+'"]').innerText()).includes('当前剩余 0份'),'buy rows separate original fills from remaining adjusted shares');
+await splitRow.getByRole('button',{name:'流水详情',exact:true}).click();await page.getByRole('dialog').locator('.split-effect').waitFor();
+check(await page.getByRole('dialog').locator('.split-effect tbody tr').count()===1,'split detail uses the same single remaining batch');
+await page.screenshot({path:path.join(out,'split-backfill-detail.png'),fullPage:true});
+for(const width of [390,320]){await page.setViewportSize({width,height:900});await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'split detail fits narrow viewport '+width);}
+await page.setViewportSize({width:1600,height:1050});await page.getByRole('button',{name:'关闭侧栏',exact:true}).click();
+await nav('持仓与计划');await page.locator('.holding-row').filter({hasText:'送转股 · 合成股票'}).click();await ready();
+check((await page.locator('[data-instrument-event="'+splitEvent.id+'"]').innerText()).includes('60 → 180份'),'instrument table shares recalculated split display');
+check(!(await api('/reminders')).items.some(r=>r.id===notice.id),'backfills do not reopen the confirmed reminder');
 // Valuation context remains visible even without global action items, and does not leak across portfolios.
 const incomplete=await api('/portfolios',{name:'合成估值说明',planned_amount:'10000',start_date:'2026-01-01'});await api('/events',{portfolio_id:incomplete.id,kind:'BUY',date:'2026-01-02',instrument:{market:'CN',code:'000001',name:'合成暂估股票'},quantity:'100',gross_amount:'1000',fx_rate:'1'});const clean=await api('/portfolios',{name:'合成空白组合',planned_amount:'10000',start_date:'2026-01-01'});
 await page.route('**/api/reminders',route=>route.fulfill({json:{items:[],count:0,today:0}}));await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(incomplete.id);await page.locator('.banner-valuation').waitFor();check(await page.locator('.system-reminder-banner').count()===1&&await page.locator('.system-reminder-banner button').count()===0,'valuation-only banner does not lead to an empty reminder center');await page.getByLabel('投资组合',{exact:true}).selectOption(clean.id);await page.locator('.system-reminder-banner').waitFor({state:'hidden'});check(true,'switching to a clean portfolio removes previous valuation context');await page.unroute('**/api/reminders');

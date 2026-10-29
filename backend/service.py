@@ -14,7 +14,7 @@ from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, now, ratio, tags, canonical_region, today, wire
-from .ledger import Ledger, Market, normalize_event, periods, recorded_split_factor
+from .ledger import Ledger, Market, normalize_event, periods, split_notice_records, split_notice_confirmed
 from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES
 from .version import VERSION, NAME
 from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
@@ -23,7 +23,7 @@ from . import market
 from . import dividends
 from .sync_meta import TRIGGERS, trigger_metadata
 from .instruments import BENCHMARKS, describe, identity
-from .transactions import transaction_facts
+from .transactions import transaction_facts, split_effects
 from .planning import plan_funding, plan_percentage
 from .trade_windows import forward_performance
 from .trade_analytics import lot_projection, instrument_projection, annual_summary, dividend_segments, target_path, investment_summary
@@ -300,12 +300,32 @@ class Service:
         if event_id and not before: raise DomainError('流水不存在或已取消')
         if before and before['portfolio_id'] != portfolio['id']: raise DomainError('不能把流水移动到其他组合')
         if before and before.get('transfer_id'): raise DomainError('组合转移不能单边修改；请取消整笔转移后重新记录')
+        if before and before.get('source_split_id') and payload.get('kind')=='SPLIT':
+            payload=dict(payload,source_split_id=payload.get('source_split_id') or before['source_split_id'])
         if payload.get('source_dividend_id') and any(e.get('source_dividend_id')==payload['source_dividend_id'] and e['portfolio_id']==portfolio['id'] and e['id']!=event_id for e in state['events']):
             raise DomainError('这条分红公告已确认入账，请更正原分红，不能重复确认')
         instruments = {i['id']: i for i in state['instruments']}
         allocation = next((a for a in state['allocations'] if a['portfolio_id'] == portfolio['id'] and a['instrument_id'] == payload.get('instrument_id')), None)
         if payload.get('instrument_id') and allocation is None: raise DomainError('该标的尚未添加到当前组合')
         event = normalize_event(payload, portfolio, instruments, allocation)
+        unchanged_split_key = before and before['kind'] == 'SPLIT' and before.get('instrument_id') == event.get('instrument_id') and before['date'] == event['date']
+        if event.get('source_split_id'):
+            notice=next((a for a in state['corporate_actions'] if a['id']==event['source_split_id'] and a.get('kind')=='split_notice'),None)
+            if event['kind']!='SPLIT' or not notice or notice['instrument_id']!=event['instrument_id']:
+                raise DomainError('送转公告关联无效，请从本标的待核对事项重新读取')
+        if event['kind']=='SPLIT':
+            owned=[e for e in state['events'] if e['portfolio_id']==portfolio['id']]
+            for notice in state['corporate_actions']:
+                if notice.get('kind')!='split_notice' or notice['instrument_id']!=event['instrument_id']:continue
+                if notice['id']!=event.get('source_split_id') and notice['date']!=event['date']:continue
+                if not unchanged_split_key and any(e['id']!=event_id for e in split_notice_records(owned,notice)):
+                    raise DomainError('该公告已有送转/拆股记录或登记日记录，请核对并更正原记录，不能再次确认')
+                if any(e['id']!=event_id and e.get('source_split_id')==notice['id'] for e in owned):
+                    raise DomainError('该公告已有送转/拆股记录，请更正原记录，不能重复关联')
+        if event['kind'] == 'SPLIT' and not unchanged_split_key and any(e['portfolio_id'] == portfolio['id'] and e['kind'] == 'SPLIT'
+                and e.get('instrument_id') == event['instrument_id'] and e['date'] == event['date']
+                and e['id'] != event_id for e in state['events']):
+            raise DomainError('本组合同标的同日已有送转/拆股记录，请更正原记录；历史补录会自动重算参与批次，无需再次确认')
         event.update(id=event_id or uid(), created_at=before['created_at'] if before else now(), updated_at=now())
         if payload.get('sequence') in (None, ''):
             event['sequence'] = before['sequence'] if before else 0 if event['kind'].startswith('OPENING_') else max((e['sequence'] for e in state['events'] if e['portfolio_id'] == portfolio['id'] and e['date'] == event['date']), default=0) + 1
@@ -329,9 +349,16 @@ class Service:
         original = self.store.state();state,payload,inline=self.inline_instrument(original,payload)
         event, before, duplicate, candidate = self.prepared_event(state, payload, event_id)
         portfolio = self.portfolio(state, event['portfolio_id'])
-        old = Ledger(original, portfolio).run(include_history=False)
-        new = Ledger(candidate, portfolio).run(include_history=False)
+        old_ledger = Ledger(original, portfolio); new_ledger = Ledger(candidate, portfolio)
+        old = old_ledger.run(include_history=False)
+        new = new_ledger.run(include_history=False)
+        old_splits, new_splits = old_ledger.split_effects, new_ledger.split_effects
+        changes = [{'event_id': key, 'before': old_splits.get(key), 'after': new_splits.get(key)}
+                   for key in sorted(old_splits.keys() | new_splits.keys())
+                   if old_splits.get(key) != new_splits.get(key)]
+        changes.sort(key=lambda r: ((r['after'] or r['before'])['date'], r['event_id']))
         return wire({'revision': original['revision'], 'event': event, 'duplicate_of': duplicate,'instrument_merge':inline,
+            'split_changes': changes,
             'cash_changes': [{'currency': c, 'before': old['cash'][n]['balance'], 'after': new['cash'][n]['balance'],
                               'change': new['cash'][n]['balance'] - old['cash'][n]['balance']} for n, c in enumerate(CURRENCIES)],
             'before': {k: old[k] for k in ('total_assets', 'capital', 'available_cash', 'pnl')},
@@ -433,16 +460,18 @@ class Service:
             iid=action['instrument_id']
             if not any(a['portfolio_id']==portfolio_id and a['instrument_id']==iid for a in state['allocations']):continue
             owned_events=[e for e in state['events'] if e['portfolio_id']==portfolio_id]
-            if recorded_split_factor(owned_events,iid,action['date'])==dec(action['factor']):continue
+            records=split_notice_records(owned_events,action)
+            if split_notice_confirmed(records,action):continue
             ledger=Ledger(state,self.portfolio(state,portfolio_id))
             for op in ledger.ops:
                 if op[0]>=action['date']:break
                 ledger.apply(op)
             if ledger.position(iid)['quantity']<=0:continue
-            existing_split=next((e for e in owned_events if e['kind']=='SPLIT' and e.get('instrument_id')==iid and e['date']==action['date']),None)
+            existing_split=next(iter(records),None)
             if existing_split:
-                rows.append({'id':'split:'+action['id'],'type':'verify_split','label':'核对送转/拆股记录','title':instruments[iid]['name']+' · '+action['date']+' · 已录送转/拆股与源比例'+action['factor']+'不一致','event':existing_split});continue
-            rows.append({'id':'split:'+action['id'],'type':'confirm_split','title':instruments[iid]['name']+' · '+action['date']+' · 送转/拆股倍数'+action['factor']+'待确认','instrument_id':iid,'prefill':{'kind':'SPLIT','date':action['date'],'factor':action['factor'],'instrument_id':iid,'reason':'核对公开送转/拆股事件：'+action['source']}})
+                rows.append({'id':'split:'+action['id'],'type':'verify_split','label':'核对送转/拆股记录','title':instruments[iid]['name']+' · 公告除权日'+action['date']+'、倍数'+action['factor']+'；已录日期'+existing_split['date']+'、倍数'+existing_split['factor']+'，请核对原记录',
+                             'notice':action,'event':dict(existing_split,source_split_id=action['id'])});continue
+            rows.append({'id':'split:'+action['id'],'type':'confirm_split','title':instruments[iid]['name']+' · '+action['date']+' · 送转/拆股倍数'+action['factor']+'待确认','instrument_id':iid,'notice':action,'prefill':{'kind':'SPLIT','date':action['date'],'factor':action['factor'],'instrument_id':iid,'source_split_id':action['id'],'reason':'核对公开送转/拆股事件：'+action['source']}})
         return rows
 
     def benchmark(self, state, portfolio, history, portfolio_return):
@@ -656,11 +685,12 @@ class Service:
         profit_rows=self.trade_results(portfolio_id,instrument_id,state=state) if profit_rows is None else profit_rows
         results={r['event']['id']:r for r in profit_rows};instruments={i['id']:i for i in state['instruments']};market_data=Market(state)
         owned=[e for e in state['events'] if e['portfolio_id']==portfolio_id and (not instrument_id or e.get('instrument_id')==instrument_id)]
+        splits=split_effects(state,portfolio)
         rows=[]
         for event in owned:
             result=results.get(event['id']);legacy=portfolio.get('funding_mode')=='budget' and event['kind'] in ('DEPOSIT','OPENING_CASH','WITHDRAW','FX')
             rows.append({'event':event,'instrument':instruments.get(event.get('instrument_id')),
-                'facts':transaction_facts(event,market_data,owned),'actual':result['actual'] if result else None,
+                'facts':transaction_facts(event,market_data,owned,split=splits.get(event['id'])),'actual':result['actual'] if result else None,
                 'can_view_profit':result is not None,
                 'can_edit':not legacy and not event.get('transfer_id'),'can_cancel':not legacy})
         return wire(sorted(rows,key=lambda r:(r['event']['date'],r['event']['sequence'],r['event']['id']),reverse=True))
@@ -717,7 +747,8 @@ class Service:
                     revision[key] = json.loads(revision[key]) if revision[key] is not None else None
             return wire({'portfolio_id': portfolio_id, 'revision': state['revision'], 'event': event,
                          'instrument': next((i for i in state['instruments'] if i['id'] == instrument_id), None),
-                         'facts': transaction_facts(event, Market(state), owned),
+                         'facts': transaction_facts(event, Market(state), owned,
+                             split=split_effects(state,self.portfolio(state,portfolio_id)).get(event_id) if event['kind']=='SPLIT' and not raw['deleted'] else None),
                          'actual': current['actual'] if current and not raw['deleted'] else None,
                          'forward_performance': forward_performance(state, event) if current and not raw['deleted'] else None,
                          'todos': current['todos'] if current else [], 'cancelled': bool(raw['deleted']),
@@ -952,7 +983,7 @@ class Service:
                   'fx_rate', 'fx_type', 'fx_source_date', 'payment_date', 'confirmation_date', 'net_amount', 'pay_date', 'pay_fx_rate',
                   'reinvest_quantity', 'reinvest_price', 'reinvest_gross_amount', 'reinvest_date', 'reinvest_fx_rate', 'pay_fx_source_date', 'pay_fx_type', 'reinvest_fx_source_date', 'reinvest_fx_type', 'tax_known', 'ex_date_known',
                   'from_currency', 'to_currency', 'from_amount', 'to_amount', 'from_fx_rate', 'to_fx_rate', 'factor',
-                  'new_quantity', 'new_cost', 'historical_cost', 'initial_net_invested', 'asset_class', 'region', 'tags', 'reason', 'external_ref', 'reservation_id', 'transfer_id','source_dividend_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined']
+                  'new_quantity', 'new_cost', 'historical_cost', 'initial_net_invested', 'asset_class', 'region', 'tags', 'reason', 'external_ref', 'reservation_id', 'transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined']
         buf = io.StringIO(); writer = csv.DictWriter(buf, fieldnames=fields, extrasaction='ignore'); writer.writeheader()
         for e in state['events']:
             if e['portfolio_id'] == portfolio_id:

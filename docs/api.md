@@ -184,7 +184,7 @@ HTTP 403：同源/会话不匹配，重新建会话，不放宽校验。409：�
 
 `price_net` 是含汇兑、扣除买卖及非分红费税后的价格收益，含已实现与未实现；`dividends_net` 包含已确认应收、现金及再投净分红，扣关联补税/费用。`other_income` 为利息等，不应混称价格变化。`complete=false` 或金额为 null 时不能补零凑等式。`rounding_adjustment` 仅解释各项显示两位小数时的舍入差，不计入原始收益。
 
-分红流水 `facts` 增加 `dividend_gross_native`、`dividend_tax_native`、`dividend_net_native` 和 `dividend_tax_differs`；实际币种用 `facts.currency`。字段后缀只作为API标识，界面应明确写 CNY/HKD/USD。税前税后不一致时显示税额等式；不按市场猜税率。录入 UI 填写税前总额和税费，自动计算净额；API 可省略 net_amount，由 gross_amount−tax 精确计算，旧净额输入兼容。两者同时传入时校验税前−税额＝净额（税额已核对时）。
+分红流水 `facts` 增加 `dividend_gross_native`、`dividend_tax_native`、`dividend_net_native` 和 `dividend_tax_differs`；实际币种用 `facts.currency`。字段后缀只作为API标识，界面应明确写 CNY/HKD/USD。税前税后不一致时显示税额等式；不按市场猜税率。录入 UI 填写税前总额和税费，自动计算净额；新增现金分红／红利再投（含公告确认）的“税额已核对”默认勾选，可取消；编辑或重算已有记录保留原核对状态，打开表单不自动写入。API 可省略 net_amount，由 gross_amount−tax 精确计算，旧净额输入兼容。两者同时传入时校验税前−税额＝净额（税额已核对时）。
 
 ## 持仓排行与更新原因（0.6.5）
 

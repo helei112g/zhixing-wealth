@@ -185,3 +185,18 @@ class SummaryReminderTests(unittest.TestCase):
         e=self.service.save_event(dict(portfolio_id=p['id'],kind='BUY',date='2026-01-02',instrument=dict(market='CN',code='510300',name='合成ETF'),quantity='100',gross_amount='1000',fx_rate='1'))
         self.service.save_event(dict(portfolio_id=p['id'],instrument_id=e['instrument_id'],kind='DIVIDEND',date='2026-02-03',ex_date='2026-02-02',gross_amount='10',tax='0',tax_known=False,fx_rate='1'))
         rows=self.center.read()['items'];self.assertEqual(len(rows),1);self.assertEqual(rows[0]['source'],'portfolio');self.assertEqual(rows[0]['action']['portfolio_id'],p['id'])
+
+    def test_share_review_has_one_scoped_global_action_and_clears_after_confirmation(self):
+        p=self.service.save_portfolio(dict(name='合成送转提醒',planned_amount='10000',start_date='2026-01-01'))
+        e=self.service.save_event(dict(portfolio_id=p['id'],kind='BUY',date='2026-01-02',instrument=dict(market='CN',code='600000',name='合成股票'),quantity='100',gross_amount='1000',fx_rate='1'))
+        self.service.cache_actions(e['instrument_id'],[dict(kind='split_notice',date='2026-02-02',factor='3',source='synthetic')])
+        before=self.store.state()['revision']
+        rows=self.center.read()['items'];self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['action']['portfolio_id'],p['id'])
+        self.assertEqual(rows[0]['action']['label'],'核对送转/拆股份额')
+        self.assertEqual(rows[0]['action']['todo']['prefill']['factor'],'3')
+        self.assertIn('相关收益暂不计算',rows[0]['detail'])
+        self.assertEqual(rows[0]['id'],self.center.read()['items'][0]['id'])
+        self.assertEqual(self.store.state()['revision'],before)
+        self.service.save_event(dict(portfolio_id=p['id'],kind='SPLIT',date='2026-02-02',instrument_id=e['instrument_id'],factor='3'))
+        self.assertEqual(self.center.read()['items'],[])

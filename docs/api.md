@@ -293,6 +293,6 @@ health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/
 
 A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_kind=corporate_actions` 显示结果；只缓存公告，不自动增加账本流水。源中的纯现金分红可能将送转比例置空：只有实施方案明确为纯派现且金额与结构化字段一致时，才按无送转处理；未知或冲突仍报告同步失败。公告源失败保留旧缓存并显示失败，不从价格跳变猜测比例。港美股已有拆股公告沿用相同确认流程。
 
-`dashboard.todos` 和 `GET /api/portfolios/P/instruments/I` 的 `todos` 提供 `confirm_split` / `verify_split`。核对登记日持仓、除权日与倍数后，使用普通交易预览和 `/api/events` 提交 `kind=SPLIT`、`factor`、`instrument_id`、`portfolio_id`、`date`、`expected_revision`；10送8转12的倍数为3。组合首页直接展示待核对入口。确认后新增独立送转流水，保留原买入数量和总成本，除权当日先调整隔夜持仓，再处理当日买卖；现金分红及实际扣税单独核对。已知未确认或比例不一致时，相关估值/收益留空提示核对，不以错误份额展示暴跌。
+`dashboard.todos` 和 `GET /api/portfolios/P/instruments/I` 的 `todos` 提供 `confirm_split` / `verify_split`。核对登记日持仓、除权日与倍数后，使用普通交易预览和 `/api/events` 提交 `kind=SPLIT`、`factor`、`instrument_id`、`portfolio_id`、`date`、`expected_revision`；10送8转12的倍数为3。顶部系统提醒统一汇总待核对项，通过“查看提醒”进入中心处理；组合页面不重复展示独立通知区。确认后新增独立送转流水，保留原买入数量和总成本，除权当日先调整隔夜持仓，再处理当日买卖；现金分红及实际扣税单独核对。已知未确认或比例不一致时，相关估值/收益留空提示核对，不以错误份额展示暴跌。
 
 标的详情新增 `price_basis`（`raw` / `adjusted`），有复权数据的股票默认 adjusted。A股标注前复权参考，港美股按数据源标注复权参考；基金单位净值不强行复权。`curves` 中仍保留原有两种序列。同步时复权参考刷新完整记账区间，避免除权前后的缓存调整基准混用；未复权行情继续增量同步。复权仅用于价格走势及后续行情参考，不替换真实成交价、估值现价、收益、现金红利或 XIRR。

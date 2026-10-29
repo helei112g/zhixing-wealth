@@ -40,10 +40,13 @@ def portfolio_provider(store, state, family):
     for p in state['portfolios']:
         if p.get('archived'): continue
         for t in service.todo_items(state,p['id']):
+            share_action=t['type'] in ('confirm_split','verify_split')
+            detail=p['name']+(' · 送转/拆股未核对，相关收益暂不计算；确认后调整份额并重算，原买入与总成本保留。' if share_action else '')
+            label=t.get('label') or ('核对送转/拆股份额' if share_action else '前往核对')
             if t.get('event',{}).get('id') in existing: continue
-            rows.append(dict(id='portfolio:'+p['id']+':'+t['id'],source='portfolio',kind=t['type'],title=t['title'],detail=p['name'],
+            rows.append(dict(id='portfolio:'+p['id']+':'+t['id'],source='portfolio',kind=t['type'],title=t['title'],detail=detail,
                              date=(t.get('event') or t.get('prefill') or {}).get('date'),days=None,amount=None,currency=None,severity='attention',
-                             action=dict(type='portfolio_todo',portfolio_id=p['id'],todo=t,label=t.get('label','前往核对'))))
+                             action=dict(type='portfolio_todo',portfolio_id=p['id'],todo=t,label=label)))
     return rows
 
 

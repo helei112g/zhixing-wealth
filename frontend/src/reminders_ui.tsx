@@ -9,9 +9,10 @@ export function useReminders(version:string){
  useEffect(()=>{let active=true,busy=false;async function load(){if(busy||document.hidden)return;busy=true;try{const value=await api('/reminders');if(active){D(value);E('');}}catch(e:any){if(active)E(e.message);}finally{busy=false;}}load();const timer=setInterval(load,45000);window.addEventListener('focus',load);return()=>{active=false;clearInterval(timer);window.removeEventListener('focus',load);};},[version]);
  return {data,error};
 }
-export function RemindersBanner({data,error,onOpen}:Obj){
- if(!error&&!data?.count)return null;
- return <div className={'family-banner system-reminder-banner '+(data?.today?'urgent':'')} role="status"><Bell size={21}/><div><b>{error?'提醒暂不可用':'系统提醒 · '+data.count+' 项'}</b><small>{error||data.items.slice(0,2).map((r:Obj)=>r.title).join('　/　')}</small></div><Button small onClick={onOpen}>查看提醒 <ChevronRight size={14}/></Button></div>;
+export function RemindersBanner({data,error,quality,onOpen}:Obj){
+ const reasons=quality?.warnings||[],hasReminders=Boolean(data?.count);
+ if(!error&&!hasReminders&&!reasons.length)return null;
+ return <div className={'family-banner system-reminder-banner '+(data?.today?'urgent':'')} role="status"><Bell size={21}/><div><b>{error?'提醒暂不可用':hasReminders?'系统提醒 · '+data.count+' 项':'系统提醒'}</b>{(error||hasReminders)&&<small>{error||data.items.slice(0,2).map((r:Obj)=>r.title).join('　/　')}</small>}{reasons.length>0&&<details key={quality.portfolio.id+':'+quality.date} className="banner-valuation"><summary>{quality.portfolio.name} · {quality.incomplete?'人民币合计不完整':'估值含暂估 / 待核对项'} · {reasons.length} 条说明</summary><small>估值截至 {quality.date}</small><ul>{reasons.map((reason:string)=><li key={reason}>{reason}</li>)}</ul>{quality.latest_complete_date&&<small>最近完整估值日 {quality.latest_complete_date}</small>}</details>}</div>{(error||hasReminders)&&<Button small onClick={onOpen}>查看提醒 <ChevronRight size={14}/></Button>}</div>;
 }
 export function ReminderCenter({data,error,onAction,busy}:Obj){
  const[source,S]=useState('all'),focus=new URLSearchParams(location.search).get('focus');

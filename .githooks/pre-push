@@ -1,3 +1,8 @@
 #!/bin/sh
 set -eu
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/master|refs/heads/main) echo '禁止直接推送主分支，请提交以 master 为目标的 MR / PR。' >&2; exit 1 ;;
+  esac
+done
 exec .venv/bin/python scripts/source_check.py

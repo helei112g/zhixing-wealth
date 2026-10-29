@@ -72,15 +72,66 @@ def _fetch_notices(instrument):
         return parse_fund(market.fetch(f'https://fundf10.eastmoney.com/fhsp_{code}.html','https://fund.eastmoney.com/'),code)
     if instrument['market'] in ('SH','SZ') and instrument['type']=='stock':
         code=instrument['code']
-        records=reports('https://datacenter-web.eastmoney.com/api/data/v1/get',{
-            'reportName':'RPT_SHAREBONUS_DET','columns':'ALL','filter':f'(SECURITY_CODE="{code}")',
-            'pageSize':100,'sortColumns':'REPORT_DATE','sortTypes':'-1','source':'WEB','client':'WEB'})
+        records=stock_records(code)
         return parse_stock(records,code) if records is not None else None
     if instrument['market'] in ('HK','US'):return overseas_notices(instrument)
     return None
 
 
 _NOTICE_CACHE={}
+_STOCK_CACHE={}
+
+def stock_records(code):
+    cached=_STOCK_CACHE.get(code)
+    if cached and time.monotonic()-cached[0]<600:return copy.deepcopy(cached[1])
+    rows=reports('https://datacenter-web.eastmoney.com/api/data/v1/get',{
+        'reportName':'RPT_SHAREBONUS_DET','columns':'ALL','filter':f'(SECURITY_CODE="{code}")',
+        'pageSize':100,'sortColumns':'REPORT_DATE','sortTypes':'-1','source':'WEB','client':'WEB'})
+    _STOCK_CACHE[code]=(time.monotonic(),copy.deepcopy(rows))
+    return rows
+
+def parse_stock_splits(records, code):
+    """Implemented per-ten bonus/conversion shares; never infer from price jumps."""
+    rows={}
+    for r in records:
+        if r.get('SECURITY_CODE')!=code:raise market.ProviderError('A股送转源代码不匹配')
+        if r.get('ASSIGN_PROGRESS')!='实施分配':continue
+        ex=date_or_none(r.get('EX_DIVIDEND_DATE'))
+        if not ex:continue
+        parts=[r.get('BONUS_RATIO'),r.get('IT_RATIO')]
+        total=r.get('BONUS_IT_RATIO')
+        if all(v is not None for v in parts):
+            value=sum((dec(v,nonnegative=True) for v in parts),Decimal(0))
+            if total is not None and value!=dec(total,nonnegative=True):
+                raise market.ProviderError('送股与转增合计不一致，请核对公告')
+        elif total is not None:value=dec(total,nonnegative=True)
+        else:
+            # This feed uses null share ratios for cash-only distributions. Require
+            # the implemented plan AND matching cash amount before accepting that
+            # interpretation; a missing/ambiguous plan must still fail visibly.
+            profile=str(r.get('IMPL_PLAN_PROFILE') or '').replace(' ','').replace('（','(').replace('）',')')
+            cash_only=re.fullmatch(r'10派(\d+(?:\.\d+)?)元(?:\(含税(?:[,，]扣税后\d+(?:\.\d+)?元)?\))?',profile)
+            cash=r.get('PRETAX_BONUS_RMB')
+            if (all(v is None for v in parts) and cash_only and cash is not None
+                    and dec(cash,nonnegative=True)>0 and dec(cash_only[1])==dec(cash)):
+                continue
+            raise market.ProviderError('已实施公告缺少送转比例，且无法核实为纯现金分红，请核对公告')
+        if value==0:continue
+        record_date=date_or_none(r.get('EQUITY_RECORD_DATE'))
+        if not record_date or record_date>=ex:raise market.ProviderError('送转股登记日或除权日不完整')
+        action=dict(kind='split_notice',date=ex,factor=ds(1+value/10),record_date=record_date,
+                    source='东方财富·已实施送转股',source_url=f'https://data.eastmoney.com/yjfp/detail/{code}.html',
+                    source_ref=f'stock-split:{code}:{ex}',bonus_per_ten=ds(value),
+                    coverage_note='每10股送股与转增合计；仅生成核对事项，不自动改写持仓。')
+        if ex in rows and rows[ex]['factor']!=action['factor']:raise market.ProviderError('同日送转比例冲突，请核对公告')
+        rows[ex]=action
+    return list(rows.values())
+
+def fetch_stock_splits(instrument):
+    records=stock_records(instrument['code'])
+    if records is None:raise market.ProviderError('送转股公告暂不可得，保留旧缓存')
+    return parse_stock_splits(records,instrument['code'])
+
 def fetch_notices(instrument):
     key=(instrument['market'],instrument['code'],instrument['currency']);cached=_NOTICE_CACHE.get(key)
     if cached and time.monotonic()-cached[0]<600:return copy.deepcopy(cached[1])

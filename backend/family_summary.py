@@ -1,4 +1,4 @@
-"""Overview compares the previous period; the history chart separately uses YoY."""
+"""Shared previous-period asset comparisons and income records."""
 import calendar
 from datetime import timedelta
 from .common import DomainError, ZERO, day, dec, today, wire
@@ -57,8 +57,8 @@ def period_summary(state, family, grain='month', period=None, start=None, end=No
         return sorted(r['id']+':'+r['share'] for r in snap['items'] if (r['category']=='debt') == (key=='total_debt')) if key in ('total_assets','total_debt') else sorted(r['id']+':'+r['share'] for r in snap['items'])
     def comparison(value, old, changed=False):
         amount = value-old if value is not None and old is not None else None
-        reason = '缺少上期记录或金额' if amount is None else '资产范围发生变化' if changed else '上期金额不大于零' if old <= 0 else ''
-        return dict(previous=old, amount=amount, rate=amount/old if amount is not None and old>0 and not changed else None, reason=reason)
+        reason = '缺少上期记录或金额' if amount is None else '上期金额不大于零' if old <= 0 else '含新增、移除或份额调整' if changed else ''
+        return dict(previous=old, amount=amount, rate=amount/old if amount is not None and old>0 else None, reason=reason)
     def value_of(snap, key):
         if snap is None: return None
         if key == 'liquid_cash': return snap['safety']['available_cash']

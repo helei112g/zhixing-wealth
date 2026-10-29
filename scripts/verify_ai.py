@@ -51,7 +51,11 @@ def main():
     before=client.request('/api/family/overview')['total_assets']
     income,_=command('income',dict(kind='custom',name='AI合成收入',month='2024-02',date='2024-02-01',currency='CNY',amount='100'))
     command('income',dict(kind='custom',name='AI合成收入',month='2024-02',date='2024-02-01',currency='CNY',amount='120'),income['id'])
-    records=client.request('/api/family/income?year=2024')['records']
+    income_response=client.request('/api/family/income?year=2024')
+    records=income_response['records']
+    check(income_response['summary']['total']=='120' and income_response['summary']['groups']['custom']['share']=='1', 'income cumulative and share use latest record through HTTP')
+    history=client.request('/api/family/history?grain=month&comparison=previous&start=2024-02-01&end=2024-02-29')
+    check(history['rows'][0]['comparison_date']=='2024-01-31', 'history previous compares prior month end through HTTP')
     check(len([r for r in records if r['id']==income['id']])==1 and next(r for r in records if r['id']==income['id'])['amount']=='120','income correction replaces current amount, not duplicate record')
     check(client.request('/api/family/overview')['total_assets']==before,'income does not double-count cash')
     p=client.write('/api/portfolios',dict(name='AI合成组合验收',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
@@ -130,6 +134,21 @@ def main():
     try: client.write('/api/events',dict(reinvest,expected_revision=preview['revision']),'POST')
     except RuntimeError as error: check('HTTP 409' in str(error),'AI stale reinvestment write is rejected')
     else: raise AssertionError('stale reinvestment write accepted')
+    check(cap['corporate_actions']['confirmation_kind']=='SPLIT' and not cap['corporate_actions']['automatic_ledger_write'],'AI discovers explicit share-action confirmation')
+    stock=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'CN','code':'600000','name':'AI合成送转股'},quantity='100',gross_amount='3000',fx_rate='1',expected_revision=revision()),'POST')
+    fixture="from pathlib import Path;import sys;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Service(Store(d));s.cache_prices(sys.argv[2],[{'date':'2024-01-03','price':'10','source':'synthetic'}]);s.cache_actions(sys.argv[2],[{'kind':'split_notice','date':'2024-01-03','factor':'3','source':'synthetic'}])"
+    subprocess.run([sys.executable,'-c',fixture,str(expected),stock['instrument_id']],cwd=Path(__file__).resolve().parents[1],check=True)
+    endpoint='/api/portfolios/'+p['id']+'/instruments/'+stock['instrument_id']
+    todo=client.request(endpoint)['todos'][0]
+    split=dict(todo['prefill'],portfolio_id=p['id'],fx_rate='1',expected_revision=revision())
+    preview=client.preview(split)
+    check(revision()==split['expected_revision'] and preview['event']['factor']=='3','AI share-action preview preserves ledger')
+    saved=client.write('/api/events',dict(split,expected_revision=preview['revision']),'POST')
+    corrected=client.request(endpoint)
+    check(corrected['holding']['quantity']=='300' and corrected['holding']['cost_including_fees_native']=='3000' and not corrected['todos'],'AI confirms shares and reads back preserved total cost')
+    try:client.write('/api/events',dict(split,expected_revision=preview['revision']),'POST')
+    except RuntimeError as error:check('HTTP 409' in str(error),'AI stale share-action confirmation cannot double shares')
+    else:raise AssertionError('stale share-action write accepted')
     (output/'ai-passed.json').write_text(json.dumps({'checks':len(checks),'passed':checks},ensure_ascii=False,indent=2))
 
 

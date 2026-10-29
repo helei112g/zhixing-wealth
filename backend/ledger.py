@@ -275,7 +275,9 @@ def operations(events):
             op(d, kind)
     receipts = {'DEPOSIT','INTEREST','DIV_ACCRUE','DIV_RECEIPT','SELL_RECEIPT','OPENING_RECEIPT'}
     def key(r):
-        priority = -2 if r[4].startswith('OPENING_') and r[4] != 'OPENING_RECEIPT' else -1 if r[4] in receipts else 0
+        # A split changes overnight holdings before ex-day purchases/sales.
+        # Source insertion order must not multiply newly bought ex-day shares.
+        priority = -3 if r[4]=='SPLIT' else -2 if r[4].startswith('OPENING_') and r[4] != 'OPENING_RECEIPT' else -1 if r[4] in receipts else 0
         return (r[0], priority, r[1], r[2])
     return sorted(result, key=key)
 
@@ -297,7 +299,8 @@ class Ledger:
             for n, row in enumerate(self.budget_history):
                 e = {'date':row['date'],'amount':row['amount'],'currency':'CNY','fx_rate':'1','fee':'0','tax':'0'}
                 self.ops.append((row['date'],-10,0,'budget:'+str(n),'BUDGET_OPEN' if n==0 else 'BUDGET_CHANGE',e))
-            self.ops.sort(key=lambda op:(op[0],-5 if op[4].startswith('BUDGET_') else -2 if op[4].startswith('OPENING_') else -1 if op[4] in ('INTEREST','DIV_ACCRUE','DIV_RECEIPT','SELL_RECEIPT','OPENING_RECEIPT') else 0,op[1],op[2]))
+            self.ops.sort(key=lambda op:(op[0],-5 if op[4].startswith('BUDGET_') else -3 if op[4]=='SPLIT' else -2 if op[4].startswith('OPENING_') else -1 if op[4] in ('INTEREST','DIV_ACCRUE','DIV_RECEIPT','SELL_RECEIPT','OPENING_RECEIPT') else 0,op[1],op[2]))
+        self._split_entitlements = {}
         self.reset()
 
     def reset(self):
@@ -540,6 +543,21 @@ class Ledger:
         for key in before_components:
             self.native_components[key][c] += (after_components[key] - before_components[key]) / operation_fx
 
+    def has_unconfirmed_split(self, instrument_id, as_of):
+        for action in self.data['corporate_actions']:
+            if action.get('kind')!='split_notice' or action['instrument_id']!=instrument_id or action['date']>str(as_of):continue
+            if recorded_split_factor(self.events,instrument_id,action['date'])==dec(action['factor']):continue
+            key=(instrument_id,action['date'])
+            if key not in self._split_entitlements:
+                # Check overnight ownership, including positions sold since the action.
+                prior=Ledger(dict(self.data,corporate_actions=[]),self.portfolio)
+                for op in prior.ops:
+                    if op[0]>=action['date']:break
+                    prior.apply(op)
+                self._split_entitlements[key]=prior.position(instrument_id)['quantity']>0
+            if self._split_entitlements[key]:return True
+        return False
+
     def snapshot(self, d):
         warnings = list(self.notes)
         missing = []
@@ -572,12 +590,12 @@ class Ledger:
             fallback = self.last_trades.get(inst_id)
             if fallback and (quote is None or fallback['date'] > quote['date']): quote = fallback
             current_price = dec(quote['price']) if quote else None
-            unresolved_split=any(a.get('kind')=='split_notice' and a.get('instrument_id')==inst_id and a['date']<=str(d) and any(l['quantity']>0 and l['date']<a['date'] for l in p['lots']) and recorded_split_factor(self.events,inst_id,a['date'])!=dec(a['factor']) for a in self.data['corporate_actions'])
+            unresolved_split=self.has_unconfirmed_split(inst_id,d)
             if unresolved_split:
-                current_price=None;missing.append(i['name']+'有待确认拆分，请核对份额')
+                current_price=None;missing.append(i['name']+'有待确认送转/拆股，请核对份额')
             rate = self.market.fx(i['currency'], d)
             value = None
-            if qty == 0:
+            if qty == 0 and not unresolved_split:
                 value = ZERO
             elif current_price is None:
                 missing.append(i['name'] + '缺少价格/单位净值')
@@ -594,7 +612,7 @@ class Ledger:
             lots = [dict(lot, **(tags(allocation) if self.budget_mode else {}), value_base=lot['quantity'] * current_price * dec(rate['rate'])
                          if current_price is not None and rate is not None else None)
                     for lot in p['lots'] if lot['quantity'] > 0]
-            holdings.append({'instrument': i, 'instrument_id': inst_id, 'quantity': qty,
+            holdings.append({'instrument': i, 'instrument_id': inst_id, 'quantity': qty, 'unconfirmed_split': unresolved_split,
                 'available_quantity': sum((l['quantity'] for l in p['lots'] if l['available_on'] <= str(d)), ZERO),
                 'price': current_price, 'quote': quote, 'fx': rate, 'value_base': value,
                 'cost_native': p['cost_native'], 'cost_base': p['cost_base'],

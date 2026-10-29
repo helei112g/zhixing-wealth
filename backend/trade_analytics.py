@@ -214,14 +214,14 @@ def lot_projection(state,portfolio,as_of=None):
         return [(lot['payment_date'],-p['cost'])]+([(min(p['pay_date'],end),p['proceeds'])] if p['proceeds'] is not None else [])+[(min(v['date'],end),v['amount']) for v in p['dividends'] if v['amount'] is not None]
     for lot in lots.values():
         for part in lot['parts']:
-            part['profit']=part_profit(part) if part['proceeds'] is not None and all(v['amount'] is not None for v in part['dividends']) else None
+            part['profit']=part_profit(part) if not holdings.get(lot['event']['instrument_id'],{}).get('unconfirmed_split') and part['proceeds'] is not None and all(v['amount'] is not None for v in part['dividends']) else None
     def provisional(inst_id):return any(e['instrument_id']==inst_id and e['kind'] in ('DIVIDEND','REINVEST') and (not e.get('tax_known',True) or not e.get('ex_date_known',True)) for e in ledger.events if e['date']<=end)
     for bid,lot in lots.items():
         h=holdings.get(lot['event']['instrument_id']);remaining=lot['remaining'];closed=remaining==0
         value=ZERO if closed else remaining*h['price']*dec(h['fx']['rate']) if h and h['price'] is not None and h['fx'] else None
         realized=sum((part_profit(p) for p in lot['parts']),ZERO)
         income=lot['dividends']+[v for p in lot['parts'] for v in p['dividends']]
-        complete=all(v['amount'] is not None for v in income) and all(p['proceeds'] is not None for p in lot['parts'])
+        complete=not (h or {}).get('unconfirmed_split') and all(v['amount'] is not None for v in income) and all(p['proceeds'] is not None for p in lot['parts'])
         pending=any(v['pending'] for v in income) or any(p['pay_date']>end for p in lot['parts'])
         dividends_net=sum((v['amount'] for v in income if is_dividend_income(v) and v['amount'] is not None),ZERO)
         income_total=sum((v['amount'] for v in income if v['amount'] is not None),ZERO)
@@ -231,16 +231,16 @@ def lot_projection(state,portfolio,as_of=None):
         annual={'rate':None,'status':'企业行动后现金流需核对'} if lot['ambiguous'] else xirr(flows) if complete and value is not None else {'rate':None,'status':'缺少估值或现金流'}
         if pending: annual['status']+='；含未到账应收估值'
         metrics[bid]={'xirr':annual['rate'],'xirr_status':annual['status'],'xirr_basis':XIRR_BASIS,'cash_flows':[{'date':d,'amount':v} for d,v in sorted(flows)],'profit':profit,'return_on_cost':ratio(profit,lot['original_cost']) if profit is not None else None,
-            'cost':lot['original_cost'],'market_value':value,'remaining_quantity':remaining,'realized_profit':realized,
+            'cost':lot['original_cost'],'market_value':value,'remaining_quantity':remaining,'realized_profit':None if (h or {}).get('unconfirmed_split') else realized,
             'floating_profit':profit-realized if profit is not None else None,'dividends_net':dividends_net,
             'closed':closed,'closed_date':max((p['date'] for p in lot['parts']),default=None) if closed else None,
             'as_of':end,'provisional':provisional(lot['event']['instrument_id']),'parts':lot['parts'],'currency':'CNY','estimated':bool(h and (h.get('quote') or {}).get('fallback')),'unallocated_notes':list(set(unallocated)),
             'pending_settlement':pending,'valuation_frozen':closed and not pending,
-            'status':'人工企业行动，逐笔结果需核对' if lot['ambiguous'] else '已平仓，回款或应得分红待结清' if closed and pending else '已平仓，停止行情估值' if closed else '持有中，随最新估值更新'}
+            'status':'送转/拆股份额待核对' if (h or {}).get('unconfirmed_split') else '人工企业行动，逐笔结果需核对' if lot['ambiguous'] else '已平仓，回款或应得分红待结清' if closed and pending else '已平仓，停止行情估值' if closed else '持有中，随最新估值更新'}
     for sid,sale in sales.items():
         parts=sale['parts'];flows=[f for p in parts for f in part_flows(p)]
         incomes=[v for p in parts for v in p['dividends']]
-        complete=all(v['amount'] is not None for v in incomes) and all(p['proceeds'] is not None for p in parts)
+        complete=not holdings.get(sale['event']['instrument_id'],{}).get('unconfirmed_split') and all(v['amount'] is not None for v in incomes) and all(p['proceeds'] is not None for p in parts)
         unsettled=any(p['pay_date']>end for p in parts) or any(v['pending'] for v in incomes)
         ambiguous=any(lots[p['buy_event_id']]['ambiguous'] for p in parts)
         annual={'rate':None,'status':'企业行动后现金流需核对'} if ambiguous else {'rate':None,'status':'缺少应收估值汇率'} if not complete else {'rate':None,'status':'赎回金额待确认'} if sale['pending'] else xirr(flows)
@@ -251,7 +251,7 @@ def lot_projection(state,portfolio,as_of=None):
             'remaining_quantity':ZERO,'realized_profit':profit,'floating_profit':ZERO,'dividends_net':sum((v['amount'] for v in incomes if is_dividend_income(v) and v['amount'] is not None),ZERO),
             'provisional':provisional(sale['event']['instrument_id']),'closed':True,'closed_date':sale['event']['date'],'as_of':sale['event']['date'],'parts':parts,'currency':'CNY',
             'unallocated_notes':list(set(unallocated)),'pending_settlement':unsettled or sale['pending'],'valuation_frozen':not unsettled and not sale['pending'],'xirr':annual['rate'],'xirr_status':annual['status'],'xirr_basis':XIRR_BASIS,'cash_flows':[{'date':d,'amount':v} for d,v in sorted(flows)],
-            'status':'旧流水按FIFO推导关联，请核对' if sale['legacy'] else '按所选买入批次结算，行情不再影响结果'}
+            'status':'送转/拆股份额待核对' if holdings.get(sale['event']['instrument_id'],{}).get('unconfirmed_split') else '旧流水按FIFO推导关联，请核对' if sale['legacy'] else '按所选买入批次结算，行情不再影响结果'}
     return metrics
 
 

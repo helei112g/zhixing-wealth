@@ -36,6 +36,48 @@ class SummaryReminderTests(unittest.TestCase):
         self.write('valuation',dict(item_id=item['id'],household_amount=amount,effective_on=when))
     def income(self,month,amount,**extra):
         return self.write('income',dict(kind='salary',month=month,amount=amount,currency='CNY',**extra))
+    def test_flat_balances_have_zero_previous_period_change_despite_varying_yoy(self):
+        cash=self.item('cash','100','2025-01-01')
+        self.value(cash,'150','2025-02-01');self.value(cash,'200','2025-12-31')
+        self.value(cash,'300','2026-01-01')
+        rows=self.family.history('2026-02-01','2026-03-31',comparison='previous')['rows']
+        self.assertEqual([r['comparison_date'] for r in rows],['2026-01-31','2026-02-28'])
+        self.assertEqual([r['changes']['cash']['rate'] for r in rows],['0','0'])
+        self.assertEqual([r['changes']['cash']['amount'] for r in rows],['0','0'])
+        annual=self.family.history('2026-01-01','2026-10-28','year','previous')['rows'][0]
+        self.assertEqual(annual['comparison_date'],'2025-12-31')
+        self.assertEqual(annual['changes']['cash']['rate'],'0.5')
+        self.assertEqual(self.family.history('2026-01-01','2026-02-28',comparison='yoy')['rows'][0]['changes']['cash']['rate'],'2')
+        self.assertEqual(self.family.history('2026-01-01','2026-02-28',comparison='yoy')['rows'][1]['changes']['cash']['rate'],'1')
+
+    def test_income_cumulative_composition_uses_latest_records_and_selected_year(self):
+        self.income('2025-01','9999');i=self.income('2026-01','100.10')
+        self.write('income',dict(kind='salary',month='2026-01',amount='200.20',currency='CNY'),i['id'])
+        self.write('income',dict(kind='rent',month='2026-02',amount='100.10',currency='CNY'))
+        s=self.family.income_summary(2026)['summary']
+        self.assertEqual(s['total'],'300.3');self.assertEqual(s['recorded_months'],2)
+        self.assertEqual(s['groups']['salary']['amount'],'200.2')
+        self.assertEqual(D(s['groups']['salary']['share']),D(2)/3)
+        self.assertEqual(s['groups']['custom'],{'amount':'0','share':'0'})
+        self.assertEqual(s['missing_count'],0)
+
+    def test_income_cumulative_preserves_unknown_zero_and_missing_fx(self):
+        empty=self.family.income_summary(2026)['summary']
+        self.assertIsNone(empty['total']);self.assertIsNone(empty['groups']['salary']['share'])
+        self.income('2026-01','0')
+        zero=self.family.income_summary(2026)['summary']
+        self.assertEqual(zero['total'],'0');self.assertIsNone(zero['groups']['salary']['share'])
+        self.income('2026-02','100')
+        self.write('income',dict(kind='rent',month='2026-02',amount='10',currency='USD'))
+        missing=self.family.income_summary(2026)['summary']
+        self.assertIsNone(missing['total']);self.assertEqual(missing['known_total'],'100')
+        self.assertEqual(missing['missing_count'],1);self.assertIsNone(missing['groups']['rent']['amount'])
+        self.assertTrue(all(g['share'] is None for g in missing['groups'].values()))
+        with self.store.transaction() as db:
+            self.store.upsert_fx(db,dict(currency='USD',date='2026-02-27',rate='7',source='synthetic'))
+        complete=self.family.income_summary(2026)['summary']
+        self.assertEqual(complete['total'],'170');self.assertEqual(complete['groups']['rent']['amount'],'70')
+
     def test_year_compares_previous_year_end_and_complete_prior_income(self):
         cash=self.item('cash','100');self.value(cash,'900','2025-12-31');self.value(cash,'1200','2026-01-01')
         self.income('2025-01','10');self.income('2025-11','999');self.income('2026-01','20');self.income('2026-10','5')
@@ -64,7 +106,7 @@ class SummaryReminderTests(unittest.TestCase):
         a=self.item('cash','0');self.value(a,'10','2026-01-01')
         s=self.family.summary('year','2026');self.assertIsNone(s['metrics']['total_assets']['rate']);self.assertEqual(s['metrics']['total_assets']['reason'],'上期金额不大于零')
         self.item('receivable','5','2026-02-01');s=self.family.summary('year','2026')
-        self.assertIsNone(s['metrics']['total_assets']['rate']);self.assertEqual(s['metrics']['total_assets']['reason'],'资产范围发生变化')
+        self.assertIsNone(s['metrics']['total_assets']['rate']);self.assertEqual(s['metrics']['total_assets']['reason'],'上期金额不大于零')
         s=self.family.summary('year','2025');self.assertIsNone(s['metrics']['total_assets']['previous']);self.assertIsNone(s['metrics']['income']['value'])
     def test_currency_conversion_date_missing_fx_and_income_correction(self):
         i=self.write('income',dict(kind='rent',month='2026-02',currency='USD',amount='10'))
@@ -143,3 +185,18 @@ class SummaryReminderTests(unittest.TestCase):
         e=self.service.save_event(dict(portfolio_id=p['id'],kind='BUY',date='2026-01-02',instrument=dict(market='CN',code='510300',name='合成ETF'),quantity='100',gross_amount='1000',fx_rate='1'))
         self.service.save_event(dict(portfolio_id=p['id'],instrument_id=e['instrument_id'],kind='DIVIDEND',date='2026-02-03',ex_date='2026-02-02',gross_amount='10',tax='0',tax_known=False,fx_rate='1'))
         rows=self.center.read()['items'];self.assertEqual(len(rows),1);self.assertEqual(rows[0]['source'],'portfolio');self.assertEqual(rows[0]['action']['portfolio_id'],p['id'])
+
+    def test_share_review_has_one_scoped_global_action_and_clears_after_confirmation(self):
+        p=self.service.save_portfolio(dict(name='合成送转提醒',planned_amount='10000',start_date='2026-01-01'))
+        e=self.service.save_event(dict(portfolio_id=p['id'],kind='BUY',date='2026-01-02',instrument=dict(market='CN',code='600000',name='合成股票'),quantity='100',gross_amount='1000',fx_rate='1'))
+        self.service.cache_actions(e['instrument_id'],[dict(kind='split_notice',date='2026-02-02',factor='3',source='synthetic')])
+        before=self.store.state()['revision']
+        rows=self.center.read()['items'];self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['action']['portfolio_id'],p['id'])
+        self.assertEqual(rows[0]['action']['label'],'核对送转/拆股份额')
+        self.assertEqual(rows[0]['action']['todo']['prefill']['factor'],'3')
+        self.assertIn('相关收益暂不计算',rows[0]['detail'])
+        self.assertEqual(rows[0]['id'],self.center.read()['items'][0]['id'])
+        self.assertEqual(self.store.state()['revision'],before)
+        self.service.save_event(dict(portfolio_id=p['id'],kind='SPLIT',date='2026-02-02',instrument_id=e['instrument_id'],factor='3'))
+        self.assertEqual(self.center.read()['items'],[])

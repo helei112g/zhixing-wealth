@@ -75,10 +75,10 @@ class FamilyTests(unittest.TestCase):
     def test_negative_net_baseline_has_amount_but_no_rate(self):
         a=self.item(amount='10');self.item('debt','20');self.value(a,'15')
         r=self.family.history(end='2026-02-28')['rows'];self.assertEqual(D(r[-1]['changes']['net']['amount']),5);self.assertIsNone(r[-1]['changes']['net']['rate'])
-    def test_scope_changes_have_no_growth_rate(self):
+    def test_scope_changes_are_included_in_total_change(self):
         a=self.item(amount='100');v=a['versions'][-1]
         self.write('item',dict(name=v['name'],category='cash',currency='CNY',economic_id='cash',share='.5',effective_on='2026-02-01'),a['id'])
-        r=self.family.history(end='2026-02-28')['rows'];self.assertTrue(r[-1]['scope_changed']);self.assertIsNone(r[-1]['changes']['cash']['rate'])
+        r=self.family.history(end='2026-02-28')['rows'];self.assertTrue(r[-1]['scope_changed']);self.assertEqual(r[-1]['changes']['cash']['rate'],'-0.5');self.assertEqual(r[-1]['changes']['cash']['reason'],'含新增、移除或份额调整')
     def test_latest_effective_value_and_same_day_correction(self):
         a=self.item(amount='100');self.value(a,'120','2026-03-01');self.value(a,'110','2026-02-01');self.value(a,'125','2026-03-01')
         self.assertEqual(D(self.family.read('2026-02-20')['total_assets']),110)

@@ -214,19 +214,41 @@ def backup(workspace,environment):
     with LedgerProcessLock(values['data_dir']):return snapshot(values['data_dir'],target)
 
 
+def release_source(root):
+    """Gate Git builds on the published master tip; archives keep hash identity."""
+    root=Path(root).resolve()
+    git=subprocess.run(['git','rev-parse','--show-toplevel'],cwd=root,capture_output=True,text=True)
+    if git.returncode==0:
+        if Path(git.stdout.strip()).resolve()!=root:raise DomainError('Git 仓库边界错误')
+        def read(*args):
+            result=subprocess.run(['git',*args],cwd=root,capture_output=True,text=True,timeout=30)
+            if result.returncode:raise DomainError('无法核对发布来源，请检查 master、origin 和网络后重试')
+            return result.stdout.strip()
+        if read('status','--porcelain'):raise DomainError('发布前请提交需求分支改动并通过 MR 合并到 master')
+        if read('branch','--show-current')!='master':raise DomainError('正式版本只能从 master 准备；请先完成需求分支测试和 MR 合并')
+        if read('rev-parse','--abbrev-ref','@{upstream}')!='origin/master':raise DomainError('master 必须跟踪 origin/master')
+        commit=read('rev-parse','HEAD')
+        remote=read('ls-remote','--exit-code','origin','refs/heads/master').split()
+        if len(remote)!=2 or remote[0]!=commit or read('rev-parse','origin/master')!=commit:
+            raise DomainError('本地 master 与远端不一致；请核对 MR 已合并并执行 git pull --ff-only')
+        return {'kind':'git','branch':'master','commit':commit}
+    # A downloaded source archive has no Git metadata. Its master provenance
+    # must be checked by the installer; the release fixes its complete hash.
+    if (root/'.git').exists() or (root/'.git').is_symlink():raise DomainError('Git 元数据不可用，不能当作源码包绕过发布检查')
+    return {'kind':'archive','commit':None}
+
+
 def prepare(workspace):
+    provenance=release_source(ROOT)
     sources=source_manifest(ROOT)
     source_id=digest(sources)
-    commit=None
-    git=subprocess.run(['git','rev-parse','--show-toplevel'],cwd=ROOT,capture_output=True,text=True)
-    if git.returncode==0:
-        if Path(git.stdout.strip()).resolve()!=ROOT:raise DomainError('Git 仓库边界错误')
-        if subprocess.check_output(['git','status','--porcelain'],cwd=ROOT).strip():raise DomainError('发布前请提交开发目录中的改动')
-        commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
-    name=f'v{VERSION}-{source_id[:12]}'
+    commit=provenance['commit']
+    name=f'v{VERSION}-{source_id[:12]}' + (f'-{commit[:8]}' if commit else '')
     destination=release_path(workspace,name)
     if destination.exists():
-        verify_release(destination)
+        existing=verify_release(destination)
+        if existing.get('provenance')!=provenance:
+            raise DomainError('已有候选包的发布来源不一致，请核对并重新准备，不能复用未记录来源的版本')
         return {'release':name,'path':str(destination),'reused':True}
     destination.mkdir(parents=True)
     try:
@@ -250,9 +272,10 @@ def prepare(workspace):
             raise DomainError('发布缺少空白安装或完整回归证据')
         verify_ai_target(destination)
         if source_manifest(ROOT)!=sources:raise DomainError('准备期间开发源码发生变化，请重新准备发布')
+        if release_source(ROOT)!=provenance:raise DomainError('准备期间 master 发布来源变化，请重新准备发布')
         assets={p.relative_to(destination).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in (destination/'frontend/dist').rglob('*') if p.is_file()}
         atomic_json(destination/'release.json',{'release':name,'version':VERSION,'schema':SCHEMA,'supported_schemas':[SCHEMA],
-                    'source_id':source_id,'commit':commit,'built_at':now(),'source_files':sources,'assets':assets,'native_assets':native_assets,
+                    'source_id':source_id,'commit':commit,'provenance':provenance,'built_at':now(),'source_files':sources,'assets':assets,'native_assets':native_assets,
                     'checks':{'unit':True,'frontend':True,'notes':True,'source':True,'browser':True,'ai_client':True,
                               'empty_install':True,'deployment_guard':True}})
         shutil.rmtree(destination/'frontend/node_modules')

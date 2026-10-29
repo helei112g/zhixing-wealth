@@ -121,13 +121,13 @@ def fund(instrument, start, end):
     return rows, name.group(1) if name else None
 
 
-def quotes(instrument, start, end, include_adjusted=True):
+def quotes(instrument, start, end, include_adjusted=True, adjusted_start=None):
     start, end = day(start).isoformat(), min(day(end), today()).isoformat()
     if instrument.get('builtin'):
         return benchmark_quotes(instrument,start,end)
     if instrument['market']=='US':
         from . import yahoo
-        return yahoo.quotes(instrument,start,end)
+        return yahoo.quotes(instrument,start,end,adjusted_start=adjusted_start)
     if instrument['market'] == 'CUSTOM':
         raise ProviderError('该自定义或非上市标的暂无适用的价格同步数据源')
     if instrument['market'] == 'FUND':
@@ -141,7 +141,7 @@ def quotes(instrument, start, end, include_adjusted=True):
         notes.append('主源未成功，已使用腾讯备用；来源单独保留')
     if include_adjusted:
         try:
-            adjusted_rows, _ = eastmoney(instrument, start, end, True)
+            adjusted_rows, _ = eastmoney(instrument, adjusted_start or start, end, True)
             rows += adjusted_rows
         except (ProviderError, ValueError, KeyError):
             notes.append('复权参考序列暂不可得，复盘保留价格口径标识')

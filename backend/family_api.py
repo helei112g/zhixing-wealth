@@ -45,11 +45,11 @@ def family_router(store, environment):
     @router.get('/catalog')
     def catalog(): return wire(family.catalog())
 
-    @router.get('/history')
+    @router.get('/history', summary='月度比上月末、年度比上年末（previous）；显式 yoy 为去年同期')
     def history(start: str | None = None, end: str | None = None, grain: str = 'month', comparison: str = 'previous'):
         return family.history(start, end, grain, comparison)
 
-    @router.get('/income')
+    @router.get('/income', summary='读取年度收入：月度 rows、最新 records、累计与分类占比 summary', description='summary 含 total/known_total/recorded_months/missing_count 和 groups；每组含 amount/share。金额为 Decimal 字符串，share 为 0–1 比例；无记录、缺汇率或非正分母保留未知，详见 docs/api.md。')
     def income(year: int | None = None): return family.income_summary(year)
 
     @router.get('/reminders')

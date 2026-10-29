@@ -12,8 +12,8 @@
 |---|---|
 | `GET /api/family/overview?date=YYYY-MM-DD` | 当前／历史资产投影：总资产、负债、净资产、分类、来源日、关联；schedules 仅今天至未来35天 |
 | `GET /api/family/catalog` | 资产记录所有版本、金额历史、关联、旧计划／设置及组合可选项、revision |
-| `GET /api/family/history?grain=month&comparison=yoy&start=YYYY-MM-DD&end=YYYY-MM-DD` | 月／年期末金额与变化额、变化率；资产页面固定使用 yoy；接口兼容 previous/year_start/yoy；未结束期间同比上年同日，最大30年 |
-| `GET /api/family/income?year=2026` | 指定年份12个月收入与分类合计、明细、revision；默认当年，不支持未来年份 |
+| `GET /api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD` | 月／年期末金额与变化额、变化率；资产页面使用 previous（月比上月末、年比上年末）；接口兼容 previous/year_start/yoy，yoy 未结束期间比上年同日，最大30年 |
+| `GET /api/family/income?year=2026` | 指定年份12个月收入与分类合计、年度累计 summary、明细、revision；默认当年，不支持未来年份 |
 | `GET /api/family/revision` | 只读修订，用于可见页面的2秒增量刷新判断 |
 | `GET /api/family/reminders` | 今天至未来35天的还款／保费／续保提醒及本机通知状态，逾期移出列表 |
 | `POST /api/family/preview` | 执行同一校验与投影，SAVEPOINT 回滚，不增加修订和审计 |
@@ -47,7 +47,7 @@ payment_plan 为对象：mode=none 表示不设置；债务支持 once/fixed/ann
 
 收入不是资产类别，不进入资产余额／净资产，不自动入账现金。income.rows 中 recorded=false 为未记录；缺汇率时 total 或分类 groups 对应值为null。外币收入按记录 date 当日或此前最近可得历史汇率换算，records[].fx 显示来源，日期不跨月；金额更正保留版本。不同收入记录相加，同一记录更正不重复累计。
 
-overview.known_assets 为已知小计；有金额／汇率缺失时 total_assets/net_assets/debt_ratio=null。组合资金变化仅给出检查手工现金的提示，不要求额外确认才显示合计。分类占比针对正资产合计；负债单列。history.values 是期末金额，changes.amount 是差额、changes.rate 是比例；首期、基期非正、范围变化或缺值时 rate=null。partial 表示未结束期间。历史按当前资料重算，旧盘点快照仍保留。
+overview.known_assets 为已知小计；有金额／汇率缺失时 total_assets/net_assets/debt_ratio=null。组合资金变化仅给出检查手工现金的提示，不要求额外确认才显示合计。分类占比针对正资产合计；负债单列。history.values 是期末金额，changes.amount 是差额、changes.rate 是比例；缺比较期、基期非正或缺值时 rate=null；范围变化计入总金额变化，scope_changed=true 且 reason 标注含新增、移除或份额调整，不再因此把 rate 置空。partial 表示未结束期间。历史按当前资料重算，旧盘点快照仍保留。
 
 macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当天09:00（上海时区）提醒；页面只显示未来35天。分红候选出现 pending/needs_review 时发送一次泛化通知；相同候选重复刷新不重发，确认／忽略后取消，资料实质变化后重新提醒。所有通知点击使用 `?reminders=1&focus=reminder_id` 定位全局提醒中心；旧分红 URL 保留兼容。
 
@@ -184,7 +184,7 @@ HTTP 403：同源/会话不匹配，重新建会话，不放宽校验。409：�
 
 `price_net` 是含汇兑、扣除买卖及非分红费税后的价格收益，含已实现与未实现；`dividends_net` 包含已确认应收、现金及再投净分红，扣关联补税/费用。`other_income` 为利息等，不应混称价格变化。`complete=false` 或金额为 null 时不能补零凑等式。`rounding_adjustment` 仅解释各项显示两位小数时的舍入差，不计入原始收益。
 
-分红流水 `facts` 增加 `dividend_gross_native`、`dividend_tax_native`、`dividend_net_native` 和 `dividend_tax_differs`；实际币种用 `facts.currency`。字段后缀只作为API标识，界面应明确写 CNY/HKD/USD。税前税后不一致时显示税额等式；不按市场猜税率。录入 UI 填写税前总额和税费，自动计算净额；API 可省略 net_amount，由 gross_amount−tax 精确计算，旧净额输入兼容。两者同时传入时校验税前−税额＝净额（税额已核对时）。
+分红流水 `facts` 增加 `dividend_gross_native`、`dividend_tax_native`、`dividend_net_native` 和 `dividend_tax_differs`；实际币种用 `facts.currency`。字段后缀只作为API标识，界面应明确写 CNY/HKD/USD。税前税后不一致时显示税额等式；不按市场猜税率。录入 UI 填写税前总额和税费，自动计算净额；新增现金分红／红利再投（含公告确认）的“税额已核对”默认勾选，可取消；编辑或重算已有记录保留原核对状态，打开表单不自动写入。API 可省略 net_amount，由 gross_amount−tax 精确计算，旧净额输入兼容。两者同时传入时校验税前−税额＝净额（税额已核对时）。
 
 ## 持仓排行与更新原因（0.6.5）
 
@@ -267,7 +267,7 @@ health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/
 
 `GET /api/family/summary?grain=year&period=2026`、`?grain=month&period=2026-09` 或 `?grain=custom&start=2026-01-01&end=2026-09-30`：
 
-- 默认 grain=month；period：grain/start/end/opening_date/comparison_start/comparison_end/comparison_label/partial。总览月度余额比较上月末，年度比较上年末，自定义比较起始日前一天；与 history 的同比口径独立。
+- 默认 grain=month；period：grain/start/end/opening_date/comparison_start/comparison_end/comparison_label/partial。总览月度余额比较上月末，年度比较上年末，自定义比较起始日前一天；与 history 的 comparison=previous 余额基线一致，显式 yoy 仍使用去年同期。
 - snapshot：结束日资产投影，与桑基图共用。
 - metrics：total_assets/net_assets/total_debt/debt_ratio/liquid_cash/fixed/investment/receivable/income；各含 value/previous/amount/rate/reason，余额另有 period_change。rate 为小数比例；debt_ratio.amount 为比例之差，界面乘100显示百分点。
 - income/previous_income：已录入合计 value、记录数 count、months、missing_fx。无记录合计为 null。收入基线为上一完整自然月/自然年，或自定义之前等长区间。
@@ -277,3 +277,22 @@ health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/
 现金、固定资产、理财与应收款表单传入 effective_on（金额日期）；更正可补录历史，不能晚于今天。旧版本记录继续保留，当前余额仍取最新有效日期。
 
 0.8.1 完整备份下载在本地保留经校验的压缩 ZIP，含 SQLite 和全部引用笔记历史；落盘成功后才删除该次导出的未压缩中间副本。接口响应格式不变。
+
+### 收入年度累计与组成
+
+`GET /api/family/income?year=YYYY` 新增只读 `summary`，原有 `rows`、`records`、`revision` 保持兼容：
+
+- `total`：该年已记录收入合计，Decimal 字符串；无记录或任意记录缺汇率时为 null。
+- `known_total`：已知金额小计；`missing_count` 为缺少换算金额的记录数；`recorded_months` 为有记录的月份数，不代表其他月份收入为零。
+- `groups.salary/rent/fund/custom`：各含 `amount`、`share`。`share` 是 0–1 比例，分母为 `total`；总额未知或不大于零时为 null。组内缺汇率时 amount 也为 null。
+- 按记录日期历史汇率折合 CNY，同一记录更正只取最新版本，不改变现金余额。年份非法返回 422；只读查询不增加 revision。
+
+台账分类汇总直接使用 overview.categories 的 value/known_value/weight，关联组合详情使用 items[].value（CNY），不读取手工记录专用 household_amount。预算型闲置预算排除，实盘现金分列。
+
+## 送转股与复权行情
+
+A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_kind=corporate_actions` 显示结果；只缓存公告，不自动增加账本流水。源中的纯现金分红可能将送转比例置空：只有实施方案明确为纯派现且金额与结构化字段一致时，才按无送转处理；未知或冲突仍报告同步失败。公告源失败保留旧缓存并显示失败，不从价格跳变猜测比例。港美股已有拆股公告沿用相同确认流程。
+
+`dashboard.todos` 和 `GET /api/portfolios/P/instruments/I` 的 `todos` 提供 `confirm_split` / `verify_split`。核对登记日持仓、除权日与倍数后，使用普通交易预览和 `/api/events` 提交 `kind=SPLIT`、`factor`、`instrument_id`、`portfolio_id`、`date`、`expected_revision`；10送8转12的倍数为3。顶部系统提醒统一汇总待核对项，通过“查看提醒”进入中心处理；组合页面不重复展示独立通知区。确认后新增独立送转流水，保留原买入数量和总成本，除权当日先调整隔夜持仓，再处理当日买卖；现金分红及实际扣税单独核对。已知未确认或比例不一致时，相关估值/收益留空提示核对，不以错误份额展示暴跌。
+
+标的详情新增 `price_basis`（`raw` / `adjusted`），有复权数据的股票默认 adjusted。A股标注前复权参考，港美股按数据源标注复权参考；基金单位净值不强行复权。`curves` 中仍保留原有两种序列。同步时复权参考刷新完整记账区间，避免除权前后的缓存调整基准混用；未复权行情继续增量同步。复权仅用于价格走势及后续行情参考，不替换真实成交价、估值现价、收益、现金红利或 XIRR。

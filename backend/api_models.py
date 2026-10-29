@@ -59,6 +59,7 @@ class SellLot(BaseModel):
 
 
 class EventRequest(WriteRequest):
+    factor: Amount | None = Field(None, description='SPLIT 专项核对：送转/拆股后的数量倍数，10送8转12为3；保留总成本，先于除权日买卖执行。现金红利单独核对。')
     portfolio_id: str
     kind: str = Field(description='日常只用 BUY、SELL、DIVIDEND、REINVEST；其他类型仅兼容历史或专项核对')
     date: str = Field(description='成交日或除息日，YYYY-MM-DD')

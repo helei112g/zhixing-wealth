@@ -1,5 +1,5 @@
 /* Household UI acceptance. Only an explicitly isolated synthetic ledger is allowed. */
-const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
 const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=process.env.PORTFOLIO_TEST_OUTPUT;
 (async()=>{const browser=await pw.chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1480,height:1050}});let csrf='',checks=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -140,6 +140,26 @@ await page.getByRole('button',{name:'按年',exact:true}).click();await page.get
 check((await page.locator('.rate-legend').innerText()).includes('较上年末')&&(await page.locator('.trend-period-table tbody tr').first().innerText()).includes('2025-12-31'),'annual mode resets pagination and compares previous year end');await shot('family-analysis');
 await tab('收入');await page.getByLabel('收入年份',{exact:true}).selectOption('2025');await page.locator('.income-year-total strong').getByText('1,500.00',{exact:true}).waitFor();check((await page.locator('.income-composition').innerText()).includes('100.00%'),'income total and proportions follow selected year');await page.getByLabel('收入年份',{exact:true}).selectOption('2026');await page.locator('.income-year-total strong').getByText('16,900.00',{exact:true}).waitFor();
 await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'提醒中心',exact:true}).click();await page.getByRole('heading',{name:'全部系统提醒',exact:true}).waitFor();check(await page.getByRole('tab',{name:'提醒中心',exact:true}).count()===0,'reminder center belongs to global navigation');check(await page.getByRole('heading',{name:'macOS 系统通知',exact:true}).count()===0,'OS notification preferences moved out of household');check(await page.locator('.system-reminder-center button').filter({hasText:/查看 \/ 处理|添加提醒/}).count()===0,'reminders are display-only with no processing action');check((await api('/reminders')).items.every(r=>r.days>=0&&r.days<=35),'reminders only include today through 35 days');await shot('family-reminders');
+// Legacy failed jobs must read as data checks and disappear after a successful
+// retry; retain the old job and leave the synthetic ledger revision unchanged.
+function corporateJob(status){const root=path.resolve(__dirname,'..');const fixture=`
+import sys
+from pathlib import Path
+from backend.environment import claim_environment
+from backend.store import Store
+d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Store(d)
+status=sys.argv[2]
+s.save_job(dict(id='synthetic-corporate-'+status,started_at='2026-01-01T00:0'+('0' if status=='error' else '1'),status='partial' if status=='error' else 'complete',items=[dict(source_kind='corporate_actions',instrument_id='synthetic-cash-stock',name='600000 送转股' if status=='error' else '600000 企业行动数据',status=status,message='合成数据核验失败，不代表存在送转计划')]))
+`;const result=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',fixture,health.data_directory,status],{cwd:root,encoding:'utf8'});assert.equal(result.status,0,result.stderr);}
+const beforeRetry=(await api('/bootstrap')).revision;
+corporateJob('error');await page.goto(base+'/?reminders=1');await page.getByText('600000 企业行动数据 · 同步未完成',{exact:true}).waitFor();
+check(await page.getByText('600000 送转股 · 同步未完成',{exact:true}).count()===0,'legacy corporate sync error is labeled as data verification');
+await shot('corporate-sync-failure');
+corporateJob('ok');await page.reload();await page.getByRole('heading',{name:'全部系统提醒',exact:true}).waitFor();
+check(!(await api('/reminders')).items.some(r=>r.source==='sync'),'successful corporate retry clears stale sync reminder');
+check(await page.getByText('600000 企业行动数据 · 同步未完成',{exact:true}).count()===0,'resolved corporate reminder disappears from rendered center');
+check((await api('/jobs')).jobs.some(j=>j.id==='synthetic-corporate-error')&&(await api('/bootstrap')).revision===beforeRetry,'recovery preserves old job and financial revision');
+await shot('corporate-sync-recovered');
 await page.getByRole('button',{name:'全局设置',exact:true}).click();await page.getByRole('heading',{name:'macOS 系统通知',exact:true}).waitFor();await page.getByRole('button',{name:'启用 macOS 通知',exact:true}).waitFor();check(await page.getByRole('button',{name:'启用 macOS 通知',exact:true}).isVisible(),'global setting exposes one explicit native notification switch');check(await page.locator('.family-banner').isVisible(),'top reminder entry remains global');check((await api('/notifications')).enabled===false,'tests never activate real OS notifications');await shot('global-notifications');
 // Current native route opens the shared center; old links remain compatible.
 const focus=(await api('/reminders')).items[0].id;await page.goto(base+'/?reminders=1&focus='+encodeURIComponent(focus));await page.locator('[data-reminder-id="'+focus+'"].family-highlight').waitFor();check(true,'native deep link focuses the correct global reminder');

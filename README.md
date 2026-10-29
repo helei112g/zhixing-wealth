@@ -14,7 +14,7 @@
 
 [开始安装](docs/install.md) · [看看实际界面](#用几个页面看清你的财富) · [系统能力](#系统能做什么) · [Agent 原生协作](#让-agent-成为你的日常财富助手) · [计算与数据来源](docs/accounting.md)
 
-当前源码版本 **0.8.4** · macOS / Linux · [Apache-2.0](LICENSE)
+当前源码版本 **0.8.5** · macOS / Linux · [Apache-2.0](LICENSE)
 
 ## 为什么值得拥有
 

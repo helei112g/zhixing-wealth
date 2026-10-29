@@ -1,6 +1,6 @@
 """Public product and release identity; independent of private environment state."""
 NAME = '知行财富'
-VERSION = '0.8.4'
+VERSION = '0.8.5'
 APPLICATION = 'portfolio-journal'  # Stable identity for old backup/client compatibility.
 
 

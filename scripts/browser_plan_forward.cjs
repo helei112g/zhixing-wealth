@@ -13,7 +13,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=path.join
  const waitText=async(text)=>{await dialog().locator('.plan-funding>strong').filter({hasText:text}).waitFor();};
  const row=name=>page.locator('.holding-row').filter({hasText:name});
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(health.version,'0.8.4');
+  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(health.version,'0.8.5');
   const boot=await api('/bootstrap');csrf=boot.csrf_token;
   const p=await api('/portfolios',{name:'计划与行情专项组合',planned_amount:'500000',start_date:'2024-01-01'});
   const buy=(code,name,qty,total)=>api('/events',{portfolio_id:p.id,kind:'BUY',date:'2024-01-31',instrument:{market:'CN',code,name},quantity:qty,gross_amount:total,fx_rate:'1'});

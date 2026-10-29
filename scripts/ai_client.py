@@ -32,6 +32,9 @@ class Client:
     # GET /api/capabilities exposes storage policy; GET /api/jobs is only the
     # latest 20 jobs (UI shows 5), not a complete audit log. Price counts distinguish saved
     # changed versions from unchanged rows. Sync never changes locked trade FX.
+    # corporate_actions checks source data, not an assertion that shares exist.
+    # Read notes and dividend candidate note for cash amount/class differences;
+    # a successful retry clears the matching reminder without deleting old jobs.
     def __init__(self, base_url=None, *, environment=None, expected_data_dir=None):
         if environment is not None and environment not in PORTS:
             raise ValueError('Unknown target environment')

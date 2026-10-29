@@ -90,7 +90,26 @@ def stock_records(code):
     _STOCK_CACHE[code]=(time.monotonic(),copy.deepcopy(rows))
     return rows
 
-def parse_stock_splits(records, code):
+def stock_cash_plan(record):
+    """Recognize the entire cash-only plan, including explicit shareholder classes."""
+    profile=re.sub(r'\s+','',str(record.get('IMPL_PLAN_PROFILE') or '')).replace('（','(').replace('）',')')
+    amount=r'\d+(?:\.\d+)?'
+    plan=re.fullmatch(r'10派(?P<cash>'+amount+r')元(?:\(含税(?:[,，]扣税后'+amount+r'元)?\))?'
+                      r'(?:\(中小股东10派(?P<retail>'+amount+r')元[;；]大股东10派(?P<major>'+amount+r')元\))?',profile)
+    return plan if plan and all(dec(value)>0 for value in plan.groupdict().values() if value is not None) else None
+
+
+def stock_cash_review(record, plan):
+    notes=[]
+    if plan and plan['retail'] is not None:
+        notes.append('差异化现金分红，基础金额可能为平均值，不代表特定股东的应得金额；请按实施公告及实际到账核对。')
+    cash=record.get('PRETAX_BONUS_RMB')
+    if plan and cash is not None and dec(plan['cash'])!=dec(cash):
+        notes.append(f'现金方案每10股{plan["cash"]} CNY与数值字段{ds(dec(cash))} CNY不一致，现金金额须另行核对。')
+    return ''.join(notes)
+
+
+def parse_stock_splits(records, code, *, notes=None):
     """Implemented per-ten bonus/conversion shares; never infer from price jumps."""
     rows={}
     for r in records:
@@ -106,16 +125,16 @@ def parse_stock_splits(records, code):
                 raise market.ProviderError('送股与转增合计不一致，请核对公告')
         elif total is not None:value=dec(total,nonnegative=True)
         else:
-            # This feed uses null share ratios for cash-only distributions. Require
-            # the implemented plan AND matching cash amount before accepting that
-            # interpretation; a missing/ambiguous plan must still fail visibly.
-            profile=str(r.get('IMPL_PLAN_PROFILE') or '').replace(' ','').replace('（','(').replace('）',')')
-            cash_only=re.fullmatch(r'10派(\d+(?:\.\d+)?)元(?:\(含税(?:[,，]扣税后\d+(?:\.\d+)?元)?\))?',profile)
+            # A complete cash-only plan establishes the action type. A cash amount
+            # conflict does not imply shares; retain it as a separate review note.
+            cash_only=stock_cash_plan(r)
             cash=r.get('PRETAX_BONUS_RMB')
             if (all(v is None for v in parts) and cash_only and cash is not None
-                    and dec(cash,nonnegative=True)>0 and dec(cash_only[1])==dec(cash)):
+                    and dec(cash)>0):
+                review=stock_cash_review(r,cash_only)
+                if notes is not None and review:notes.append(ex+'：'+review)
                 continue
-            raise market.ProviderError('已实施公告缺少送转比例，且无法核实为纯现金分红，请核对公告')
+            raise market.ProviderError(ex+' 已实施方案的送转比例缺失，且无法明确识别为纯现金分红；数据核验失败不代表存在送转计划，请核对公告')
         if value==0:continue
         record_date=date_or_none(r.get('EQUITY_RECORD_DATE'))
         if not record_date or record_date>=ex:raise market.ProviderError('送转股登记日或除权日不完整')
@@ -127,10 +146,10 @@ def parse_stock_splits(records, code):
         rows[ex]=action
     return list(rows.values())
 
-def fetch_stock_splits(instrument):
+def fetch_stock_splits(instrument, *, notes=None):
     records=stock_records(instrument['code'])
     if records is None:raise market.ProviderError('送转股公告暂不可得，保留旧缓存')
-    return parse_stock_splits(records,instrument['code'])
+    return parse_stock_splits(records,instrument['code'],notes=notes)
 
 def fetch_notices(instrument):
     key=(instrument['market'],instrument['code'],instrument['currency']);cached=_NOTICE_CACHE.get(key)
@@ -162,10 +181,11 @@ def parse_stock(records,code):
         value=record.get('PRETAX_BONUS_RMB')
         if not ex or value is None or dec(value)<=0:continue
         period=date_or_none(record.get('REPORT_DATE')) or ''
+        review=stock_cash_review(record,stock_cash_plan(record))
         rows.append({'source_ref':f'stock:{code}:{period}:{ex}','code':code,'record_date':date_or_none(record.get('EQUITY_RECORD_DATE')),
             'ex_date':ex,'pay_date':None,'per_share':ds(dec(value)/Decimal(10)),'currency':'CNY','source':'东方财富·已实施现金分红',
             'source_url':'https://data.eastmoney.com/yjfp/detail/'+code+'.html','original_rate':ds(dec(value)),'original_unit':'每10股',
-            'status':'implemented','coverage_note':'接口未提供派息日，请按实际到账补充；不把公告日当作到账日。'})
+            'status':'implemented','coverage_note':'接口未提供派息日，请按实际到账补充；不把公告日当作到账日。'+review})
     return rows
 
 

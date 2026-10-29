@@ -106,7 +106,7 @@ class SummaryReminderTests(unittest.TestCase):
         a=self.item('cash','0');self.value(a,'10','2026-01-01')
         s=self.family.summary('year','2026');self.assertIsNone(s['metrics']['total_assets']['rate']);self.assertEqual(s['metrics']['total_assets']['reason'],'上期金额不大于零')
         self.item('receivable','5','2026-02-01');s=self.family.summary('year','2026')
-        self.assertIsNone(s['metrics']['total_assets']['rate']);self.assertEqual(s['metrics']['total_assets']['reason'],'资产范围发生变化')
+        self.assertIsNone(s['metrics']['total_assets']['rate']);self.assertEqual(s['metrics']['total_assets']['reason'],'上期金额不大于零')
         s=self.family.summary('year','2025');self.assertIsNone(s['metrics']['total_assets']['previous']);self.assertIsNone(s['metrics']['income']['value'])
     def test_currency_conversion_date_missing_fx_and_income_correction(self):
         i=self.write('income',dict(kind='rent',month='2026-02',currency='USD',amount='10'))

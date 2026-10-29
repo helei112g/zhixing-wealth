@@ -47,7 +47,7 @@ payment_plan 为对象：mode=none 表示不设置；债务支持 once/fixed/ann
 
 收入不是资产类别，不进入资产余额／净资产，不自动入账现金。income.rows 中 recorded=false 为未记录；缺汇率时 total 或分类 groups 对应值为null。外币收入按记录 date 当日或此前最近可得历史汇率换算，records[].fx 显示来源，日期不跨月；金额更正保留版本。不同收入记录相加，同一记录更正不重复累计。
 
-overview.known_assets 为已知小计；有金额／汇率缺失时 total_assets/net_assets/debt_ratio=null。组合资金变化仅给出检查手工现金的提示，不要求额外确认才显示合计。分类占比针对正资产合计；负债单列。history.values 是期末金额，changes.amount 是差额、changes.rate 是比例；首期、基期非正、范围变化或缺值时 rate=null。partial 表示未结束期间。历史按当前资料重算，旧盘点快照仍保留。
+overview.known_assets 为已知小计；有金额／汇率缺失时 total_assets/net_assets/debt_ratio=null。组合资金变化仅给出检查手工现金的提示，不要求额外确认才显示合计。分类占比针对正资产合计；负债单列。history.values 是期末金额，changes.amount 是差额、changes.rate 是比例；缺比较期、基期非正或缺值时 rate=null；范围变化计入总金额变化，scope_changed=true 且 reason 标注含新增、移除或份额调整，不再因此把 rate 置空。partial 表示未结束期间。历史按当前资料重算，旧盘点快照仍保留。
 
 macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当天09:00（上海时区）提醒；页面只显示未来35天。分红候选出现 pending/needs_review 时发送一次泛化通知；相同候选重复刷新不重发，确认／忽略后取消，资料实质变化后重新提醒。所有通知点击使用 `?reminders=1&focus=reminder_id` 定位全局提醒中心；旧分红 URL 保留兼容。
 
@@ -288,3 +288,11 @@ health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/
 - 按记录日期历史汇率折合 CNY，同一记录更正只取最新版本，不改变现金余额。年份非法返回 422；只读查询不增加 revision。
 
 台账分类汇总直接使用 overview.categories 的 value/known_value/weight，关联组合详情使用 items[].value（CNY），不读取手工记录专用 household_amount。预算型闲置预算排除，实盘现金分列。
+
+## 送转股与复权行情
+
+A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_kind=corporate_actions` 显示结果；只缓存公告，不自动增加账本流水。公告源失败保留旧缓存并显示失败，不从价格跳变猜测比例。港美股已有拆股公告沿用相同确认流程。
+
+`dashboard.todos` 和 `GET /api/portfolios/P/instruments/I` 的 `todos` 提供 `confirm_split` / `verify_split`。核对登记日持仓、除权日与倍数后，使用普通交易预览和 `/api/events` 提交 `kind=SPLIT`、`factor`、`instrument_id`、`portfolio_id`、`date`、`expected_revision`；10送8转12的倍数为3。保留原买入和总成本，除权当日先调整隔夜持仓，再处理当日买卖；现金分红及实际扣税单独核对。已知未确认或比例不一致时，相关估值/收益留空提示核对，不以错误份额展示暴跌。
+
+标的详情新增 `price_basis`（`raw` / `adjusted`），有复权数据的股票默认 adjusted。A股标注前复权参考，港美股按数据源标注复权参考；基金单位净值不强行复权。`curves` 中仍保留原有两种序列。同步时复权参考刷新完整记账区间，避免除权前后的缓存调整基准混用；未复权行情继续增量同步。复权仅用于价格走势及后续行情参考，不替换真实成交价、估值现价、收益、现金红利或 XIRR。

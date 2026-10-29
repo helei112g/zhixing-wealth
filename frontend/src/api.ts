@@ -21,7 +21,7 @@ export const signedMoney = (v: any) => v === null || v === undefined ? '—' : (
 // Preserve native-currency dividend precision so gross - tax = net stays readable.
 export function exactMoney(v:any):string {if(v===null||v===undefined||v==='')return '—';const s=String(v),m=s.match(/^(-?)(\d+)(?:\.(\d+))?$/);if(!m)return money(v);const fraction=(m[3]||'').replace(/0+$/,'').padEnd(2,'0');return m[1]+m[2].replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+fraction;}
 export const tone = (v: any) => v === null || v === undefined || Number(v) === 0 ? '' : Number(v) > 0 ? 'up' : 'down';
-export const kindNames: Record<string,string> = {DEPOSIT:'入金',WITHDRAW:'出金',BUY:'买入',SELL:'卖出',DIVIDEND:'现金分红',REINVEST:'红利再投',FX:'换汇',FEE:'费用',TAX:'税费',INTEREST:'利息/其他收入',OPENING_CASH:'期初现金',OPENING_POSITION:'期初持仓',OPENING_RECEIVABLE:'期初应收',SUBSCRIBE_PENDING:'基金申购待确认',REDEEM_PENDING:'基金赎回待确认',SPLIT:'拆股/合股',ADJUSTMENT:'企业行动人工调整'};
+export const kindNames: Record<string,string> = {DEPOSIT:'入金',WITHDRAW:'出金',BUY:'买入',SELL:'卖出',DIVIDEND:'现金分红',REINVEST:'红利再投',FX:'换汇',FEE:'费用',TAX:'税费',INTEREST:'利息/其他收入',OPENING_CASH:'期初现金',OPENING_POSITION:'期初持仓',OPENING_RECEIVABLE:'期初应收',SUBSCRIBE_PENDING:'基金申购待确认',REDEEM_PENDING:'基金赎回待确认',SPLIT:'送转股/拆股/合股',ADJUSTMENT:'企业行动人工调整'};
 export function query(values: Obj): string { const q = new URLSearchParams(); Object.entries(values).forEach(([k,v])=>{if(v!==''&&v!==null&&v!==undefined)q.set(k,String(v));}); return q.toString(); }
 export function downloadText(text: string, name: string) {const url=URL.createObjectURL(new Blob([text],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),500);}
 

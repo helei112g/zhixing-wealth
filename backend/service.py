@@ -263,7 +263,7 @@ class Service:
         ledger=Ledger(candidate,p)
         for op in ledger.ops:
             if op[0]>date:break
-            if op[0]==date and op[1]>=boundary and op[4] not in ('BUDGET_OPEN','BUDGET_CHANGE','DIV_ACCRUE','DIV_RECEIPT','INTEREST','SELL_RECEIPT','OPENING_RECEIPT'):continue
+            if op[0]==date and op[1]>=boundary and op[4] not in ('SPLIT','BUDGET_OPEN','BUDGET_CHANGE','DIV_ACCRUE','DIV_RECEIPT','INTEREST','SELL_RECEIPT','OPENING_RECEIPT'):continue
             ledger.apply(op)
         events={e['id']:e for e in state['events']};rows=[]
         for lot in ledger.position(instrument_id)['lots']:
@@ -441,8 +441,8 @@ class Service:
             if ledger.position(iid)['quantity']<=0:continue
             existing_split=next((e for e in owned_events if e['kind']=='SPLIT' and e.get('instrument_id')==iid and e['date']==action['date']),None)
             if existing_split:
-                rows.append({'id':'split:'+action['id'],'type':'verify_split','label':'核对拆分记录','title':instruments[iid]['name']+' · '+action['date']+' · 已录拆分与源比例'+action['factor']+'不一致','event':existing_split});continue
-            rows.append({'id':'split:'+action['id'],'type':'confirm_split','title':instruments[iid]['name']+' · '+action['date']+' · 拆分比例'+action['factor']+'待确认','instrument_id':iid,'prefill':{'kind':'SPLIT','date':action['date'],'factor':action['factor'],'instrument_id':iid,'reason':'核对公开拆分事件：'+action['source']}})
+                rows.append({'id':'split:'+action['id'],'type':'verify_split','label':'核对送转/拆股记录','title':instruments[iid]['name']+' · '+action['date']+' · 已录送转/拆股与源比例'+action['factor']+'不一致','event':existing_split});continue
+            rows.append({'id':'split:'+action['id'],'type':'confirm_split','title':instruments[iid]['name']+' · '+action['date']+' · 送转/拆股倍数'+action['factor']+'待确认','instrument_id':iid,'prefill':{'kind':'SPLIT','date':action['date'],'factor':action['factor'],'instrument_id':iid,'reason':'核对公开送转/拆股事件：'+action['source']}})
         return rows
 
     def benchmark(self, state, portfolio, history, portfolio_return):
@@ -497,7 +497,8 @@ class Service:
             curves[kind] = series.rows if series else []
         profit_rows=self.trade_results(portfolio_id,instrument_id,state=state)
         return wire({'transactions':self.transaction_rows(portfolio_id,instrument_id,state=state,profit_rows=profit_rows),'portfolio': self.portfolio(state, portfolio_id), 'holding': holding, 'events': events,
-                     'trades': trades, 'curves': curves, 'dividend_values': dividend_values,
+                     'trades': trades, 'curves': curves, 'price_basis': 'adjusted' if curves['adjusted'] and holding['instrument']['market'] in ('SH','SZ','HK','US') else 'raw',
+                     'todos': [t for t in snap['todos'] if t.get('instrument_id',t.get('event',{}).get('instrument_id'))==instrument_id], 'dividend_values': dividend_values,
                      'dividends': [e for e in events if e['kind'] in ('DIVIDEND', 'REINVEST')],
                      'dividend_candidates':self.dividend_candidates(portfolio_id,instrument_id,state=state),
                      'trade_results': profit_rows, 'note_count': self.notes.count(portfolio_id, instrument_id)})
@@ -1076,10 +1077,17 @@ class Service:
                         job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name':inst['name'],'status':'error','message':'该标的暂无可用同步数据源，请检查代码或稍后重试'})
                         self.store.save_job(job)
                         continue
+                    if inst['market'] in ('SH','SZ') and inst['type']=='stock':
+                        try:
+                            actions=dividends.fetch_stock_splits(inst)
+                            self.cache_actions(inst['id'],actions)
+                            job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 送转股','status':'ok','count':len(actions),'source':'东方财富·已实施送转股','notes':['仅生成待核对事项；确认后才调整份额，总成本不变']})
+                        except Exception as exc:
+                            job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 送转股','status':'error','message':str(exc)[:500]})
                     try:
                         existing = [r['date'] for r in state['prices'] if r['instrument_id'] == inst['id'] and r['kind'] == inst.get('series_kind','raw') and not r.get('manual')]
                         beginning = start if full or not existing else max(start, (day(max(existing)) - timedelta(days=7)).isoformat())
-                        result = market.quotes(inst, beginning, today().isoformat())
+                        result = market.quotes(inst, beginning, today().isoformat(), adjusted_start=start)
                         price_counts = self.cache_prices(inst['id'], result['rows'])
                         self.cache_actions(inst['id'],result.get('actions',[]))
                         if result.get('name') and not inst.get('custom_name') and not inst.get('builtin'):

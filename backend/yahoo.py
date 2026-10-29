@@ -62,24 +62,24 @@ def factor_after(date,splits):
         if s['date']>date:result*=dec(s['factor'])
     return result
 
-def parse_quotes(data,inst,start,end):
+def parse_quotes(data,inst,start,end,adjusted_start=None):
     splits=split_events(data);times=data.get('timestamp') or [];ind=data.get('indicators') or {};quotes=(ind.get('quote') or [{}])[0].get('close') or []
     if len(times)!=len(quotes):raise market.ProviderError('港美股日线日期与价格长度不一致')
     adjusted=(ind.get('adjclose') or [{}])[0].get('adjclose') or []
     current=datetime.now(ZoneInfo(data['meta']['exchangeTimezoneName'])).date().isoformat();rows=[]
     for n,ts in enumerate(times):
         d=local_date(ts,data);p=quotes[n]
-        if not start<=d<=end or d>=current or p is None:continue
+        if not (adjusted_start or start)<=d<=end or d>=current or p is None:continue
         factor=factor_after(d,splits)
-        rows.append(market.quote_record(d,dec(p,positive=True)*factor,'Yahoo日线·还原拆分前名义收盘','raw',provider_close=ds(p),split_restore_factor=ds(factor),exchange_timezone=data['meta']['exchangeTimezoneName']))
+        if d>=start:rows.append(market.quote_record(d,dec(p,positive=True)*factor,'Yahoo日线·还原拆分前名义收盘','raw',provider_close=ds(p),split_restore_factor=ds(factor),exchange_timezone=data['meta']['exchangeTimezoneName']))
         if n<len(adjusted) and adjusted[n] is not None:
             rows.append(market.quote_record(d,adjusted[n],'Yahoo复权参考（含分派调整）','adjusted',exchange_timezone=data['meta']['exchangeTimezoneName']))
     if not rows:raise market.ProviderError('该区间暂无已结束交易日的行情；保留已有数据')
     return {'rows':rows,'name':data['meta'].get('longName') or data['meta'].get('shortName'),'source':'Yahoo Finance日线',
         'notes':['按交易所时区归日，T+1不写当前交易日未结束的日线；使用起点至今全部拆分恢复名义价格，复权序列仅供参考'],
-        'actions':[dict(r,kind='split_notice',source='Yahoo拆分事件',source_url='https://finance.yahoo.com/quote/'+symbol_for(inst)+'/history/') for r in splits if start<=r['date']<=end]}
+        'actions':[dict(r,kind='split_notice',source='Yahoo拆分事件',source_url='https://finance.yahoo.com/quote/'+symbol_for(inst)+'/history/') for r in splits if (adjusted_start or start)<=r['date']<=end]}
 
-def quotes(inst,start,end):return parse_quotes(chart(inst,start),inst,start,end)
+def quotes(inst,start,end,adjusted_start=None):return parse_quotes(chart(inst,start),inst,start,end,adjusted_start)
 
 def dividends(inst):
     data=chart(inst);splits=split_events(data);rows=[];symbol=symbol_for(inst)

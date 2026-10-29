@@ -96,8 +96,8 @@ class FamilyService:
                     prev = previous_values.get(k)
                     delta = v - prev if v is not None and prev is not None else None
                     changed = previous is not None and scope(previous, k) != scope(snap, k)
-                    reason = '缺少对比期记录或金额' if delta is None else '统计项目发生变化' if changed else '对比期金额不大于零' if prev <= 0 else ''
-                    changes[k] = {'amount': delta, 'rate': delta / prev if delta is not None and prev > 0 and not changed else None,
+                    reason = '缺少对比期记录或金额' if delta is None else '对比期金额不大于零' if prev <= 0 else '含新增、移除或份额调整' if changed else ''
+                    changes[k] = {'amount': delta, 'rate': delta / prev if delta is not None and prev > 0 else None,
                                   'scope_changed': changed, 'reason': reason}
                 points.append({'date': str(d), 'partial': d != period_end, 'values': values, 'changes': changes,
                                'components': [{k:r[k] for k in ('id','name','category','value')} for r in snap['items']],

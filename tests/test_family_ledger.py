@@ -42,7 +42,8 @@ class LedgerTests(unittest.TestCase):
         row=self.service.history(end='2026-09-30')['rows'][-1]
         self.assertEqual(D(row['changes']['fixed']['rate']),D('.1'))
         self.assertEqual(D(row['changes']['fixed']['amount']),30)
-        self.assertIsNone(row['changes']['net']['rate']);self.assertTrue(row['scope_changed'])
+        self.assertEqual(D(row['changes']['net']['rate']),D(530)/300);self.assertTrue(row['scope_changed'])
+        self.assertEqual(row['changes']['net']['reason'],'含新增、移除或份额调整')
         self.assertEqual(sum(D(r['value']) for r in row['components'] if r['category']=='fixed'),300+30)
         self.assertEqual(len([r for r in row['components'] if r['category']=='fixed']),2)
     def test_zero_rate_is_real_but_zero_baseline_and_new_scope_are_not(self):

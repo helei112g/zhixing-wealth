@@ -183,6 +183,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                      'expected_revision_required': True, 'included_in_full_backup': True},
                 'event_kinds': ['BUY', 'SELL', 'DIVIDEND', 'REINVEST'], 'manual_prices': False,
                 'corporate_actions': {'confirmation_kind': 'SPLIT', 'automatic_ledger_write': False,
+                                      'cash_only_plans': 'full cash-only text including shareholder classes; cash amount conflicts remain review notes',
+                                      'sync_recovery': 'latest successful corporate_actions item clears the same instrument sync reminder; retain job history',
                                       'pending_in': ['dashboard.todos', 'instrument_detail.todos'],
                                       'factor': 'new shares / old shares; 10 bonus 8 plus conversion 12 = 3',
                                       'cost_basis': 'preserve total cost; cash dividend and tax recorded separately',
@@ -343,7 +345,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.post('/api/fx')
     def fx(payload: dict): return reply(service.save_fx(payload))
 
-    @app.post('/api/sync')
+    @app.post('/api/sync', description='更新行情和公告缓存，不自动记账。corporate_actions 子项核验企业行动数据，失败不代表存在送转计划；纯现金方案的金额差异保留在 notes 和分红核对说明中。按同标的最新子项状态消除已恢复的同步提醒。')
     def sync(payload: SyncRequest): return reply(service.start_sync(payload.instrument_id, full=payload.full, trigger=payload.trigger))
 
     @app.get('/api/jobs', summary='最近20条同步任务', description='按启动时间倒序返回最多20条，界面展示最近5条；默认最多保存20条（含运行中），运行中任务不会被清理。启动时将上次中断任务标记失败。价格项saved/unchanged统计本次全部返回序列，count为标的主序列点数。')

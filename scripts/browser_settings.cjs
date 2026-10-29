@@ -11,7 +11,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
  const ids=()=>rows().evaluateAll(es=>es.map(e=>e.dataset.cacheInstrument));
  const pager=page.getByRole('navigation',{name:'行情缓存分页'});
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);assert.equal(health.version,'0.8.4');
+  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);assert.equal(health.version,'0.8.5');
   csrf=(await api('/bootstrap')).csrf_token;
   for(let n=0;n<23;n++)await api('/instruments',{market:'SH',code:String(510000+n),name:'合成缓存标的'+n});
   const boot=await api('/bootstrap'),expected=boot.instruments.map(i=>i.id);

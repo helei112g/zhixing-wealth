@@ -135,6 +135,7 @@ def main():
     except RuntimeError as error: check('HTTP 409' in str(error),'AI stale reinvestment write is rejected')
     else: raise AssertionError('stale reinvestment write accepted')
     check(cap['corporate_actions']['confirmation_kind']=='SPLIT' and not cap['corporate_actions']['automatic_ledger_write'],'AI discovers explicit share-action confirmation')
+    check('shareholder classes' in cap['corporate_actions']['cash_only_plans'] and 'retain job history' in cap['corporate_actions']['sync_recovery'],'AI discovers cash-only classification and reminder recovery policy')
     stock=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'CN','code':'600000','name':'AI合成送转股'},quantity='100',gross_amount='3000',fx_rate='1',expected_revision=revision()),'POST')
     fixture="from pathlib import Path;import sys;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Service(Store(d));s.cache_prices(sys.argv[2],[{'date':'2024-01-03','price':'10','source':'synthetic'}]);s.cache_actions(sys.argv[2],[{'kind':'split_notice','date':'2024-01-03','factor':'3','source':'synthetic'}])"
     subprocess.run([sys.executable,'-c',fixture,str(expected),stock['instrument_id']],cwd=Path(__file__).resolve().parents[1],check=True)

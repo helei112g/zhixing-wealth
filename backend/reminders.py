@@ -61,7 +61,10 @@ def sync_reminders(jobs):
             if key in seen: continue
             seen.add(key)
             if item['status'] != 'error': continue
-            rows.append(dict(id='sync:'+hashlib.sha256(key.encode()).hexdigest(),source='sync',kind='sync_failure',title=item['name']+' · 同步未完成',
+            name=item['name']
+            if item.get('source_kind')=='corporate_actions' and name.endswith(' 送转股'):
+                name=name.removesuffix(' 送转股')+' 企业行动数据'
+            rows.append(dict(id='sync:'+hashlib.sha256(key.encode()).hexdigest(),source='sync',kind='sync_failure',title=name+' · 同步未完成',
                              detail=item.get('message','请重试同步'),date=job.get('started_at','')[:10],days=None,amount=None,currency=None,severity='attention',
                              action=dict(type='sync',instrument_id=item.get('instrument_id'),label='重试同步')))
     if jobs and jobs[0].get('status')=='error' and not rows:

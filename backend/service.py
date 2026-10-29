@@ -1110,11 +1110,12 @@ class Service:
                         continue
                     if inst['market'] in ('SH','SZ') and inst['type']=='stock':
                         try:
-                            actions=dividends.fetch_stock_splits(inst)
+                            review_notes=[]
+                            actions=dividends.fetch_stock_splits(inst,notes=review_notes)
                             self.cache_actions(inst['id'],actions)
-                            job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 送转股','status':'ok','count':len(actions),'source':'东方财富·已实施送转股','notes':['仅生成待核对事项；确认后才调整份额，总成本不变']})
+                            job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 企业行动数据','status':'ok','count':len(actions),'source':'东方财富·已实施权益分派','notes':['仅生成待核对事项；确认后才调整份额，总成本不变',*review_notes]})
                         except Exception as exc:
-                            job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 送转股','status':'error','message':str(exc)[:500]})
+                            job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 企业行动数据','status':'error','message':str(exc)[:500]})
                     try:
                         existing = [r['date'] for r in state['prices'] if r['instrument_id'] == inst['id'] and r['kind'] == inst.get('series_kind','raw') and not r.get('manual')]
                         beginning = start if full or not existing else max(start, (day(max(existing)) - timedelta(days=7)).isoformat())

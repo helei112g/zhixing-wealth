@@ -35,6 +35,15 @@ class DividendParserTests(unittest.TestCase):
         result=dividends.parse_stock([row,dict(row,ASSIGN_PROGRESS='预披露')],'600519')
         self.assertEqual(len(result),1);self.assertEqual(result[0]['per_share'],'28.02423');self.assertIsNone(result[0]['pay_date'])
         with self.assertRaises(ProviderError):dividends.parse_stock([row],'000001')
+    def test_cash_notice_keeps_amount_review_separate_from_share_action_detection(self):
+        row=dict(SECURITY_CODE='600000',ASSIGN_PROGRESS='实施分配',EX_DIVIDEND_DATE='2025-06-03',
+                 PRETAX_BONUS_RMB='3',IMPL_PLAN_PROFILE='10派2.5元(含税)(中小股东10派2.8元;大股东10派2.3元)')
+        notice=dividends.parse_stock([row],'600000')[0]
+        self.assertEqual(notice['per_share'],'0.3')
+        self.assertIn('差异化现金分红',notice['coverage_note'])
+        self.assertIn('不一致',notice['coverage_note'])
+        self.assertIn('实际到账',notice['coverage_note'])
+        self.assertIsNone(notice['pay_date'])
     def test_hk_strict_cash_currency_and_dates(self):
         row={'SECURITY_CODE':'00700','YEAR':'2025','REPORT_TYPE':'年度分配','EX_DIVIDEND_DATE':'2026/05/15','DIVIDEND_DATE':'2026/06/01','TRANSFER_END_DATE':'2026/05/19-2026/05/20','PLAN_EXPLAIN':'每股派港币5.3元'}
         result=dividends.parse_hk([row,dict(row,PLAN_EXPLAIN='每10股送1股')],'00700')

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from backend import dividends, market
 from backend.service import Service
 from backend.store import Store
+from backend.reminders import sync_reminders
 
 
 def report(**extra):
@@ -78,13 +79,56 @@ class CorporateActionTests(unittest.TestCase):
         self.assertEqual(actions[0]['date'],'2025-06-03')
         self.assertEqual(actions[0]['factor'],'3')
         self.assertEqual(dividends.parse_stock_splits([cash],'600000'),[])
-        # Null is never generally equivalent to zero. Unknown plans, conflicting
-        # numeric fields and plans with shares must remain explicit sync failures.
-        for change in ({'IMPL_PLAN_PROFILE':None}, {'PRETAX_BONUS_RMB':'3'},
+        # Null is never generally equivalent to zero. Unknown plans, partial share
+        # ratios and plans with shares must remain explicit sync failures.
+        for change in ({'IMPL_PLAN_PROFILE':None}, {'PRETAX_BONUS_RMB':None},
                        {'BONUS_RATIO':'1'}, {'IMPL_PLAN_PROFILE':'10送1股派2.50元(含税)'},
-                       {'IMPL_PLAN_PROFILE':'10派2.50元(含税)，另送1股'}):
+                       {'IMPL_PLAN_PROFILE':'10派2.50元(含税)，另送1股'},
+                       {'IMPL_PLAN_PROFILE':'10派0元(含税)'}, {'PRETAX_BONUS_RMB':'-1'}):
             with self.subTest(change=change),self.assertRaises(market.ProviderError):
                 dividends.parse_stock_splits([{**cash,**change}],'600000')
+
+    def test_cash_only_differential_and_conflicting_amounts_do_not_mask_real_split(self):
+        cash={**report(),'BONUS_RATIO':None,'IT_RATIO':None,'BONUS_IT_RATIO':None,
+              'PRETAX_BONUS_RMB':'2.5','IMPL_PLAN_PROFILE':'10派2.5元（含税，扣税后2.25元）（中小股东10派2.8元；大股东10派2.3元）'}
+        conflict={**cash,'EX_DIVIDEND_DATE':'2024-06-03','PRETAX_BONUS_RMB':'3',
+                  'IMPL_PLAN_PROFILE':'10派2.5元(含税,扣税后2.25元)'}
+        notes=[]
+        actions=dividends.parse_stock_splits([cash,conflict,report()],'600000',notes=notes)
+        self.assertEqual(len(actions),1);self.assertEqual(actions[0]['factor'],'3')
+        self.assertEqual(len(notes),2)
+        self.assertIn('差异化现金分红',notes[0]);self.assertIn('2024-06-03',notes[1]);self.assertIn('不一致',notes[1])
+        for profile in ('10派2.5元(中小股东10派2.8元;大股东10派2.3元)，另转1股',
+                        '10派2.5元(中小股东10派2.8元;大股东10派0元)',
+                        '10派2.5元(中小股东10派2.8元;其他股东待定)'):
+            with self.subTest(profile=profile),self.assertRaises(market.ProviderError):
+                dividends.parse_stock_splits([{**cash,'IMPL_PLAN_PROFILE':profile}],'600000')
+
+    def test_successful_cash_only_retry_clears_legacy_failure_without_ledger_changes(self):
+        cash={**report(),'BONUS_RATIO':None,'IT_RATIO':None,'BONUS_IT_RATIO':None,
+              'PRETAX_BONUS_RMB':'3','IMPL_PLAN_PROFILE':'10派2.5元(含税)(中小股东10派2.8元;大股东10派2.3元)'}
+        self.store.save_job(dict(id='legacy-failure',started_at='2024-01-01T01:00',status='partial',items=[
+            dict(source_kind='corporate_actions',instrument_id=self.iid,name='600000 送转股',status='error',message='旧解析失败')]))
+        old=sync_reminders(self.store.jobs())[0]
+        self.assertEqual(old['title'],'600000 企业行动数据 · 同步未完成')
+        self.assertEqual(old['action']['instrument_id'],self.iid)
+        before=self.store.state()['events']
+        quote=dict(rows=[dict(date='2025-06-04',price='10',kind='raw',source='synthetic')],source='synthetic',notes=[])
+        with patch('backend.dividends.stock_records',return_value=[cash]),patch('backend.dividends.fetch_notices',return_value=[]),\
+             patch('backend.market.quotes',return_value=quote),patch('backend.market.exchange_rates',side_effect=lambda c,*a:[dict(currency=c,date='2025-06-04',rate='1',source='synthetic')]):
+            self.service.start_sync(self.iid,trigger='retry')
+            for _ in range(200):
+                if not self.service.syncing:break
+                time.sleep(.01)
+            self.assertFalse(self.service.syncing)
+        jobs=self.store.jobs();self.assertTrue(any(j['id']=='legacy-failure' for j in jobs))
+        item=next(i for i in jobs[0]['items'] if i['source_kind']=='corporate_actions')
+        self.assertEqual(item['status'],'ok');self.assertEqual(item['count'],0)
+        self.assertTrue(any('不一致' in n for n in item['notes']))
+        self.assertEqual(sync_reminders(jobs),[])
+        self.assertEqual(self.store.state()['events'],before)
+        self.assertEqual(self.store.state()['corporate_actions'],[])
+        self.assertEqual(self.service.dashboard(self.p['id'],end='2025-06-04')['todos'],[])
 
     def test_split_replay_precedes_same_day_buy_even_when_recorded_later(self):
         other=self.event('BUY','2025-06-03',instrument_id=self.iid,quantity='10',gross_amount='90')

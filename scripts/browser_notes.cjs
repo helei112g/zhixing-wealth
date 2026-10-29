@@ -8,7 +8,7 @@ const notePath=(p,i)=>'/portfolios/'+p+'/instruments/'+i+'/notes';const create=a
 const openInstrument=async(name)=>{await nav('持仓与计划');await page.locator('.holdings-table').getByRole('button',{name,exact:true}).click();await page.getByRole('tab',{name:/投资笔记/}).waitFor();};
 const openNotes=async()=>{await page.getByRole('tab',{name:/投资笔记/}).click();await page.locator('.investment-notes').waitFor();await page.locator('.investment-notes').getByText('读取投资笔记…',{exact:true}).waitFor({state:'hidden'});};
 const editor=()=>page.getByRole('dialog').filter({has:page.getByLabel('笔记标题',{exact:true})});
-try{const h=await api('/health');assert.equal(h.environment,'test');assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(h.version,'0.8.4');csrf=(await api('/bootstrap')).csrf_token;
+try{const h=await api('/health');assert.equal(h.environment,'test');assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(h.version,'0.8.5');csrf=(await api('/bootstrap')).csrf_token;
 const p=await api('/portfolios',{name:'笔记验收 · 稳健组合',planned_amount:'10000',start_date:'2024-01-01'}),q=await api('/portfolios',{name:'笔记验收 · 独立组合',planned_amount:'10000',start_date:'2024-01-01'});
 const buy=async(pid,code,name)=>api('/events',{portfolio_id:pid,kind:'BUY',date:'2024-01-02',instrument:{market:'CN',code,name},quantity:'10',gross_amount:'110',fx_rate:'1'});
 const a=await buy(p.id,'512880','笔记验收标的'),b=await buy(p.id,'512890','另一个笔记标的');await buy(q.id,'512880','笔记验收标的');

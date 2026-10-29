@@ -14,7 +14,7 @@ fs.mkdirSync(out,{recursive:true});
  const signed=v=>(Number(v)>0?'+':'')+money(v);
  function quote(iid,value,today){const r=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,sys;from pathlib import Path;from backend.store import Store;from backend.service import Service;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();Service(Store(d)).cache_prices(p['id'],[{'date':'2023-01-02','price':'10'},{'date':p['today'],'price':p['price']}])"],{cwd:root,encoding:'utf8',input:JSON.stringify({directory:path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')),id:iid,price:value,today})});assert.equal(r.status,0,r.stderr);}
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(health.version,'0.8.4');
+  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(health.version,'0.8.5');
   const boot=await api('/bootstrap');csrf=boot.csrf_token;
   const p=await api('/portfolios',{name:'合成收益分解验收',planned_amount:'100000',start_date:'2023-01-01'});
   await api('/fx',{currency:'HKD',date:'2023-01-01',rate:'1',mode:'daily'});

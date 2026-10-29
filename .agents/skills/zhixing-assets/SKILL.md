@@ -14,7 +14,7 @@ description: 查询或维护知行财富的资产更新、余额快照、负债�
 - 先检查目标服务 `/api/health` 的 environment；开发源码默认8877，发布包默认8765，日常工作区固定正式账本。业务写入仍须有对应用户授权。测试显式选择test／8876；服务不在线时说明未连接，不自行安装、切换版本或环境。
 - 读 `/api/capabilities` 与 `/api/family/catalog` 获得能力、revision、项目及关联ID；需要写入时读 `/api/family/command-schema` 获取当前 JSON Schema，勿根据名称猜ID。
 - 总览：`/api/family/summary?grain=month&period=YYYY-MM`；按年用year。月度比较上月末，年度比较上年末；结束日余额不可累加。自定义必须提供start/end。
-- 趋势分析：`/api/family/history?grain=month&comparison=yoy&start=YYYY-MM-DD&end=YYYY-MM-DD`。同比与总览上期比较分开说明，null保留未知，统计范围变化不可编造比率。
+- 趋势分析：`/api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD`。按月比较上月末、按年比较上年末；用户明确要求同比时改用 comparison=yoy 并说明基线，null保留未知，统计范围变化不可编造比率。
 - 收入：`/api/family/income?year=YYYY`；提醒统一用`/api/reminders`。收入不自动增加现金，待收款不是现金，保险保额/保费不是资产。现金覆盖仅按计划还款折算，不包括生活开支。
 
 ## 维护
@@ -29,3 +29,5 @@ description: 查询或维护知行财富的资产更新、余额快照、负债�
 8. 使用提交结果的正式ID回读catalog/overview/income，核对日期、金额、历史和组合未被改动。409或超时遵循接入约定，不能自动换revision重试。
 
 请求文件放在源码外的本机工作目录，不写入技能或示例；不要输出凭据或完整私人账本。参数细节按需阅读 [接口文档](../../../docs/api.md) 的资产章节。
+
+- 收入年度累计与分类占比使用 `/api/family/income?year=YYYY` 的 `summary`；`total` 未知或为零时不编造占比，`recorded_months` 不等于全年完整记录。字段详见 `docs/api.md`。

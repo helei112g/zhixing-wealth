@@ -51,7 +51,11 @@ def main():
     before=client.request('/api/family/overview')['total_assets']
     income,_=command('income',dict(kind='custom',name='AI合成收入',month='2024-02',date='2024-02-01',currency='CNY',amount='100'))
     command('income',dict(kind='custom',name='AI合成收入',month='2024-02',date='2024-02-01',currency='CNY',amount='120'),income['id'])
-    records=client.request('/api/family/income?year=2024')['records']
+    income_response=client.request('/api/family/income?year=2024')
+    records=income_response['records']
+    check(income_response['summary']['total']=='120' and income_response['summary']['groups']['custom']['share']=='1', 'income cumulative and share use latest record through HTTP')
+    history=client.request('/api/family/history?grain=month&comparison=previous&start=2024-02-01&end=2024-02-29')
+    check(history['rows'][0]['comparison_date']=='2024-01-31', 'history previous compares prior month end through HTTP')
     check(len([r for r in records if r['id']==income['id']])==1 and next(r for r in records if r['id']==income['id'])['amount']=='120','income correction replaces current amount, not duplicate record')
     check(client.request('/api/family/overview')['total_assets']==before,'income does not double-count cash')
     p=client.write('/api/portfolios',dict(name='AI合成组合验收',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')

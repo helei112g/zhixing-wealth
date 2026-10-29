@@ -16,7 +16,7 @@ AREAS = {'backend': {'.py'}, 'tests': {'.py'}, 'scripts': {'.py','.cjs'}, 'nativ
          'frontend/src': {'.ts','.tsx','.css'}, 'migrations': {'.py'}, '.github/workflows': {'.yml'}}
 STATIC = {'frontend/public/zhixing-logo.png', '.githooks/pre-commit', '.githooks/pre-push'}
 SHOWCASE_IMAGES = {f'docs/images/{name}.jpg' for name in (
-    'assets-overview', 'asset-trends', 'portfolio-overview', 'holdings', 'investment-notes')}
+    'assets-overview', 'asset-trends', 'portfolio-overview', 'holdings', 'investment-notes', 'income')}
 STATIC |= SHOWCASE_IMAGES | {'.github/pull_request_template.md'}
 SKILLS = {'zhixing-assets', 'zhixing-portfolios', 'zhixing-notes'}
 STATIC |= {f'.agents/skills/{name}/{part}' for name in SKILLS for part in ('SKILL.md','agents/openai.yaml')}

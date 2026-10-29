@@ -23,3 +23,25 @@
 .overview-balance-column .balance-change-rate.up{color:var(--red)}
 .overview-balance-column .balance-change-rate.down{color:var(--teal)}
 .asset-amount-hint{display:block;color:var(--muted);font-size:11px;margin-top:4px;font-weight:400}
+
+/* Period changes and ledger summaries share the backend's accounting basis. */
+.trend-summary{padding:18px 20px;margin:10px 0 22px;background:#f6f8fb;border-radius:10px}
+.trend-summary strong{font-size:25px}.trend-summary small{line-height:1.5}
+.family-analysis-legend .rate-legend,.family-page .rate-status{color:#738092}
+.family-analysis-legend .rate-legend i{width:22px;height:0;background:none;border-top:2px dashed #7c8796;border-radius:0}
+.family-analysis-legend .net-line-key{width:22px;height:2px;background:#365b7d;border-radius:0}
+.family-trend-tooltip{display:flex;flex-direction:column;gap:7px;padding:14px 17px;background:#fff;border:1px solid #dce4ed;border-radius:8px;font-size:12px;box-shadow:0 3px 12px #263c5212}
+.family-trend-tooltip small{color:#738196}
+.trend-delta-heading,.trend-detail-heading,.trend-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.trend-delta-heading{border-top:1px solid #e7ecf2;margin-top:16px;padding-top:12px}
+.trend-delta-heading h3,.trend-detail-heading h3{font-size:14px;margin:8px 0}
+.trend-delta-heading span,.trend-detail-heading span,.trend-pagination>span{color:#738196;font-size:12px}
+.trend-pagination{padding:14px 0 18px}.family-delta-chart{width:100%;min-width:0}
+.ledger-link-management{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:24px;padding-top:16px;border-top:1px solid #e4eaf1}
+.family-page .danger-text{color:#b94e49}.family-page .danger-text:hover{color:#92332f;background:#fcf0ef}
+.ledger-category-summary .ledger-totals strong{overflow-wrap:anywhere}
+.income-summary{display:grid;grid-template-columns:minmax(180px,.85fr) minmax(0,2fr);gap:28px;padding:20px;background:#f6f8fb;border-radius:10px;margin:20px 0 24px}
+.income-year-total{display:flex;flex-direction:column;gap:12px}.income-year-total>span,.income-year-total small{font-size:12px;color:#738196;line-height:1.6}.income-year-total strong{font-size:28px;overflow-wrap:anywhere}
+.income-composition{display:grid;grid-template-columns:1fr 1fr;gap:20px 28px}.income-composition>div{display:grid;grid-template-columns:1fr auto;gap:7px;font-size:12px}.income-composition>div>span:first-child{display:flex;align-items:center;gap:7px}.income-composition>div>span:first-child i{width:9px;height:9px;border-radius:2px}.income-composition b{font-weight:600}.income-composition>div>span:nth-child(3){color:#738196}.income-share-track{height:5px;align-self:center;background:#e5ebf2;border-radius:3px;overflow:hidden}.income-share-track i{display:block;height:100%}
+@media(max-width:700px){.trend-summary{padding:14px}.income-summary{grid-template-columns:1fr;gap:20px}.income-composition{gap:18px}.ledger-link-management{align-items:flex-start;flex-direction:column}.trend-delta-heading span{font-size:11px}}
+@media(max-width:420px){.income-composition{grid-template-columns:1fr}.income-year-total strong{font-size:25px}.trend-summary strong{font-size:21px}}

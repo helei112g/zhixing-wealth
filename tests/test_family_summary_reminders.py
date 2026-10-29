@@ -36,6 +36,48 @@ class SummaryReminderTests(unittest.TestCase):
         self.write('valuation',dict(item_id=item['id'],household_amount=amount,effective_on=when))
     def income(self,month,amount,**extra):
         return self.write('income',dict(kind='salary',month=month,amount=amount,currency='CNY',**extra))
+    def test_flat_balances_have_zero_previous_period_change_despite_varying_yoy(self):
+        cash=self.item('cash','100','2025-01-01')
+        self.value(cash,'150','2025-02-01');self.value(cash,'200','2025-12-31')
+        self.value(cash,'300','2026-01-01')
+        rows=self.family.history('2026-02-01','2026-03-31',comparison='previous')['rows']
+        self.assertEqual([r['comparison_date'] for r in rows],['2026-01-31','2026-02-28'])
+        self.assertEqual([r['changes']['cash']['rate'] for r in rows],['0','0'])
+        self.assertEqual([r['changes']['cash']['amount'] for r in rows],['0','0'])
+        annual=self.family.history('2026-01-01','2026-10-28','year','previous')['rows'][0]
+        self.assertEqual(annual['comparison_date'],'2025-12-31')
+        self.assertEqual(annual['changes']['cash']['rate'],'0.5')
+        self.assertEqual(self.family.history('2026-01-01','2026-02-28',comparison='yoy')['rows'][0]['changes']['cash']['rate'],'2')
+        self.assertEqual(self.family.history('2026-01-01','2026-02-28',comparison='yoy')['rows'][1]['changes']['cash']['rate'],'1')
+
+    def test_income_cumulative_composition_uses_latest_records_and_selected_year(self):
+        self.income('2025-01','9999');i=self.income('2026-01','100.10')
+        self.write('income',dict(kind='salary',month='2026-01',amount='200.20',currency='CNY'),i['id'])
+        self.write('income',dict(kind='rent',month='2026-02',amount='100.10',currency='CNY'))
+        s=self.family.income_summary(2026)['summary']
+        self.assertEqual(s['total'],'300.3');self.assertEqual(s['recorded_months'],2)
+        self.assertEqual(s['groups']['salary']['amount'],'200.2')
+        self.assertEqual(D(s['groups']['salary']['share']),D(2)/3)
+        self.assertEqual(s['groups']['custom'],{'amount':'0','share':'0'})
+        self.assertEqual(s['missing_count'],0)
+
+    def test_income_cumulative_preserves_unknown_zero_and_missing_fx(self):
+        empty=self.family.income_summary(2026)['summary']
+        self.assertIsNone(empty['total']);self.assertIsNone(empty['groups']['salary']['share'])
+        self.income('2026-01','0')
+        zero=self.family.income_summary(2026)['summary']
+        self.assertEqual(zero['total'],'0');self.assertIsNone(zero['groups']['salary']['share'])
+        self.income('2026-02','100')
+        self.write('income',dict(kind='rent',month='2026-02',amount='10',currency='USD'))
+        missing=self.family.income_summary(2026)['summary']
+        self.assertIsNone(missing['total']);self.assertEqual(missing['known_total'],'100')
+        self.assertEqual(missing['missing_count'],1);self.assertIsNone(missing['groups']['rent']['amount'])
+        self.assertTrue(all(g['share'] is None for g in missing['groups'].values()))
+        with self.store.transaction() as db:
+            self.store.upsert_fx(db,dict(currency='USD',date='2026-02-27',rate='7',source='synthetic'))
+        complete=self.family.income_summary(2026)['summary']
+        self.assertEqual(complete['total'],'170');self.assertEqual(complete['groups']['rent']['amount'],'70')
+
     def test_year_compares_previous_year_end_and_complete_prior_income(self):
         cash=self.item('cash','100');self.value(cash,'900','2025-12-31');self.value(cash,'1200','2026-01-01')
         self.income('2025-01','10');self.income('2025-11','999');self.income('2026-01','20');self.income('2026-10','5')

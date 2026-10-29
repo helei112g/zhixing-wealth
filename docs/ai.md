@@ -48,7 +48,7 @@ python3 scripts/ai_client.py read /api/family/catalog
 
 valuation 是该日完整余额，不是增减额。补录不覆盖后续日期；早于首笔时要显式 extend_start。item 编辑保留类别/币种；计划只产生提醒，不扣款。links/unlink 只改变资产引用，不修改组合。income 更正用原 record_id，收入不会自动增加现金。全系统提醒复用 `/api/reminders`。
 
-金额为精确十进制字符串，null为未知，0为已知零；UI的万/亿不改变API原值。总览默认月比上月末、年比上年末，趋势分析明确 comparison=yoy。所有余额是时点量，不能把月末余额相加当总资产。
+金额为精确十进制字符串，null为未知，0为已知零；UI的万/亿不改变API原值。总览默认月比上月末、年比上年末，趋势分析使用 comparison=previous（月比上月末、年比上年末）；只有明确要求同比时才用 comparison=yoy。所有余额是时点量，不能把月末余额相加当总资产。
 
 ## 验证与维护
 
@@ -57,3 +57,5 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 `python scripts/verify.py --browser` 包含标准库客户端真实 HTTP 回归：能力发现、预览不写入、快照回读、旧 revision 拒绝、收入更正、组合关联及笔记作用域。只能使用临时合成 test 账本。`source_check.py` 只收集白名单技能文件，私人请求、笔记及账本不得进入技能包。
 
 后续迭代须按 [AGENTS.md](../AGENTS.md) 同步维护能力契约、客户端、文档、技能和验证。
+
+收入累计和占比读取 `/api/family/income?year=YYYY` 的 `summary`（字段见 docs/api.md），不在客户端把缺失金额补零或重复汇总更正版本。关联台账金额用 `items[].value`，分类金额用 `categories[].value`；预算型未投入预算不计入资产。

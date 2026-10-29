@@ -12,8 +12,8 @@
 |---|---|
 | `GET /api/family/overview?date=YYYY-MM-DD` | 当前／历史资产投影：总资产、负债、净资产、分类、来源日、关联；schedules 仅今天至未来35天 |
 | `GET /api/family/catalog` | 资产记录所有版本、金额历史、关联、旧计划／设置及组合可选项、revision |
-| `GET /api/family/history?grain=month&comparison=yoy&start=YYYY-MM-DD&end=YYYY-MM-DD` | 月／年期末金额与变化额、变化率；资产页面固定使用 yoy；接口兼容 previous/year_start/yoy；未结束期间同比上年同日，最大30年 |
-| `GET /api/family/income?year=2026` | 指定年份12个月收入与分类合计、明细、revision；默认当年，不支持未来年份 |
+| `GET /api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD` | 月／年期末金额与变化额、变化率；资产页面使用 previous（月比上月末、年比上年末）；接口兼容 previous/year_start/yoy，yoy 未结束期间比上年同日，最大30年 |
+| `GET /api/family/income?year=2026` | 指定年份12个月收入与分类合计、年度累计 summary、明细、revision；默认当年，不支持未来年份 |
 | `GET /api/family/revision` | 只读修订，用于可见页面的2秒增量刷新判断 |
 | `GET /api/family/reminders` | 今天至未来35天的还款／保费／续保提醒及本机通知状态，逾期移出列表 |
 | `POST /api/family/preview` | 执行同一校验与投影，SAVEPOINT 回滚，不增加修订和审计 |
@@ -267,7 +267,7 @@ health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/
 
 `GET /api/family/summary?grain=year&period=2026`、`?grain=month&period=2026-09` 或 `?grain=custom&start=2026-01-01&end=2026-09-30`：
 
-- 默认 grain=month；period：grain/start/end/opening_date/comparison_start/comparison_end/comparison_label/partial。总览月度余额比较上月末，年度比较上年末，自定义比较起始日前一天；与 history 的同比口径独立。
+- 默认 grain=month；period：grain/start/end/opening_date/comparison_start/comparison_end/comparison_label/partial。总览月度余额比较上月末，年度比较上年末，自定义比较起始日前一天；与 history 的 comparison=previous 余额基线一致，显式 yoy 仍使用去年同期。
 - snapshot：结束日资产投影，与桑基图共用。
 - metrics：total_assets/net_assets/total_debt/debt_ratio/liquid_cash/fixed/investment/receivable/income；各含 value/previous/amount/rate/reason，余额另有 period_change。rate 为小数比例；debt_ratio.amount 为比例之差，界面乘100显示百分点。
 - income/previous_income：已录入合计 value、记录数 count、months、missing_fx。无记录合计为 null。收入基线为上一完整自然月/自然年，或自定义之前等长区间。
@@ -277,3 +277,14 @@ health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/
 现金、固定资产、理财与应收款表单传入 effective_on（金额日期）；更正可补录历史，不能晚于今天。旧版本记录继续保留，当前余额仍取最新有效日期。
 
 0.8.1 完整备份下载在本地保留经校验的压缩 ZIP，含 SQLite 和全部引用笔记历史；落盘成功后才删除该次导出的未压缩中间副本。接口响应格式不变。
+
+### 收入年度累计与组成
+
+`GET /api/family/income?year=YYYY` 新增只读 `summary`，原有 `rows`、`records`、`revision` 保持兼容：
+
+- `total`：该年已记录收入合计，Decimal 字符串；无记录或任意记录缺汇率时为 null。
+- `known_total`：已知金额小计；`missing_count` 为缺少换算金额的记录数；`recorded_months` 为有记录的月份数，不代表其他月份收入为零。
+- `groups.salary/rent/fund/custom`：各含 `amount`、`share`。`share` 是 0–1 比例，分母为 `total`；总额未知或不大于零时为 null。组内缺汇率时 amount 也为 null。
+- 按记录日期历史汇率折合 CNY，同一记录更正只取最新版本，不改变现金余额。年份非法返回 422；只读查询不增加 revision。
+
+台账分类汇总直接使用 overview.categories 的 value/known_value/weight，关联组合详情使用 items[].value（CNY），不读取手工记录专用 household_amount。预算型闲置预算排除，实盘现金分列。

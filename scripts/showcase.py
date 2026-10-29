@@ -50,7 +50,7 @@ def seed(directory):
         'date':str(start+timedelta(days=min(100,(end-start).days))),'gross_amount':'1800','tax':'0','tax_known':True,'fx_rate':'1','reason':'合成展示分红'})
     assets=[('cash','日常账户 · 示例',85000,3500),('cash','应急储备 · 示例',60000,2000),
             ('fixed','自住住宅 · 示例',1800000,0),('investment','定期理财 · 示例',160000,2500),
-            ('debt','住房贷款 · 示例',480000,-4200),('insurance','保障保单 · 示例',12000,120)]
+            ('debt','住房贷款 · 示例',480000,-4200),('debt','汽车分期 · 示例',90000,-1500),('insurance','保障保单 · 示例',12000,120)]
     for category,name,amount,step in assets:
         extra={'payment_plan':{'mode':'fixed','first_due':str(start+timedelta(days=14)),'periods':120,'amount':'5200'}} if category=='debt' else {}
         item=command('item',{'category':category,'name':name,'currency':'CNY','effective_on':str(start),'amount':str(amount),'source':'synthetic-showcase',**extra})
@@ -61,8 +61,8 @@ def seed(directory):
     command('link',{'portfolio_id':p['id'],'effective_on':str(start),'share':'1'})
     command('settings',{'effective_on':str(start),'living_expense':'9000','reserve_months':'6','debt_plan_complete':True,'policy_plan_complete':True})
     for month in range(1,end.month+1):
-        for kind,amount in [('salary',24000+month*200),('rent',3500),('fund',4800)]:
-            command('income',{'kind':kind,'month':f'{end.year}-{month:02d}','amount':str(amount),'currency':'CNY'})
+        for kind,amount in [('salary',24000+month*200),('rent',3500),('fund',4800),('custom',1200+(month%3)*500)]:
+            command('income',{'kind':kind,**({'name':'稿费 · 示例'} if kind=='custom' else {}),'month':f'{end.year}-{month:02d}','amount':str(amount),'currency':'CNY'})
     for title,body in [
         ('建立计划：先写下持有理由','## 这笔配置的角色\n\n作为长期组合的一部分，先确定投入计划，再持续核对记录。\n\n## 待观察\n\n1. 组合集中度是否符合计划。\n2. 剩余可投金额是否足够。\n3. 下一次调整有哪些依据。'),
         ('季度复盘：把判断留在当时','## 本次观察\n\n示例组合的持仓、投入计划和收益已经归到同一份账本。**先核对事实，再决定行动。**\n\n## 下一步\n\n1. 核对本季度交易与分红。\n2. 对照投入计划，确认资金安排。\n3. 保留本次记录，下一季度再回看。\n\n以上为产品截图使用的虚构笔记，不代表真实持仓或投资建议。'),

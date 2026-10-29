@@ -127,7 +127,17 @@ class FamilyService:
                 month=f'{year}-{m:02d}'; selected=[r for r in records if r['month']==month]
                 total=None if any(r['value'] is None for r in selected) else sum((r['value'] for r in selected),ZERO)
                 rows.append(dict(month=month,total=total,recorded=bool(selected),groups={k:sum((r['value'] for r in selected if r['kind']==k and r['value'] is not None),ZERO) if not any(r['value'] is None for r in selected if r['kind']==k) else None for k in ('salary','rent','fund','custom')}))
-            return wire(dict(year=year,rows=rows,records=sorted(records,key=lambda r:r['month'],reverse=True),revision=state['revision']))
+            missing = sum(r['value'] is None for r in records)
+            known = sum((r['value'] for r in records if r['value'] is not None), ZERO)
+            total = known if records and not missing else None
+            groups = {}
+            for kind in ('salary', 'rent', 'fund', 'custom'):
+                selected = [r for r in records if r['kind'] == kind]
+                amount = None if any(r['value'] is None for r in selected) else sum((r['value'] for r in selected), ZERO)
+                groups[kind] = dict(amount=amount, share=amount / total if amount is not None and total is not None and total > 0 else None)
+            summary = dict(total=total, known_total=known, groups=groups, missing_count=missing,
+                           recorded_months=len({r['month'] for r in records}))
+            return wire(dict(year=year,rows=rows,summary=summary,records=sorted(records,key=lambda r:r['month'],reverse=True),revision=state['revision']))
 
     def _current_revision(self, db, expected):
         if not isinstance(expected, int) or isinstance(expected, bool):

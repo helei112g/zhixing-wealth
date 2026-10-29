@@ -166,7 +166,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'preview': '/api/family/preview', 'write': '/api/family/commands',
                            'expected_revision_required': True, 'portfolio_link': 'read-only; excludes unused budget',
                            'notifications': '/api/notifications', 'schema': SCHEMA,
-                           'income': '/api/family/income', 'summary': '/api/family/summary', 'recurring_payments': True,
+                           'income': '/api/family/income', 'income_summary': {'field': 'summary', 'groups': ['salary','rent','fund','custom'], 'shares': '0–1; null when total is unknown or nonpositive'}, 'history_default_comparison': 'previous', 'summary': '/api/family/summary', 'recurring_payments': True,
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},
                 'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system']},
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,

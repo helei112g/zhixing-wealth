@@ -105,7 +105,17 @@ def parse_stock_splits(records, code):
             if total is not None and value!=dec(total,nonnegative=True):
                 raise market.ProviderError('送股与转增合计不一致，请核对公告')
         elif total is not None:value=dec(total,nonnegative=True)
-        else:raise market.ProviderError('已实施公告缺少送转比例，未推定为零')
+        else:
+            # This feed uses null share ratios for cash-only distributions. Require
+            # the implemented plan AND matching cash amount before accepting that
+            # interpretation; a missing/ambiguous plan must still fail visibly.
+            profile=str(r.get('IMPL_PLAN_PROFILE') or '').replace(' ','').replace('（','(').replace('）',')')
+            cash_only=re.fullmatch(r'10派(\d+(?:\.\d+)?)元(?:\(含税(?:[,，]扣税后\d+(?:\.\d+)?元)?\))?',profile)
+            cash=r.get('PRETAX_BONUS_RMB')
+            if (all(v is None for v in parts) and cash_only and cash is not None
+                    and dec(cash,nonnegative=True)>0 and dec(cash_only[1])==dec(cash)):
+                continue
+            raise market.ProviderError('已实施公告缺少送转比例，且无法核实为纯现金分红，请核对公告')
         if value==0:continue
         record_date=date_or_none(r.get('EQUITY_RECORD_DATE'))
         if not record_date or record_date>=ex:raise market.ProviderError('送转股登记日或除权日不完整')

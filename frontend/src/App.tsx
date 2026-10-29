@@ -75,7 +75,7 @@ export default function App(){
  </div>;
 }
 
-function Quality({dash,action}:Obj){return <>{dash.warnings.length>0&&<details className="quality-warning"><summary>{dash.incomplete?'人民币合计不完整':'估值含暂估 / 待核对项'} · {dash.warnings.length}项</summary><ul>{dash.warnings.map((w:string)=><li key={w}>{w}</li>)}</ul><TodoActions todos={dash.todos} action={action}/>{dash.latest_complete_date&&<small>最近完整估值日 {dash.latest_complete_date}</small>}</details>}<div className="data-caption"><span>估值截至 {dash.date} · 金额统一为CNY</span><span>{dash.incomplete?'缺失数据未按0或1补齐':dash.estimated?'暂估数字，请核对来源':'按已记录资产与可得行情估值'}</span></div></>}
+function Quality({dash,action}:Obj){const splits=(dash.todos||[]).filter((t:Obj)=>['confirm_split','verify_split'].includes(t.type));return <>{splits.length>0&&<div className="corporate-action-notice"><Notice>有送转股 / 拆股待核对，相关收益暂不计算。确认后会调整份额并重算历史收益；原买入数量与总成本保留。</Notice><TodoActions todos={splits} action={action}/></div>}{dash.warnings.length>0&&<details className="quality-warning"><summary>{dash.incomplete?'人民币合计不完整':'估值含暂估 / 待核对项'} · {dash.warnings.length}项</summary><ul>{dash.warnings.map((w:string)=><li key={w}>{w}</li>)}</ul><TodoActions todos={(dash.todos||[]).filter((t:Obj)=>!['confirm_split','verify_split'].includes(t.type))} action={action}/>{dash.latest_complete_date&&<small>最近完整估值日 {dash.latest_complete_date}</small>}</details>}<div className="data-caption"><span>估值截至 {dash.date} · 金额统一为CNY</span><span>{dash.incomplete?'缺失数据未按0或1补齐':dash.estimated?'暂估数字，请核对来源':'按已记录资产与可得行情估值'}</span></div></>}
 
 function Overview({dash,grain,setGrain,range,setRange,start,end,setStart,setEnd,today,action,openDetail}:Obj){const b=dash.benchmark;
 

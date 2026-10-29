@@ -32,7 +32,7 @@ await page.setViewportSize({width:1600,height:1050});
 const corp=await api('/portfolios',{name:'合成送转股验收',planned_amount:'10000',start_date:'2026-01-01'});
 const corpBuy=await api('/events',{portfolio_id:corp.id,kind:'BUY',date:'2026-01-02',instrument:{market:'CN',code:'600000',name:'送转股 · 合成股票'},quantity:'100',gross_amount:'3000',fx_rate:'1'});
 const corporateFixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Service(Store(d));s.cache_prices(sys.argv[2],[{'date':day,'price':price,'kind':kind,'source':'synthetic'} for day,price,kind in [('2026-01-02','30','raw'),('2026-01-05','10','raw'),(sys.argv[3],'11','raw'),('2026-01-02','10','adjusted'),('2026-01-05','10','adjusted'),(sys.argv[3],'11','adjusted')]]);s.cache_actions(sys.argv[2],[{'kind':'split_notice','date':'2026-01-05','factor':'3','source':'synthetic'}])",health.data_directory,corpBuy.instrument_id,boot.today],{cwd:root,encoding:'utf8'});assert.equal(corporateFixture.status,0,corporateFixture.stderr);
-await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(corp.id);await nav('持仓与计划');await page.locator('.holding-row').filter({hasText:'送转股 · 合成股票'}).click();await page.locator('.instrument-identity').waitFor();
+await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(corp.id);await page.locator('.corporate-action-notice').waitFor();check(await page.locator('.corporate-action-notice').getByRole('button',{name:'核对送转/拆股份额',exact:true}).isVisible(),'share action confirmation is visible on portfolio overview without expanding warnings');await page.screenshot({path:path.join(out,'corporate-pending.png'),fullPage:true});await nav('持仓与计划');await page.locator('.holding-row').filter({hasText:'送转股 · 合成股票'}).click();await page.locator('.instrument-identity').waitFor();
 check(await page.getByRole('button',{name:'前复权参考',exact:true}).getAttribute('class').then(c=>c.includes('active')),'stock price chart defaults to adjusted reference');
 check((await api('/portfolios/'+corp.id+'/dashboard')).capital_summary.profit===null,'unconfirmed share action cannot show a fake loss');
 await page.getByRole('button',{name:'核对送转/拆股份额',exact:true}).click();const splitDialog=page.getByRole('dialog');
@@ -43,6 +43,10 @@ check((await api('/portfolios/'+corp.id+'/transactions')).length===beforeSplit,'
 await splitDialog.getByRole('button',{name:'确认记账',exact:true}).click();await splitDialog.waitFor({state:'hidden'});
 const corrected=await api('/portfolios/'+corp.id+'/dashboard');check(corrected.holdings[0].quantity==='300'&&Number(corrected.holdings[0].cost_including_fees_native)===3000&&Number(corrected.capital_summary.profit)===300,'confirmed distribution changes shares, preserves cost and corrects gain');
 check(corrected.todos.length===0,'confirmed distribution leaves no repeated confirmation');
+const ledgerRows=(await api('/portfolios/'+corp.id+'/transactions')).map(r=>r.event);check(ledgerRows.some(r=>r.kind==='SPLIT'&&r.factor==='3')&&ledgerRows.find(r=>r.id===corpBuy.id).quantity==='100','share action is a separate record and original purchase quantity stays unchanged');
+check(corrected.curve.every(r=>r.portfolio_return===null||Number(r.portfolio_return)>-.01),'portfolio return curve has no artificial split-day cliff');
+await nav('组合总览');await page.getByRole('heading',{name:'收益表现',exact:true}).waitFor();check(await page.locator('.corporate-action-notice').count()===0,'portfolio overview clears the confirmed action');
+
 await page.screenshot({path:path.join(out,'corporate-confirmed.png'),fullPage:true});
 
 check(!errors.length,'no browser runtime errors');fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({checks,errors},null,2));

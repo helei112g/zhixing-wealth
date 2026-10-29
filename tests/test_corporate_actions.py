@@ -69,6 +69,23 @@ class CorporateActionTests(unittest.TestCase):
         self.assertEqual(D(sold['capital_summary']['profit']),300)
         self.assertEqual(D(sold['curve'][-1]['portfolio_return']),D('.1'))
 
+    def test_cash_only_null_ratios_do_not_hide_share_distribution(self):
+        cash={**report(), 'BONUS_RATIO':None, 'IT_RATIO':None, 'BONUS_IT_RATIO':None,
+              'PRETAX_BONUS_RMB':'2.50', 'IMPL_PLAN_PROFILE':'10派2.50元(含税,扣税后2.25元)'}
+        reports=[{**cash,'EX_DIVIDEND_DATE':'2026-06-03'},report(),{**cash,'EX_DIVIDEND_DATE':'2024-06-03'}]
+        actions=dividends.parse_stock_splits(reports,'600000')
+        self.assertEqual(len(actions),1)
+        self.assertEqual(actions[0]['date'],'2025-06-03')
+        self.assertEqual(actions[0]['factor'],'3')
+        self.assertEqual(dividends.parse_stock_splits([cash],'600000'),[])
+        # Null is never generally equivalent to zero. Unknown plans, conflicting
+        # numeric fields and plans with shares must remain explicit sync failures.
+        for change in ({'IMPL_PLAN_PROFILE':None}, {'PRETAX_BONUS_RMB':'3'},
+                       {'BONUS_RATIO':'1'}, {'IMPL_PLAN_PROFILE':'10送1股派2.50元(含税)'},
+                       {'IMPL_PLAN_PROFILE':'10派2.50元(含税)，另送1股'}):
+            with self.subTest(change=change),self.assertRaises(market.ProviderError):
+                dividends.parse_stock_splits([{**cash,**change}],'600000')
+
     def test_split_replay_precedes_same_day_buy_even_when_recorded_later(self):
         other=self.event('BUY','2025-06-03',instrument_id=self.iid,quantity='10',gross_amount='90')
         self.event('SPLIT','2025-06-03',instrument_id=self.iid,factor='3')
@@ -92,7 +109,9 @@ class CorporateActionTests(unittest.TestCase):
 
     def test_sync_discovers_share_action_even_if_price_source_fails(self):
         initial=self.store.state()['events']
-        with patch('backend.market.exchange_rates',return_value=[dict(currency='USD',date='2025-06-01',rate='7',source='synthetic')]),patch('backend.market.quotes',side_effect=market.ProviderError('synthetic outage')),patch('backend.dividends.fetch_stock_splits',return_value=dividends.parse_stock_splits([report()],'600000')),patch('backend.dividends.fetch_notices',return_value=[]):
+        cash={**report(), 'EX_DIVIDEND_DATE':'2024-06-03', 'BONUS_RATIO':None, 'IT_RATIO':None,
+              'BONUS_IT_RATIO':None,'PRETAX_BONUS_RMB':'2.50','IMPL_PLAN_PROFILE':'10派2.50元(含税)'}
+        with patch('backend.market.exchange_rates',return_value=[dict(currency='USD',date='2025-06-01',rate='7',source='synthetic')]),patch('backend.market.quotes',side_effect=market.ProviderError('synthetic outage')),patch('backend.dividends.stock_records',return_value=[cash,report()]),patch('backend.dividends.fetch_notices',return_value=[]):
             self.service.start_sync(self.iid)
             for _ in range(200):
                 if not self.service.syncing:break
@@ -100,6 +119,7 @@ class CorporateActionTests(unittest.TestCase):
             self.assertFalse(self.service.syncing)
         self.assertEqual(self.store.state()['events'],initial)
         self.assertEqual(self.service.dashboard(self.p['id'],end='2025-06-03')['todos'][0]['type'],'confirm_split')
+        self.assertIsNone(self.service.dashboard(self.p['id'],end='2025-06-03')['curve'][-1]['portfolio_return'])
 
     def test_adjusted_reference_refreshes_full_span_but_raw_stays_incremental(self):
         calls=[]

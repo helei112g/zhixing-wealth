@@ -6,6 +6,9 @@ import {amount, units, money, Obj, percent, tone} from './api';
 export function Panel({title, right, children, className=''}: {title?:React.ReactNode;right?:React.ReactNode;children:React.ReactNode;className?:string}) {
  return <section className={'panel '+className}>{(title||right)&&<header className="panel-head"><h2>{title}</h2>{right}</header>}{children}</section>;
 }
+export function ListSection({title,right,children,className=''}: {title:React.ReactNode;right?:React.ReactNode;children:React.ReactNode;className?:string}) {
+ return <section className={'list-section '+className}><header className="list-section-head"><h2>{title}</h2>{right}</header>{children}</section>;
+}
 export function Button({children,primary=false,small=false,className='',...props}:React.ButtonHTMLAttributes<HTMLButtonElement>&{primary?:boolean;small?:boolean}) {return <button type="button" className={'button '+(primary?'primary ':'')+(small?'small ':'')+className} {...props}>{children}</button>;}
 export function Field({label,hint,children,wide=false}: {label:string;hint?:React.ReactNode;children:React.ReactNode;wide?:boolean}) {return <label className={'field '+(wide?'wide':'')}><span>{label}</span>{children}{hint&&<small>{hint}</small>}</label>;}
 export function ErrorBox({error}: {error:any}) {return error?<div className="error-box" role="alert"><AlertCircle size={16}/><span>{String(error)}</span></div>:null;}

@@ -8,12 +8,13 @@ import {SplitEffectView,SplitSummary} from './split_ui';
 
 type BaseProps={boot:Obj;portfolio?:Obj;onClose:()=>void;onSaved:(value?:any)=>void};
 export function PortfolioForm({boot,portfolio,onClose,onSaved}:BaseProps){
- const[f,F]=useState<Obj>({target_annual_pct:'5',...(portfolio||{name:'',planned_amount:'',start_date:boot.today,benchmark_id:'benchmark-csi300-tr',benchmark_basis:'total_return',archived:false})});
+ const[f,F]=useState<Obj>({description:'',target_annual_pct:'5',...(portfolio||{name:'',planned_amount:'',start_date:boot.today,benchmark_id:'benchmark-csi300-tr',benchmark_basis:'total_return',archived:false})});
  const[error,E]=useState(''),[busy,B]=useState(false);const set=(k:string,v:any)=>F({...f,[k]:v});
- async function submit(e:React.FormEvent){e.preventDefault();B(true);E('');try{onSaved(await api('/portfolios'+(portfolio?'/'+portfolio.id:''),{...f,funding_mode:'budget'},portfolio?'PUT':'POST'));}catch(e:any){E(e.message);}finally{B(false);}}
+ async function submit(e:React.FormEvent){e.preventDefault();B(true);E('');try{onSaved(await api('/portfolios'+(portfolio?'/'+portfolio.id:''),{...f,funding_mode:'budget',expected_revision:boot.revision},portfolio?'PUT':'POST'));}catch(e:any){E(e.message);}finally{B(false);}}
  const builtin=boot.benchmarks.some((i:Obj)=>i.id===f.benchmark_id);
  return <Modal title={portfolio?'编辑组合':'创建一个投资组合'} subtitle="设置预算，直接记录买卖" onClose={onClose} busy={busy}><form onSubmit={submit}><fieldset disabled={busy}><div className="form-grid">
  <Field label="组合名称" wide><input required value={f.name} onChange={e=>set('name',e.target.value)} maxLength={80} placeholder="例如：长期投资组合"/></Field>
+ <Field label="组合介绍" wide hint="可选，写下组合的背景、目标与投资策略；纯文字，最多10000字。"><textarea rows={5} maxLength={10000} value={f.description||''} onChange={e=>set('description',e.target.value)} placeholder="为什么建立这个组合？采用什么策略，遵循哪些原则？"/></Field>
  <Field label="总计划投资金额 · CNY" wide hint="买入总价和费税直接从预算余额抵扣，无需入金。"><input required type="number" min="0.01" step="any" value={f.planned_amount} onChange={e=>set('planned_amount',e.target.value)}/></Field>
  <Field label="记账起始日"><input required type="date" max={boot.today} value={f.start_date} onChange={e=>set('start_date',e.target.value)}/></Field><Field label="基础币种"><input value="CNY 人民币" readOnly/></Field>
  <Field label="目标年化收益率 · %" wide hint="默认5%，与组合实际现金流的年化收益率（XIRR）比较；只是个人目标，不影响真实收益。"><input required type="number" min="0" max="100" step="any" value={f.target_annual_pct} onChange={e=>set('target_annual_pct',e.target.value)}/></Field>
@@ -117,7 +118,7 @@ export function EventForm({boot,portfolio,onClose,onSaved,event,initialKind='BUY
  {kind==='ADJUSTMENT'&&<><Field label="调整后持仓数量">{input('new_quantity','number',true)}</Field><Field label={'调整后总成本 · '+f.currency}>{input('new_cost','number',true)}</Field></>}
  {!['SPLIT','ADJUSTMENT','FX'].includes(kind)&&<DatedRateField label={dividend?'除息日折算汇率':'交易折算汇率'} currency={cur} rate={tradeRate} onChange={invalidate} wide/>}
  {kind==='FX'&&<><DatedRateField label="付出币种折算汇率" currency={f.from_currency||'CNY'} rate={fromRate} onChange={invalidate}/><DatedRateField label="收到币种折算汇率" currency={f.to_currency||'HKD'} rate={toRate} onChange={invalidate}/></>}
- {inline&&<p className="muted small wide">标签统一在“持仓与计划 → 设置计划”中管理，记账沿用当前标签。</p>}
+ {inline&&<p className="muted small wide">标签统一在“持仓标的 → 设置计划”中管理，记账沿用当前标签。</p>}
  {['FEE','TAX'].includes(kind)&&<Field label="关联原交易或分红（逐笔归属，可选）" wide hint="后补股息税应关联原分红；不关联时仅计组合费用，不摊给后来新买批次。"><select aria-label="关联原交易或分红（逐笔归属，可选）" value={f.related_event_id||''} onChange={e=>set('related_event_id',e.target.value)}><option value="">仅计组合级费用，暂未分摊到批次</option>{(boot.event_refs||[]).filter((r:Obj)=>r.portfolio_id===portfolio!.id&&r.id!==event?.id).map((r:Obj)=><option key={r.id} value={r.id}>{r.date} {kindNames[r.kind]} {boot.instruments.find((i:Obj)=>i.id===r.instrument_id)?.name} · {r.id.slice(0,8)}</option>)}</select></Field>}
  {kind==='OPENING_POSITION'&&<><Field label="历史买入总成本（可选）">{input('historical_cost')}</Field><Field label="可核实期初净投入 · CNY（未知留空）">{input('initial_net_invested')}</Field></>}
  <Field label={event?'当时理由（保留原版本）':'当时的理由 / 备注'} wide><textarea value={f.reason||''} onChange={e=>set('reason',e.target.value)} rows={3}/></Field>

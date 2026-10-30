@@ -17,7 +17,7 @@ sys.path.insert(0,str(ROOT))
 from backend.environment import LedgerProcessLock, claim_environment, workspace_for
 from backend.deployment_guard import require_empty
 
-SCENARIOS = ('empty','acceptance','pagination','profit','holdings','refinements','entry','reinvestment','notes','plan_forward','brand','family','settings')
+SCENARIOS = ('empty','acceptance','pagination','profit','holdings','refinements','portfolio_layout','entry','reinvestment','notes','plan_forward','brand','family','settings')
 
 
 def run(command, **kwargs):

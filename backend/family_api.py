@@ -2,7 +2,7 @@
 from typing import Any, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
-from .common import wire
+from .common import wire, today
 from .family_service import FamilyService
 from .family_notifications import FamilyNotifications
 
@@ -33,7 +33,7 @@ def family_router(store, environment):
     @router.get('/revision')
     def revision():
         with store.connection() as db:
-            return {'revision': int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0])}
+            return {'revision': int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0]), 'today': str(today())}
 
     @router.get('/overview')
     def overview(date: str | None = None): return family.read(date)

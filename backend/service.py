@@ -15,7 +15,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, now, ratio, tags, canonical_region, today, wire
 from .ledger import Ledger, Market, normalize_event, periods, split_notice_records, split_notice_confirmed
-from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES
+from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES, cached_query
 from .version import VERSION, NAME
 from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
@@ -92,6 +92,12 @@ class Service:
         return dict(result, target_annual_pct=result.get('target_annual_pct', '5'))
 
     def bootstrap(self):
+        result = self.store.cached_read(('bootstrap',), self._bootstrap, clock=today)
+        result.update(jobs=self.store.jobs(), syncing=self.syncing,
+            last_backup=max((p.name for p in self.store.backups.iterdir() if p.suffix in ('.sqlite', '.zip') and not p.name.endswith('.notes.zip')), default=None))
+        return result
+
+    def _bootstrap(self):
         state = self.store.state(); m = Market(state)
         return wire({k: state[k] for k in ('portfolios', 'instruments', 'allocations', 'revision')} | {
             'portfolios': [dict(p, target_annual_pct=p.get('target_annual_pct', '5'), running_days=running_days(p)) for p in state['portfolios']],
@@ -100,11 +106,9 @@ class Service:
             'event_refs':[{k:e.get(k) for k in ('id','portfolio_id','instrument_id','kind','date','quantity')} for e in state['events'] if e['kind'] in ('BUY','SELL','DIVIDEND','REINVEST','OPENING_POSITION')],
             'latest_fx': {c: m.fx(c, today()) for c in CURRENCIES},
             'fx_entries': [r for r in state['fx'] if r.get('manual') and r.get('mode') != 'daily'][-60:],
-            'jobs': self.store.jobs(), 'syncing': self.syncing,
             'price_status': [{'instrument_id': i['id'], 'latest': m.price(i['id'], today(),i.get('series_kind','raw')),
                               'count': len(m.price_series[(i['id'], i.get('series_kind','raw'))].rows) if (i['id'], i.get('series_kind','raw')) in m.price_series else 0}
                              for i in state['instruments']],
-            'last_backup': max((p.name for p in self.store.backups.iterdir() if p.suffix in ('.sqlite', '.zip') and not p.name.endswith('.notes.zip')), default=None),
         })
 
     def save_portfolio(self, data, portfolio_id=None):
@@ -423,16 +427,38 @@ class Service:
     def save_reservation(self, payload, reservation_id=None):
         raise DomainError('预留资金功能已移除，可投入预算直接等于预算余额')
 
-    def dashboard(self, portfolio_id, *, start=None, end=None, grain='month'):
+    @cached_query
+    def dashboard(self, portfolio_id, *, start=None, end=None, grain='month', view='full'):
         state = self.store.state(); portfolio = self.portfolio(state, portfolio_id)
         as_of = min(day(end or today()), today()).isoformat()
         if start and day(start) > day(as_of): raise DomainError('区间开始日期不能晚于结束日期')
         if grain not in ('day', 'week', 'month', 'year'): raise DomainError('收益周期无效')
+        if view not in ('full', 'summary'): raise DomainError('总览视图须为full或summary')
+        market_data = Market(state)
         key = ('snapshot', state['revision'], portfolio_id, as_of)
         snap = self.store.cache.get(key)
         if snap is None:
-            snap = Ledger(state, portfolio).run(as_of)
+            snap = Ledger(state, portfolio, market=market_data).run(as_of)
             self.store.cache[key] = snap
+        result = {k: v for k, v in snap.items() if k != 'history'}
+        perf_key=('instrument-performance',state['revision'],portfolio_id,as_of)
+        performance = self.store.cache.get(perf_key)
+        if performance is None:
+            performance = instrument_projection(state,portfolio,snap['holdings'],as_of,market=market_data)
+            self.store.cache[perf_key] = performance
+        result['holdings']=[dict(h,performance=performance.get(h['instrument_id'])) for h in snap['holdings']]
+        result['capital_summary']=investment_summary(state,portfolio,snap,performance,as_of)
+        result['plan_funding']=plan_funding(snap)
+        result['running_days']=running_days(portfolio)
+        result['todos']=self.todo_items(state,portfolio_id,as_of,market_data=market_data)
+        result['annual_performance']=annual_summary(portfolio,result['capital_summary'],as_of)
+        result['cumulative_return']=result['capital_summary']['return_on_cost']
+        proposals=self.dividend_candidates(portfolio_id,state=state,market_data=market_data)
+        pending=[r for r in proposals if r['status'] in ('pending','needs_review')]
+        result['dividend_summary']={'pending_count':len(pending),'review_count':sum(r['status']=='needs_review' for r in pending),
+            'estimated_gross':sum((dec(r['estimated_gross']) for r in pending if r['estimated_gross'] is not None and r['notice']['currency']=='CNY'),ZERO),
+            'note':'待核对金额未计入收益；含未知金额或外币时人民币合计仅供参考'}
+        if view == 'summary': return wire(result)
         selected_history = [r for r in snap['history'] if not start or r['date'] >= str(start)]
         selected_profit = ZERO; invalid = False; curve = []
         for r in selected_history:
@@ -441,7 +467,6 @@ class Service:
             curve.append({'date': r['date'], 'assets': r['assets'], 'pnl': r['pnl'],
                           'portfolio_return': ratio(selected_profit,r['investment_cost']) if not invalid else None,
                           'segment': 1, 'estimated': r['estimated'] or r['incomplete']})
-        result = {k: v for k, v in snap.items() if k != 'history'}
         result['curve'] = curve
         missing_points = [p for p, r in zip(curve, selected_history)
                           if p['portfolio_return'] is None and (r['investment_cost'] > ZERO or r['incomplete'])]
@@ -465,28 +490,11 @@ class Service:
         result['selected_components'] = {k: sum((r['components'][k] for r in selected_history), ZERO)
                                          if not invalid and all(r['components'][k] is not None for r in selected_history) else None
                                          for k in snap['components']}
-        result['benchmark'] = self.benchmark(state, portfolio, selected_history, result['selected_return'])
-        perf_key=('instrument-performance',state['revision'],portfolio_id,as_of)
-        performance = self.store.cache.get(perf_key)
-        if performance is None:
-            performance = instrument_projection(state,portfolio,snap['holdings'],as_of)
-            self.store.cache[perf_key] = performance
-        result['holdings']=[dict(h,performance=performance.get(h['instrument_id'])) for h in snap['holdings']]
-        result['capital_summary']=investment_summary(state,portfolio,snap,performance,as_of)
-        result['plan_funding']=plan_funding(snap)
-        result['running_days']=running_days(portfolio)
-        result['todos']=self.todo_items(state,portfolio_id,as_of)
-        result['annual_performance']=annual_summary(portfolio,result['capital_summary'],as_of)
-        result['cumulative_return']=result['capital_summary']['return_on_cost']
+        result['benchmark'] = self.benchmark(state, portfolio, selected_history, result['selected_return'], market_data=market_data)
         result['calendar']={key:periods(snap['history'],key,investment_basis=True) for key in ('day','week','month','year')}
-        proposals=self.dividend_candidates(portfolio_id,state=state)
-        pending=[r for r in proposals if r['status'] in ('pending','needs_review')]
-        result['dividend_summary']={'pending_count':len(pending),'review_count':sum(r['status']=='needs_review' for r in pending),
-            'estimated_gross':sum((dec(r['estimated_gross']) for r in pending if r['estimated_gross'] is not None and r['notice']['currency']=='CNY'),ZERO),
-            'note':'待核对金额未计入收益；含未知金额或外币时人民币合计仅供参考'}
         return wire(result)
 
-    def todo_items(self,state,portfolio_id,as_of=None):
+    def todo_items(self,state,portfolio_id,as_of=None,*,market_data=None):
         end=str(as_of or today());instruments={i['id']:i for i in state['instruments']};rows=[]
         for e in state['events']:
             if e['portfolio_id']!=portfolio_id or e['date']>end:continue
@@ -502,7 +510,8 @@ class Service:
             owned_events=[e for e in state['events'] if e['portfolio_id']==portfolio_id]
             records=split_notice_records(owned_events,action)
             if split_notice_confirmed(records,action):continue
-            ledger=Ledger(state,self.portfolio(state,portfolio_id))
+            if market_data is None: market_data=Market(state)
+            ledger=Ledger(state,self.portfolio(state,portfolio_id),market=market_data)
             for op in ledger.ops:
                 if op[0]>=action['date']:break
                 ledger.apply(op)
@@ -514,12 +523,12 @@ class Service:
             rows.append({'id':'split:'+action['id'],'type':'confirm_split','title':instruments[iid]['name']+' · '+action['date']+' · 送转/拆股倍数'+action['factor']+'待确认','instrument_id':iid,'notice':action,'prefill':{'kind':'SPLIT','date':action['date'],'factor':action['factor'],'instrument_id':iid,'source_split_id':action['id'],'reason':'核对公开送转/拆股事件：'+action['source']}})
         return rows
 
-    def benchmark(self, state, portfolio, history, portfolio_return):
+    def benchmark(self, state, portfolio, history, portfolio_return, *, market_data=None):
         inst_id = portfolio.get('benchmark_id')
         if not inst_id or not history: return None
         instrument = next((i for i in state['instruments'] if i['id'] == inst_id), None)
         if not instrument: return None
-        market_data = Market(state); kind = portfolio.get('benchmark_basis', 'raw')
+        market_data = market_data if market_data is not None else Market(state); kind = portfolio.get('benchmark_basis', 'raw')
         before_day = day(history[0]['date']) - timedelta(days=1)
         base_price = market_data.price(inst_id, before_day, kind)
         base_fx = market_data.fx(instrument['currency'], before_day)
@@ -540,8 +549,9 @@ class Service:
                 'excess': None,
                 'note': '组合收益率按累计买入成本计算；基准和目标线仅供走势参考，资金投入时点不同，不直接计算超额。'}
 
+    @cached_query
     def instrument_detail(self, portfolio_id, instrument_id):
-        state = self.store.state(); snap = self.dashboard(portfolio_id)
+        state = self.store.state(); snap = self.dashboard(portfolio_id, view='summary')
         holding = next((h for h in snap['holdings'] if h['instrument_id'] == instrument_id), None)
         if not holding: raise DomainError('当前组合未添加此标的')
         events = [e for e in state['events'] if e['portfolio_id'] == portfolio_id and e.get('instrument_id') == instrument_id]
@@ -634,7 +644,7 @@ class Service:
         return dict(result, status='available', quantity=ds(quantity),
                     note='再投总价（不含手续费）÷当日单位净值，四舍五入至两位小数；仅供估算，请按确认单核对。')
 
-    def dividend_candidates(self,portfolio_id,instrument_id=None,*,state=None):
+    def dividend_candidates(self,portfolio_id,instrument_id=None,*,state=None,market_data=None):
         state=state or self.store.state();p=self.portfolio(state,portfolio_id)
         attached={a['instrument_id'] for a in state['allocations'] if a['portfolio_id']==portfolio_id}
         instruments={i['id']:i for i in state['instruments']};result=[]
@@ -648,7 +658,8 @@ class Service:
             cutoff=(day(notice['ex_date'])-timedelta(days=1)).isoformat() if inst['market'] in ('HK','US') else notice.get('record_date')
             qty=None
             if cutoff and p['start_date']<=cutoff<=str(today()):
-                ledger=Ledger(state,p)
+                if market_data is None: market_data=Market(state)
+                ledger=Ledger(state,p,market=market_data)
                 for op in ledger.ops:
                     if op[0]>cutoff:break
                     ledger.apply(op)
@@ -665,7 +676,8 @@ class Service:
             baseline=(recorded or {}).get('dividend_basis')
             changed=bool(recorded and ((baseline and baseline!=basis) or (existing and not baseline) or (manual and gross is not None and dec(manual['gross_amount'])!=gross)))
             status='needs_review' if changed else 'confirmed' if existing else 'manual_recorded' if manual else 'ignored' if decision and decision.get('ignored') else 'future' if pending_date else 'pending'
-            rate=Market(state).fx_series[inst['currency']].at(notice['ex_date']) if inst['currency']!='CNY' else {'rate':'1','date':notice['ex_date']}
+            if inst['currency']!='CNY' and market_data is None: market_data=Market(state)
+            rate=market_data.fx_series[inst['currency']].at(notice['ex_date']) if inst['currency']!='CNY' else {'rate':'1','date':notice['ex_date']}
             suggested={'kind':'DIVIDEND','portfolio_id':portfolio_id,'instrument_id':inst['id'],'date':notice['ex_date'],
                 'gross_amount':ds(gross) if gross is not None else '', 'net_amount':ds(gross) if gross is not None else '',
                 'tax':'0','fee':'0','tax_known':False,'ex_date_known':True,'pay_date':notice.get('pay_date') or '',
@@ -735,6 +747,7 @@ class Service:
                 'can_edit':not legacy and not event.get('transfer_id'),'can_cancel':not legacy})
         return wire(sorted(rows,key=lambda r:(r['event']['date'],r['event']['sequence'],r['event']['id']),reverse=True))
 
+    @cached_query
     def transaction_page(self, portfolio_id, instrument_id=None, **filters):
         from .transaction_query import paginate
         state = self.store.state()
@@ -806,7 +819,7 @@ class Service:
             if value is not None: bucket[key]['value'] += value
             bucket[key]['details'].append(detail)
         for p in selected:
-            snap = self.dashboard(p['id'])
+            snap = self.dashboard(p['id'], view='summary')
             if snap['total_assets'] is None: incomplete = True
             else: total += dec(snap['total_assets'])
             for h in snap['holdings']:

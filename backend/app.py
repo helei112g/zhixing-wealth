@@ -172,6 +172,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,
                                'filters': ['instrument_id', 'market', 'tag', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},
+                'dashboard': {'endpoint': '/api/portfolios/{portfolio_id}/dashboard', 'default_view': 'full',
+                              'views': {'full': 'summary plus historical curves, calendar and periods',
+                                        'summary': 'same current financial values without historical projections'}},
                 'numbers': 'decimal strings; rates are ratios except *_pct percentages; unknown values are null',
                 'plan_funding': {'check_endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/plan-check?target_pct=50',
                                  'dashboard_field': 'plan_funding', 'shortfall_blocks_save': False},
@@ -244,8 +247,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         return reply(service.check_plan(portfolio_id, instrument_id, target_pct))
 
     @app.get('/api/portfolios/{portfolio_id}/dashboard')
-    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None, grain: str = 'month'):
-        return reply(service.dashboard(portfolio_id, start=start, end=end, grain=grain))
+    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None, grain: str = 'month', view: str = 'full'):
+        return reply(service.dashboard(portfolio_id, start=start, end=end, grain=grain, view=view))
 
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}')
     def detail(portfolio_id: str, instrument_id: str): return reply(service.instrument_detail(portfolio_id, instrument_id))

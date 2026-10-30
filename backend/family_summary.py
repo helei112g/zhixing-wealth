@@ -7,8 +7,8 @@ from .family_ledger import debt_summary
 from .ledger import Market
 
 
-def income_records(state, family):
-    market = Market(state)
+def income_records(state, family, *, market=None):
+    market = market if market is not None else Market(state)
     rows = []
     for entry in family.get('income', []):
         value = entry['versions'][-1]
@@ -41,9 +41,11 @@ def period_summary(state, family, grain='month', period=None, start=None, end=No
                       before.replace(day=1) if grain == 'month' else first-(last-first+timedelta(days=1)))
     comparison_label = {'month':'较上月末', 'year':'较上年末', 'custom':'较起始日前一天'}[grain]
     dates = [v['effective_on'] for i in family['items'] for v in i['versions']] + [l['effective_on'] for l in family['links']]
-    def projected(d): return snapshot(state, family, str(d)) if dates and str(d) >= min(dates) else None
-    ending, opening, previous = snapshot(state, family, str(last)), projected(before), projected(previous_last)
-    records = income_records(state, family)
+    market = Market(state)
+    def projected(d): return snapshot(state, family, str(d), market=market) if dates and str(d) >= min(dates) else None
+    ending, opening = snapshot(state, family, str(last), market=market), projected(before)
+    previous = opening  # The comparison balance and opening balance share the same date.
+    records = income_records(state, family, market=market)
     def flow(a, b):
         rows = [r for r in records if str(a) <= r['date'] <= str(b)]
         total = sum((r['value'] for r in rows), ZERO) if rows and all(r['value'] is not None for r in rows) else None
@@ -74,7 +76,7 @@ def period_summary(state, family, grain='month', period=None, start=None, end=No
         metric.update(value=value, period_change=value-old if value is not None and old is not None else None)
         metrics[key] = metric
     metrics['income'] = dict(value=income['value'], **comparison(income['value'], previous_income['value']))
-    repayment = debt_summary(state, family, ending)
+    repayment = debt_summary(state, family, ending, market=market)
     cash_cover = dict(month=repayment['month'], monthly_repayment=repayment['month_due'], months=repayment['cash_coverage'],
                       unconfigured=repayment['unconfigured'], missing_fx=repayment['missing_fx'],
                       basis='流动现金除以所选结束月份的计划还款额，仅作月数折算，不包含生活开支和保费')

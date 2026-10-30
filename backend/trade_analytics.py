@@ -263,14 +263,14 @@ def lot_projection(state,portfolio,as_of=None):
     return metrics
 
 
-def instrument_projection(state,portfolio,holdings,as_of=None):
+def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
     """Instrument money-weighted returns, including all related fees and receivables.
 
     Reinvestment has both dividend income and purchase cash, so internal cash
     cancels. Unsettled receivables are valued today rather than inventing a
     future payment. Closed, settled investments keep their original flow dates.
     """
-    end=str(as_of or today());market=Market(state);result={}
+    end=str(as_of or today());market=market if market is not None else Market(state);result={}
     events=[e for e in state['events'] if e['portfolio_id']==portfolio['id'] and e['date']<=end]
     for h in holdings:
         iid=h['instrument_id'];flows=[];cost=ZERO;dividends_net=ZERO;complete=h['value_base'] is not None;pending=False

@@ -17,10 +17,11 @@ def recording_bounds(family, date):
                 income_years=sorted({int(d[:4]) for d in income_dates}, reverse=True))
 
 
-def debt_summary(state, family, snap):
+def debt_summary(state, family, snap, *, market=None):
     date = snap['as_of']; d = day(date)
     start, end = str(d.replace(day=1)), str(d.replace(day=calendar.monthrange(d.year, d.month)[1]))
-    market = Market(state); payments = []; unconfigured = []
+    market = market if market is not None else Market(state)
+    payments = []; unconfigured = []
     for row in snap['items']:
         if row['category'] != 'debt': continue
         plan = row.get('payment_plan')

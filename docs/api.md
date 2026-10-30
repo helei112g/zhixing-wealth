@@ -14,7 +14,7 @@
 | `GET /api/family/catalog` | 资产记录所有版本、金额历史、关联、旧计划／设置及组合可选项、revision |
 | `GET /api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD` | 月／年期末金额与变化额、变化率；资产页面使用 previous（月比上月末、年比上年末）；接口兼容 previous/year_start/yoy，yoy 未结束期间比上年同日，最大30年 |
 | `GET /api/family/income?year=2026` | 指定年份12个月收入与分类合计、年度累计 summary、明细、revision；默认当年，不支持未来年份 |
-| `GET /api/family/revision` | 只读修订，用于可见页面的2秒增量刷新判断 |
+| `GET /api/family/revision` | 只读revision和today（上海日期），用于可见页面的2秒增量刷新判断；即使没有业务写入，跨日也会重新读取 |
 | `GET /api/family/reminders` | 今天至未来35天的还款／保费／续保提醒及本机通知状态，逾期移出列表 |
 | `POST /api/family/preview` | 执行同一校验与投影，SAVEPOINT 回滚，不增加修订和审计 |
 | `POST /api/family/commands` | 原子校验修订并提交，返回 result 与新 revision；提交后回读 |
@@ -76,7 +76,7 @@ macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当
 | 方法与路径 | 参数/结果 |
 |---|---|
 | GET `/api/bootstrap` | portfolios、instruments、allocations、revision、同步状态等；不要持久化 csrf_token |
-| GET `/api/portfolios/{pid}/dashboard` | `start`、`end`、`grain=day/week/month/year`；capital_summary、holdings、curve、calendar、todos；不传日期为当前 |
+| GET `/api/portfolios/{pid}/dashboard` | `start`、`end`、`grain=day/week/month/year`、`view=full/summary`（默认full）；不传日期为当前。summary保留相同capital_summary、holdings、todos等当前财务值，省略curve、curve_quality、calendar、periods、target、benchmark及selected_*历史投影 |
 | GET `/api/portfolios/{pid}/instruments/{iid}` | 当前组合标的详情、曲线、收益、关联交易、分红公告；旧全量 transactions 保留兼容，新列表使用分页接口 |
 | GET `/api/portfolios/{pid}/transactions` | 见分页约定 |
 | GET `/api/portfolios/{pid}/transactions/{event_id}` | 本笔流水 facts、actual、同组合同标的 neighbors、revisions；不含复盘正文 |
@@ -315,4 +315,4 @@ A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_
 
 先 GET 预览（无副作用），核对全部清单，再 DELETE 同一ID，例如 `{"reason":"重复录入，已核对关联流水","cascade":true,"event_ids":["BUY_ID","SALE_ID"],"expected_revision":42}`。服务端在同一事务重新推导并核对清单、revision 和剩余账务；清单不一致或账务失败返回422，过期revision返回409，均无写入。预览 `can_delete=false` 时返回具体 `validation_error`，不允许确认。返回兼容字段 `cancelled` 和完整 `deleted_event_ids`；每条记录保留审计，删除记录可按原ID从交易详情读回 `cancelled=true`。省略cascade保留旧单条/转移对删除语义，不自动扩大旧客户端删除范围。
 
-Dashboard 增加 `curve_quality`：`missing_days`、`from/to` 和 `reasons[{message,from,to}]`。仅统计已投入或估值不完整时无法展示的组合曲线点；未投资的空白不当作故障。原因取自对应历史日期（如送转待核对、缺价格/汇率），不借用今天的状态解释历史；缺口后的累计曲线不补零、不跨缺口连接。图旁红色说明有待办时提供提醒中心入口，否则进入全局设置补齐历史数据。持仓分页为完整 dashboard 数据上的本地分页，默认20，可选10/20/50；汇总和排行榜使用全量数据。排行榜宽屏紧凑多列，默认展示前50，更多可展开。
+Dashboard full 视图包含 `curve_quality`：`missing_days`、`from/to` 和 `reasons[{message,from,to}]`。仅统计已投入或估值不完整时无法展示的组合曲线点；未投资的空白不当作故障。原因取自对应历史日期（如送转待核对、缺价格/汇率），不借用今天的状态解释历史；缺口后的累计曲线不补零、不跨缺口连接。图旁红色说明有待办时提供提醒中心入口，否则进入全局设置补齐历史数据。持仓分页为完整 dashboard 持仓上的本地分页，默认20，可选10/20/50；汇总和排行榜使用全量数据。排行榜50只以内为单列并随页面向下滚动；桌面超过50只按每列50只顺序拆列，手机保持单列，不截断排名。

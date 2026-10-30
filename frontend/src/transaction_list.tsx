@@ -4,13 +4,13 @@ import {Button,Empty,ErrorBox,ListSection,Panel} from './components';
 import {TransactionTable} from './transactions_ui';
 
 // One state owner for filtering/pagination; keep the data viewport mounted on refresh.
-export function TransactionList({pid,instrumentId='',version,action,selected='',onSelect,openDetail}:Obj){
+export function TransactionList({pid,instrumentId='',version,refreshing=false,action,selected='',onSelect,openDetail}:Obj){
  const [filters,Filters]=useState({market:'ALL',tag:'',asset_class:'',region:'',page:1,page_size:20});
  const [result,Result]=useState<Obj|null>(null),[error,Error]=useState(''),[loading,Loading]=useState(true),[retry,Retry]=useState(0);
  const viewport=useRef<HTMLDivElement>(null),key=pid+':'+instrumentId,params=query({...filters,instrument_id:instrumentId});
  useEffect(()=>{Filters(f=>({...f,market:'ALL',tag:'',asset_class:'',region:'',page:1}));Result(null);},[key]);
- useEffect(()=>{let active=true;Loading(true);Error('');api('/portfolios/'+pid+'/transactions?'+params).then(v=>{if(active){Result({...v,key,params});if(viewport.current)viewport.current.scrollTop=0;}}).catch(e=>{if(active)Error(e.message);}).finally(()=>{if(active)Loading(false);});return()=>{active=false;};},[key,params,version,retry]);
- const data=result?.key===key?result:null,busy=loading||(!error&&data?.params!==params),visible=!!data&&!busy&&!error;
+ useEffect(()=>{let active=true;Loading(true);Error('');api('/portfolios/'+pid+'/transactions?'+params).then(v=>{if(active){Result({...v,key,params,version});if(viewport.current)viewport.current.scrollTop=0;}}).catch(e=>{if(active)Error(e.message);}).finally(()=>{if(active)Loading(false);});return()=>{active=false;};},[key,params,version,retry]);
+ const data=result?.key===key?result:null,busy=refreshing||loading||(!error&&(data?.params!==params||data?.version!==version)),visible=!!data&&!busy&&!error;
  const change=(name:string,value:string|number)=>Filters(f=>({...f,[name]:value,page:1}));
  const total=data?.total||0,page=data?.page||1,pages=data?.page_count||1,size=filters.page_size;
  const Container=instrumentId?Panel:ListSection;

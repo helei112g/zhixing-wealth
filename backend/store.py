@@ -6,7 +6,11 @@ import sqlite3
 import threading
 import uuid
 import zipfile
+from collections import OrderedDict
+from copy import deepcopy
 from contextlib import contextmanager
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 
 from .common import ConflictError, DomainError, json_dumps, now, today
@@ -15,6 +19,29 @@ from .notes import NoteFiles, references, decode_note, MAX_NOTES_BYTES
 from .migration import SCHEMA, migrate, schema_version
 MAX_BACKUP_DATABASE_BYTES = 512 * 1024 * 1024
 JOB_HISTORY_LIMIT = 20
+READ_CACHE_LIMIT = 48
+
+
+def cached_query(method):
+    """Cache read projections only; keep validation and argument types distinct."""
+    parameters = signature(method)
+    def key_of(value):
+        if isinstance(value, dict):
+            return ('dict', tuple((k, key_of(v)) for k, v in sorted(value.items())))
+        if isinstance(value, (list, tuple)):
+            return (type(value).__name__, tuple(map(key_of, value)))
+        return (type(value).__name__, value)
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        bound = parameters.bind(self, *args, **kwargs)
+        bound.apply_defaults()
+        key = (method.__module__, method.__qualname__,
+               tuple((k, key_of(v)) for k, v in bound.arguments.items() if k != 'self'))
+        return self.store.cached_read(key, lambda: method(self, *args, **kwargs),
+                                      clock=method.__globals__.get('today'))
+    return read
+
+
 NOTES_TABLE = '''CREATE TABLE IF NOT EXISTS investment_notes(
     id TEXT PRIMARY KEY, portfolio_id TEXT NOT NULL, instrument_id TEXT NOT NULL,
     path TEXT UNIQUE NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
@@ -127,6 +154,30 @@ class Store:
             'corporate_actions': objects('corporate_actions'),
             'revision': int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0]),
         }
+
+    def cached_read(self, key, load, *, clock=None):
+        """Bounded, private copies keyed by revision/day, cleared by every write.
+
+        Load outside the database mutex. A concurrent write or midnight prevents
+        publication under the previous key; it never relabels an old result.
+        """
+        clock = clock or today
+        with self.connection() as db:
+            revision = int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0])
+            date = str(clock())
+            cache = self.cache.setdefault('read-responses', OrderedDict())
+            cache_key = (revision, date, key)
+            if cache_key in cache:
+                cache.move_to_end(cache_key)
+                return deepcopy(cache[cache_key])
+        result = load()
+        with self.connection() as db:
+            current = int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0])
+            if current == revision and str(clock()) == date and self.cache.get('read-responses') is cache:
+                cache[cache_key] = deepcopy(result)
+                while len(cache) > READ_CACHE_LIMIT:
+                    cache.popitem(last=False)
+        return result
 
     def upsert_fx(self, db, item):
         """Called inside BEGIN IMMEDIATE; automatic and daily manual quotes are idempotent."""

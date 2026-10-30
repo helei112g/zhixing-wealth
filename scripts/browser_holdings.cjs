@@ -73,7 +73,14 @@ const backfillPreview=await backfillDialog.locator('.split-change').innerText();
 check(backfillPreview.includes('160 → 480份')&&backfillPreview.includes('60 → 180份')&&await backfillDialog.locator('.split-effect tbody tr').count()===1,'backfilled sale preview reduces two split batches to one remaining batch');
 check((await backfillDialog.locator('.split-effect tbody').innerText()).includes(backfilledBuy.id.slice(0,8))&&!(await backfillDialog.locator('.split-effect tbody').innerText()).includes(corpBuy.id.slice(0,8)),'sold batch is absent from split preview');
 await page.screenshot({path:path.join(out,'split-backfill-preview.png'),fullPage:true});
-await backfillDialog.getByRole('button',{name:'确认记账',exact:true}).click();await backfillDialog.waitFor({state:'hidden'});await ready();
+let releaseBootstrap;const bootstrapGate=new Promise(resolve=>{releaseBootstrap=resolve;});
+await page.route('**/api/bootstrap',async route=>{await bootstrapGate;await route.continue();});
+try{
+ await backfillDialog.getByRole('button',{name:'确认记账',exact:true}).click();await backfillDialog.waitFor({state:'hidden'});
+ check(await page.locator('.transaction-viewport').getAttribute('aria-busy')==='true','committed write immediately marks retained rows as refreshing');
+ check(await page.locator('.transaction-data').evaluate(e=>e.hasAttribute('inert')),'old rows remain inert while bootstrap is delayed');
+}finally{releaseBootstrap();await page.unrouteAll({behavior:'wait'});}
+await ready();
 const splitRow=page.locator('[data-ledger-event="'+splitEvent.id+'"]');
 check((await splitRow.innerText()).includes('60 → 180份')&&(await splitRow.innerText()).includes('总成本不变'),'ledger split row shows recalculated quantities instead of zero cash');
 check((await page.locator('[data-ledger-event="'+backfilledBuy.id+'"]').innerText()).includes('当前剩余 180份')&&(await page.locator('[data-ledger-event="'+corpBuy.id+'"]').innerText()).includes('当前剩余 0份'),'buy rows separate original fills from remaining adjusted shares');

@@ -13,7 +13,7 @@ try{
  fixture({events,today:boot.today});await page.goto(base);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await nav('持仓标的');await page.locator('.holding-row').first().waitFor();
  check(await page.locator('.holding-row').count()===20,'holdings default page contains 20 of 51 instruments');check((await page.getByRole('navigation',{name:'持仓与投入计划分页'}).innerText()).includes('共 51 只'),'holdings paginator exposes full count');
  const paging=page.getByRole('navigation',{name:'持仓与投入计划分页'});
- const first=await page.locator('.holding-identity button').allTextContents();await paging.getByRole('button',{name:'下一页'}).click();check(await page.locator('.holding-row').count()===20,'holdings second page contains 20');check(!(await page.locator('.holding-identity button').allTextContents()).some(v=>first.includes(v)),'holdings pages have no repeated instruments');check(await page.locator('.overview-summary').count()===0&&await page.locator('.ranking-row').count()===50,'holdings pagination preserves the complete ranking without a top statistics card');await paging.getByRole('button',{name:'下一页'}).click();check(await page.locator('.holding-row').count()===11&&await paging.getByRole('button',{name:'下一页'}).isDisabled(),'holdings final page has 11 and stops at boundary');
+ const first=await page.locator('.holding-identity button').allTextContents();await paging.getByRole('button',{name:'下一页'}).click();check(await page.locator('.holding-row').count()===20,'holdings second page contains 20');check(!(await page.locator('.holding-identity button').allTextContents()).some(v=>first.includes(v)),'holdings pages have no repeated instruments');check(await page.locator('.overview-summary').count()===0&&await page.locator('.ranking-row').count()===51,'holdings pagination preserves the complete ranking without a top statistics card');await paging.getByRole('button',{name:'下一页'}).click();check(await page.locator('.holding-row').count()===11&&await paging.getByRole('button',{name:'下一页'}).isDisabled(),'holdings final page has 11 and stops at boundary');
  await page.getByLabel('持仓每页条数').selectOption('50');check(await page.locator('.holding-row').count()===50&&(await paging.innerText()).includes('第 1 / 2 页'),'page size 50 resets holdings to first page');await page.getByLabel('持仓每页条数').selectOption('10');check(await page.locator('.holding-row').count()===10,'page size 10 works');
  const ranks=page.locator('.ranking-row'),ranking=page.locator('.holdings-ranking');
  check(await ranks.count()===51,'all invested ranks appear independently of holdings pagination');
@@ -27,7 +27,7 @@ try{
  for(const width of [1280,390,320]){await page.setViewportSize({width,height:1000});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'ranking and holdings fit width '+width);positions=await geometry();if(width<850)check(positions.every(r=>Math.abs(r.x-positions[0].x)<1),'mobile keeps all ranks in one scrolling column '+width);await ranking.screenshot({path:path.join(out,'ranking-'+width+'.png')});}
  await page.setViewportSize({width:1600,height:900});
  await api('/events',{portfolio_id:p.id,instrument_id:events[50].instrument_id,kind:'SELL',date:boot.today,sell_lots:[{buy_event_id:events[50].id,quantity:'100'}],gross_amount:'1300',fx_rate:'1'});
- await page.reload();await nav('持仓与计划');await page.getByLabel('排行榜标的范围').selectOption('holding');
+ await page.reload();await nav('持仓标的');await page.getByLabel('排行榜标的范围').selectOption('holding');
  check(await ranks.count()===50,'holding-only scope contains 50 after closing one position');positions=await geometry();
  check(positions.every(r=>Math.abs(r.x-positions[0].x)<1),'exactly 50 ranks remain a single column');
  check(positions[49].y-positions[0].y>900,'single column supports continuous vertical page scrolling');
@@ -35,7 +35,7 @@ try{
  await ranking.screenshot({path:path.join(out,'ranking-50-desktop.png')});
  const small=await api('/portfolios',{name:'合成十八只排行验收',start_date:'2026-10-01',planned_amount:'100000'});
  for(let n=0;n<18;n++)await api('/events',{portfolio_id:small.id,instrument:{market:'CN',code:String(600100+n),name:'合成排行'+String(n+1).padStart(2,'0')},kind:'BUY',date:'2026-10-01',quantity:'1',gross_amount:'10',fx_rate:'1'});
- await page.reload();await nav('组合总览');await page.getByLabel('投资组合',{exact:true}).selectOption(small.id);await nav('持仓与计划');await ranks.first().waitFor();
+ await page.reload();await nav('组合总览');await page.getByLabel('投资组合',{exact:true}).selectOption(small.id);await nav('持仓标的');await ranks.first().waitFor();
  check(await ranks.count()===18,'18-item portfolio displays every rank');positions=await geometry();check(positions.every(r=>Math.abs(r.x-positions[0].x)<1),'18-item portfolio remains a single column');await ranking.screenshot({path:path.join(out,'ranking-18-desktop.png')});
  const q=await api('/portfolios',{name:'合成关联删除验收',start_date:'2026-10-01',planned_amount:'100000'});
  const a=await api('/events',{portfolio_id:q.id,kind:'BUY',date:'2026-10-01',instrument:{market:'CN',code:'600000',name:'合成关联标的'},quantity:'100',gross_amount:'1000',fx_rate:'1'});

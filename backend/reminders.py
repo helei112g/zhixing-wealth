@@ -1,6 +1,5 @@
 """System reminder registry. Business providers own their facts and completion rules."""
 import hashlib
-from copy import deepcopy
 from .common import now, today, json_dumps, wire
 from .family_domain import read_state, schedule_projection
 from .service import Service
@@ -77,18 +76,16 @@ class ReminderService:
     def __init__(self, store, notifications): self.store, self.notifications = store, notifications
 
     def read(self):
-        with self.store.connection() as db:
-            state, family = self.store.state(db), read_state(db)
-            key = ('reminders',state['revision'],str(today()))
-            items = self.store.cache.get(key)
-            if items is None:
-                items = [r for provider in PROVIDERS for r in provider(self.store,state,family)]
-                self.store.cache[key] = deepcopy(items)
-            else: items = deepcopy(items)
+        items, revision = self.store.cached_read(('reminder-items',), self._items, clock=today)
         items += sync_reminders(self.store.jobs())
         notification = self.notifications.status()
         if notification.get('enabled') and notification.get('error'):
             items.append(dict(id='system:notifications',source='system',kind='notification_failure',title='系统通知需要检查',detail=notification['error'],
                               date=None,days=None,amount=None,currency=None,severity='attention',action=dict(type='settings',label='前往设置')))
         items = sorted({r['id']:r for r in items}.values(),key=lambda r:(r['severity']=='upcoming',r.get('date') or '',r['id']))
-        return wire(dict(items=items,count=len(items),today=sum(r.get('days')==0 for r in items),revision=state['revision'],as_of=str(today()),notification=notification))
+        return wire(dict(items=items,count=len(items),today=sum(r.get('days')==0 for r in items),revision=revision,as_of=str(today()),notification=notification))
+
+    def _items(self):
+        with self.store.connection() as db:
+            state, family = self.store.state(db), read_state(db)
+        return [r for provider in PROVIDERS for r in provider(self.store,state,family)], state['revision']

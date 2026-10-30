@@ -300,14 +300,14 @@ def operations(events):
 
 
 class Ledger:
-    def __init__(self, state, portfolio):
+    def __init__(self, state, portfolio, *, market=None):
         self.data = state
         self.portfolio = portfolio
         self.instruments = {i['id']: i for i in state['instruments']}
         self.events = [e for e in state['events'] if e['portfolio_id'] == portfolio['id']]
         self.allocations = {a['instrument_id']: a for a in state['allocations'] if a['portfolio_id'] == portfolio['id']}
         self.reservations = [r for r in state['reservations'] if r['portfolio_id'] == portfolio['id']]
-        self.market = Market(state)
+        self.market = market if market is not None else Market(state)
         self.budget_mode = portfolio.get('funding_mode') == 'budget'
         self.budget_history = portfolio.get('budget_history') or [{'date':portfolio['start_date'],'amount':portfolio['planned_amount']}]
         effective_events = [e for e in self.events if not self.budget_mode or e['kind'] not in ('DEPOSIT','OPENING_CASH')]
@@ -581,7 +581,7 @@ class Ledger:
             key=(instrument_id,action['date'])
             if key not in self._split_entitlements:
                 # Check overnight ownership, including positions sold since the action.
-                prior=Ledger(dict(self.data,corporate_actions=[]),self.portfolio)
+                prior=Ledger(dict(self.data,corporate_actions=[]),self.portfolio,market=self.market)
                 for op in prior.ops:
                     if op[0]>=action['date']:break
                     prior.apply(op)

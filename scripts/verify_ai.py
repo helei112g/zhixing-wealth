@@ -67,6 +67,10 @@ def main():
     transactions='/api/portfolios/'+p['id']+'/transactions?page=1&page_size=20'
     rows=client.request(transactions)
     check(any(r['event']['id']==saved['id'] for r in rows['items']),'trade ID and portfolio read back')
+    dashboard='/api/portfolios/'+p['id']+'/dashboard'
+    full=client.request(dashboard);summary=client.request(dashboard+'?view=summary')
+    check(summary['capital_summary']==full['capital_summary'] and summary['holdings']==full['holdings'], 'AI summary view shares canonical financial values')
+    check('curve' not in summary and 'calendar' not in summary and 'calendar' in full, 'AI summary omits historical projections and full stays compatible')
     boot=client.connect();original_portfolios=boot['portfolios']
     links,_=command('links',{'portfolio_ids':[p['id'],q['id']]})
     check(all(any(x['id']==link['id'] for x in client.request('/api/family/catalog')['links']) for link in links),'multiple associations read back')

@@ -39,6 +39,7 @@ class WriteRequest(BaseModel):
 
 class PortfolioRequest(WriteRequest):
     name: str
+    description: str | None = Field(None, max_length=10000, description='可选组合介绍，纯文字，保留换行；省略或null保留原介绍，空字符串清空')
     planned_amount: Amount = Field(description='CNY 总预算；推荐十进制字符串')
     start_date: str | None = Field(None, description='YYYY-MM-DD，不得晚于今天；省略为今天')
     target_annual_pct: Amount = Field('5', description='目标年化百分数，5 表示5%')

@@ -46,7 +46,7 @@ fs.mkdirSync(out,{recursive:true});
   await nav('资金与流水');await page.locator('.transaction-table').waitFor();const row=page.locator('[data-ledger-event="'+div.id+'"]');
   const taxText=await row.locator('.dividend-tax-equation').innerText();check(taxText.includes('税前 10.8023 HKD')&&taxText.includes('税额 1.2345 HKD')&&taxText.includes('税后 9.5678 HKD'),'dividend row exposes exact gross tax net and currency');
   const headers=await page.locator('.transaction-table th').allTextContents();
-  await nav('持仓与计划');await page.getByRole('button',{name:'合成分红标的',exact:true}).click();await page.locator('.instrument-return-grid').waitFor();
+  await nav('持仓标的');await page.getByRole('button',{name:'合成分红标的',exact:true}).click();await page.locator('.instrument-return-grid').waitFor();
   check(await page.locator('.instrument-return-grid>div').count()===4,'detail groups market value profit return rate and XIRR together');
   const perf=dash.holdings[0].performance,b=perf.profit_breakdown;
   check(await page.locator('.instrument-profit>strong').innerText()===signed(perf.profit),'detail prominently shows total profit');

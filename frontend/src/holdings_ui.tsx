@@ -1,12 +1,12 @@
 import {CSSProperties,useEffect,useState} from 'react';
 import {PieChart} from 'lucide-react';
 import {marketKey,marketNames,money,Obj,percent,signedMoney,tone,units} from './api';
-import {Button,Empty,Panel} from './components';
+import {Button,Empty,ListSection,Panel} from './components';
 
 export function HoldingsTable({dash,action,openDetail,tags}:Obj){
  const[page,Page]=useState(1),[pageSize,Size]=useState(20),total=dash.holdings.length,pages=Math.max(1,Math.ceil(total/pageSize)),current=Math.min(page,pages),shown=dash.holdings.slice((current-1)*pageSize,current*pageSize);
  useEffect(()=>Page(p=>Math.min(p,pages)),[pages]);
- return <Panel title="当前持仓与投入计划" right={<Button small onClick={tags}><PieChart size={14}/>标签分析</Button>}>
+ return <ListSection className="holdings-list" title="持仓标的" right={<Button small onClick={tags}><PieChart size={14}/>标签分析</Button>}>
  <p className="muted small holdings-basis">净投入是实际投入减已回收资金；成本价是剩余持仓的含费税平均成本。份额 × 现价 = 市值，份额 × 成本价 = 持仓成本；外币市值按估值汇率折算为 CNY。</p>
  {!dash.holdings.length?<Empty title="还没有持仓">点击页面右上角“记录一笔”开始买入；保存时自动建立标的。</Empty>:<div className="table-wrap"><table className="holdings-table"><thead><tr>
  {['标的','持仓市值 · CNY','累计收益率 / 金额 · CNY','年化收益率（XIRR）','累计净分红 · CNY','持仓占比','总资产占比','投入计划 · CNY','计划进度','操作'].map(label=><th scope="col" key={label}>{label}</th>)}
@@ -22,7 +22,7 @@ export function HoldingsTable({dash,action,openDetail,tags}:Obj){
  <td><Button small onClick={e=>{e.stopPropagation();action('plan',{entity:h});}}>设置计划</Button></td></tr>;})}</tbody></table></div>}
  {total>0&&<nav className="holdings-pagination" aria-label="持仓与投入计划分页"><span aria-live="polite">共 {total} 只 · 第 {current} / {pages} 页</span><label>每页<select aria-label="持仓每页条数" value={pageSize} onChange={e=>{Size(Number(e.target.value));Page(1);}}>{[10,20,50].map(n=><option key={n} value={n}>{n} 条</option>)}</select></label><div className="inline-actions"><Button small disabled={current===1} onClick={()=>Page(current-1)}>上一页</Button><Button small disabled={current===pages} onClick={()=>Page(current+1)}>下一页</Button></div></nav>}
  <p className="muted small">点击标的行查看详情。持仓占比以全部证券市值为分母，总资产占比包含剩余可投金额与应收。计划进度 = 净投入 ÷ 计划金额。</p>
- </Panel>;}
+ </ListSection>;}
 
 const metrics:Record<string,{label:string;note:string}>={return_on_cost:{label:'累计收益率',note:'累计收益 ÷ 累计买入成本，含净分红、汇兑与费税。'},profit:{label:'累计收益金额',note:'按 CNY 比较累计收益金额，含净分红、汇兑与费税。'},xirr:{label:'年化收益率（XIRR）',note:'仅按实际投入现金流计算；持有期不同，年化不代表未来收益。'}};
 export function HoldingsRanking({dash,openDetail}:Obj){const[metric,Metric]=useState('return_on_cost'),[scope,Scope]=useState('all'),[expanded,Expanded]=useState(false);

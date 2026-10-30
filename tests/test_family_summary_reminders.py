@@ -36,6 +36,20 @@ class SummaryReminderTests(unittest.TestCase):
         self.write('valuation',dict(item_id=item['id'],household_amount=amount,effective_on=when))
     def income(self,month,amount,**extra):
         return self.write('income',dict(kind='salary',month=month,amount=amount,currency='CNY',**extra))
+
+    def test_summary_debt_ratio_uses_selected_end_and_preserves_unknown(self):
+        cash = self.item('cash', '100000', '2026-01-01')
+        debt = self.item('debt', '25000', '2026-01-01')
+        self.assertEqual(self.family.summary('month', '2026-01')['metrics']['debt_ratio']['value'], '0.25')
+        self.value(cash, '0', '2026-02-01')
+        self.assertIsNone(self.family.summary('month', '2026-02')['metrics']['debt_ratio']['value'])
+        self.value(cash, '10000', '2026-03-01')
+        self.assertEqual(self.family.summary('month', '2026-03')['metrics']['debt_ratio']['value'], '2.5')
+        self.value(debt, '0', '2026-04-01')
+        self.assertEqual(self.family.summary('month', '2026-04')['metrics']['debt_ratio']['value'], '0')
+        self.item('insurance', None, '2026-05-01')
+        self.assertIsNone(self.family.summary('month', '2026-05')['metrics']['debt_ratio']['value'])
+        self.assertEqual(self.family.summary('month', '2026-01')['metrics']['debt_ratio']['value'], '0.25')
     def test_flat_balances_have_zero_previous_period_change_despite_varying_yoy(self):
         cash=self.item('cash','100','2025-01-01')
         self.value(cash,'150','2025-02-01');self.value(cash,'200','2025-12-31')

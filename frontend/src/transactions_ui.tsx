@@ -1,4 +1,5 @@
-import {kindNames,money,exactMoney,Obj,percent,recordMarketKey,signedMoney,tone,units} from './api';
+import {kindNames,money,exactMoney,Obj,recordMarketKey,units} from './api';
+import {ReturnPerformance} from './components';
 import {SplitSummary} from './split_ui';
 
 // This is the only transaction table schema. Both ledger and instrument detail use it.
@@ -9,7 +10,7 @@ export function TransactionTable({rows,action,context='ledger',selected='',onSel
 <td>{f.split?<SplitSummary value={f.split}/>:f.quantity?<>{units(f.quantity)}份<small>未含费税 {money(f.unit_price,4)} {f.currency} / 份</small>{f.unit_after_costs!=null&&<small className="unit-after-costs">{f.unit_after_costs_label} {money(f.unit_after_costs,4)} {f.currency} / 份</small>}{['BUY','REINVEST'].includes(e.kind)&&a?.remaining_quantity!=null&&<small className="lot-remainder">当前剩余 {units(a.remaining_quantity)}份（含已确认送转）</small>}</>:e.kind==='FX'?<>{e.from_amount} {e.from_currency}<small>→ {e.to_amount} {e.to_currency}</small></>:<span className="muted">—</span>}</td>
 <td>{f.split?'—':money(f.fees_native)+' '+f.currency}</td>
 <td className="transaction-total">{f.split?<><b>总成本不变</b><small>不产生现金收支</small></>:<><b>{money(f.base_total)}</b><small>{f.amount_label}{f.pending?' · 未到账应收':''}</small>{dividend&&<div className="dividend-tax-equation">{f.dividend_tax_differs?<><span>税前 {exactMoney(f.dividend_gross_native)} {f.currency}</span><span> − 税额 {exactMoney(f.dividend_tax_native)} {f.currency}</span><span> = 税后 {exactMoney(f.dividend_net_native)} {f.currency}</span></>:<span>税前 / 税后 {exactMoney(f.dividend_net_native)} {f.currency} · 税额0</span>}{!e.tax_known&&<small>税额待核对</small>}</div>}<small>{f.currency!=='CNY'&&!dividend?money(f.native_total)+' '+f.currency+' · ':''}1 {f.currency} = {money(f.fx_rate,6)} CNY</small></>}</td>
-<td className="transaction-return"><div className="transaction-return-main"><b className={tone(a?.return_on_cost)}>累计 {percent(a?.return_on_cost,true)}</b><span className="transaction-return-amount">· {signedMoney(a?.profit)} CNY</span></div><small className="transaction-return-secondary" title={a?.xirr_status}>年化（XIRR） <span className={tone(a?.xirr)}>{percent(a?.xirr,true)}</span>{a&&' · '+(a.closed?'已平仓':'持有中')}{a?.provisional?' · 待核对':''}</small></td>
+<td className="transaction-return"><ReturnPerformance performance={a}/></td>
 <td className="wrap">{e.reason||'—'}{e.transfer_id&&<small>关联组合转移</small>}</td>
 <td onClick={ev=>ev.stopPropagation()}><div className="row-actions"><button className="text-button" onClick={open}>{r.can_view_profit?'收益详情':'流水详情'}</button>{r.can_edit&&<button className="text-button" onClick={()=>action('event',{entity:e})}>更正</button>}{r.can_cancel&&<button className="text-button danger" onClick={()=>action('cancel',{entity:e})}>删除{e.transfer_id?'整笔转移':''}</button>}</div></td>
 </tr>;})}</tbody></table></div><p className="muted small">未含费税单价为成交单价；买入与再投同时列出含费税成本价，卖出列出扣费税净回款/份。分红税费已从净分红扣除，不重复计入再投成本。净分红已计入收益；同笔投资的买入与卖出视角存在重叠，不可把逐笔收益直接相加。年化仅按实际投入现金流计算 XIRR，不含未投入现金。</p></>;}

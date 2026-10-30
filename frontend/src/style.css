@@ -92,10 +92,14 @@
 .panel-head .income-year{width:110px}
 
 
-.portfolio-overview-controls{display:flex;align-items:flex-end;gap:14px;margin:0 0 24px}
-.portfolio-overview-controls label{display:flex;flex-direction:column;gap:7px;color:var(--muted);font-size:12px;min-width:240px;max-width:420px}
-.portfolio-overview-controls select{font-size:15px;color:var(--text);background:var(--panel)}
-@media(max-width:700px){.portfolio-overview-controls{align-items:stretch;gap:10px}.portfolio-overview-controls label{min-width:0;flex:1}.portfolio-overview-controls .button{align-self:flex-end}.portfolio-overview-controls select{width:100%}}
+.portfolio-heading{display:flex;align-items:flex-end;gap:24px;flex:1;flex-wrap:wrap;min-width:0;max-width:100%}
+.page-heading-title{flex-shrink:0;max-width:100%}.portfolio-page-header{align-items:flex-end}
+.portfolio-header-controls{display:flex;align-items:flex-end;gap:10px;max-width:100%}
+.portfolio-header-controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:11px;min-width:180px;max-width:260px}
+.portfolio-header-controls select{font-size:14px;color:var(--text);background:var(--panel)}
+.portfolio-header-controls .button{flex-shrink:0;white-space:nowrap}
+.holdings-table{min-width:1500px}.holding-return{min-width:265px}
+@media(max-width:700px){.portfolio-heading{flex-basis:100%;gap:12px}.portfolio-header-controls{width:100%}.portfolio-header-controls label{min-width:0;max-width:none;flex:1}.portfolio-header-controls .button{font-size:12px;padding:9px}.portfolio-header-controls select{width:100%}.portfolio-page-header>.header-actions{width:100%;justify-content:flex-end}}
 
 /* Shared navigation groups and bounded settings lists. */
 .sidebar-section-label{color:var(--muted);font-size:13px;margin:26px 12px 8px}.brand+.sidebar-section-label{margin-top:0}.cache-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 0 4px}

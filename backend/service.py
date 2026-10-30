@@ -120,6 +120,10 @@ class Service:
         with self.store.transaction(expected_revision=data.get('expected_revision')) as db:
             state = self.store.state(db)
             before = self.portfolio(state, portfolio_id) if portfolio_id else None
+            description = data.get('description')
+            if description is None: description = (before or {}).get('description', '')
+            if not isinstance(description, str) or len(description) > 10000:
+                raise DomainError('组合介绍须为不超过10000字的纯文字')
             target = dec(data.get('target_annual_pct', (before or {}).get('target_annual_pct', '5')), '目标年化收益率', nonnegative=True)
             if target > 100: raise DomainError('目标年化收益率须为0到100%')
             if before and any(e['portfolio_id'] == portfolio_id and e['date'] < start.isoformat() for e in state['events']):
@@ -135,6 +139,7 @@ class Service:
             if benchmark and not any(i['id'] == benchmark for i in state['instruments']):
                 raise DomainError('基准标的不存在，请先添加标的或导入序列')
             result = {'id': portfolio_id or uid(), 'name': name, 'planned_amount': ds(planned),
+                      'description': description,
                       'start_date': start.isoformat(), 'base_currency': 'CNY', 'target_annual_pct': ds(target),
                       'benchmark_id': benchmark, 'benchmark_basis': 'total_return' if builtin else data.get('benchmark_basis', 'raw'),
                       'funding_mode':data.get('funding_mode') or (before or {}).get('funding_mode') or 'budget',

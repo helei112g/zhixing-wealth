@@ -119,7 +119,7 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 
 | 方法与路径 | 必要内容 |
 |---|---|
-| POST `/api/portfolios` / PUT `/api/portfolios/{pid}` | name、planned_amount、start_date；目标、基准、归档等见 schema |
+| POST `/api/portfolios` / PUT `/api/portfolios/{pid}` | name、planned_amount、start_date；可选 description 为最多10000字的纯文字组合介绍（保留换行）；目标、基准、归档等见 schema |
 | PUT `/api/portfolios/{pid}/instruments/{iid}` | target_pct、asset_class、region、tags；单标的比例0–100；组合资金不足仅提醒，不限制合计≤100 |
 | POST `/api/events/preview` | 拟写入的完整事件；更正带 id。只读计算，返回 revision、event、现金变化、warnings、duplicate_of、instrument_merge |
 | POST `/api/events` | 与已核对预览相同的输入；expected_revision；服务端再校验 |
@@ -127,6 +127,8 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 | GET `/api/events/{id}/deletion-preview` | 只读关联删除预览：revision、event_ids、items、can_delete、validation_error |
 | DELETE `/api/events/{id}` | reason、expected_revision；cascade=true 时必须提交预览全部 event_ids，逻辑删除并保留修订；默认兼容单条/转移对 |
 | POST `/api/dividends/{notice_id}/confirm` | 在候选 suggested_event 上核对税前总额、税费、到账、再投信息，保留 dividend_basis，附 expected_revision；权益变更时拒绝旧核对 |
+
+组合介绍随组合对象在保存响应、bootstrap.portfolios 和 dashboard.portfolio 返回。创建时省略或null为空；编辑时省略或null保留原介绍，空字符串清空。旧组合可没有该字段，读取不回写。超长或非字符串返回422；过期revision返回409且不保存介绍或其他变更。介绍仅作展示，不参与财务计算。
 
 旧交易/计划接口的 `expected_revision` 兼容为可选；资产、投资笔记接口和 AI 客户端写入强制提供。不能把 CSRF token 当作并发版本。
 

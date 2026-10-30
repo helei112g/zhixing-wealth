@@ -17,7 +17,7 @@ import {useReminders,RemindersBanner,ReminderCenter} from './reminders_ui';
 import {DividendInbox,DividendNotices} from './dividend_ui';
 import {CsvForm, EventForm, FxForm, PlanForm, PortfolioForm, RestoreForm} from './forms';
 
-const pageNames:Record<string,string>={family:'资产分析',reminders:'提醒中心',overview:'组合总览',holdings:'持仓标的',detail:'标的详情',ledger:'资金与流水',tags:'标签与持仓分布',settings:'全局设置'};
+const pageNames:Record<string,string>={family:'资产分析',reminders:'提醒中心',overview:'组合收益',holdings:'持仓标的',detail:'标的详情',ledger:'交易记录',tags:'标签与持仓分布',settings:'全局设置'};
 const pageIcons:Record<string,React.ReactNode>={reminders:<Bell size={17}/>,overview:<LayoutDashboard size={17}/>,holdings:<PieChart size={17}/>,ledger:<List size={17}/>,settings:<Settings2 size={17}/>};
 
 const familyPages:Record<string,string>={overview:'总览',analysis:'趋势分析',insurance:'保险',income:'收入',assets:'资产更新'};

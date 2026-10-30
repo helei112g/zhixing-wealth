@@ -55,7 +55,7 @@
 
 总预算、净投入、持仓市值、累计收益和 XIRR 各有位置。收益曲线、收益构成与日历把长期结果拆回可以理解的日常记录，分红、费用和汇兑影响也有迹可循。送转股、拆股可按公告核对份额，保留原买入总成本；价格图提供复权参考，避免把除权跳变误读为投资亏损。
 
-![投资组合总览：合成收益曲线、收益构成与日历](docs/images/portfolio-overview.jpg)
+![投资组合收益：合成收益曲线、收益构成与日历](docs/images/portfolio-overview.jpg)
 
 <details>
 <summary><strong>展开查看：持仓、投入计划与标的收益排行</strong></summary>

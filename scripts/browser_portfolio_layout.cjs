@@ -55,13 +55,19 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
    check(await page.locator('.overview-summary').count()===0&&await page.locator('.holdings-list.list-section').count()===1,'holdings uses the flat layout without top statistics at '+width);
    check(await page.locator('.holding-row').locator('button').filter({hasText:'设置计划'}).count()===1,'investment plan editing remains available at '+width);
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'holdings fits viewport '+width);await shot('holdings-'+width);
-   await nav('资金与流水');await ready();
+   await nav('交易记录');await ready();
    check(await page.locator('.overview-summary').count()===0&&await page.locator('.ledger-list.list-section').count()===1&&await page.locator('.ledger-list.panel').count()===0,'ledger opens into the same flat list style at '+width);
    check(await page.locator('[data-ledger-event]').count()===20,'ledger retains twenty-row default pagination at '+width);
    check(await page.locator('.transaction-viewport').evaluate(e=>e.clientHeight>=e.scrollHeight-1),'ledger expands to show all rows without vertical clipping at '+width);
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'ledger confines horizontal overflow to the table at '+width);await shot('ledger-'+width);
    await page.getByRole('navigation',{name:'流水分页'}).getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('[data-ledger-event]').length===6);check(true,'ledger next page remains usable at '+width);
-   await nav('组合总览');await page.locator('.overview-summary').waitFor();await page.locator('.portfolio-introduction summary').click();
+   await nav('持仓标的');await page.getByRole('button',{name:'合成宽基标的',exact:true}).click();await ready();
+   check(await page.locator('.instrument-list.list-section').count()===1&&await page.locator('.transaction-list.panel').count()===0,'instrument records use the shared flat list without a surrounding card at '+width);
+   check(await page.locator('[data-instrument-event]').count()===20&&await page.locator('.transaction-viewport').evaluate(e=>e.clientHeight>=e.scrollHeight-1),'instrument records expand into page flow with twenty-row pagination at '+width);
+   check(await page.locator('.transaction-return').evaluateAll(cells=>cells.every(cell=>{const main=cell.querySelector('.transaction-return-main'),rate=main.querySelector('b').getBoundingClientRect(),amount=main.querySelector('.transaction-return-amount').getBoundingClientRect(),secondary=cell.querySelector('.transaction-return-secondary').getBoundingClientRect();return amount.left>=rate.right&&Math.abs(rate.top-amount.top)<5&&secondary.top>=Math.max(rate.bottom,amount.bottom);})), 'cumulative rate and amount share one line above annualization and holding state at '+width);
+   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'instrument confines horizontal overflow to the table at '+width);await shot('instrument-records-'+width);
+   await page.getByRole('navigation',{name:'流水分页'}).getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('[data-instrument-event]').length===6);check(true,'instrument pagination remains usable at '+width);
+   await nav('组合收益');await page.locator('.overview-summary').waitFor();await page.locator('.portfolio-introduction summary').click();
    check(await page.locator('.portfolio-introduction p').textContent()===updated&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'overview keeps statistics and readable introduction at '+width);
    await shot('introduction-'+width);
   }

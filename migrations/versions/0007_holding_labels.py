@@ -14,7 +14,6 @@ def upgrade():
         data TEXT NOT NULL CHECK(json_valid(data)),
         PRIMARY KEY(portfolio_id,instrument_id))''')
     db.exec_driver_sql("UPDATE meta SET value='8' WHERE key='schema'")
-    db.exec_driver_sql("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
 
 
 def downgrade():

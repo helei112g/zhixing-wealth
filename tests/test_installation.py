@@ -123,6 +123,26 @@ class InstallationTests(unittest.TestCase):
         self.service.save_portfolio({'name':'合成期间新增','planned_amount':'200','start_date':'2024-01-01'})
         with self.assertRaises(DomainError):verify(capture(self.data),capture(staged,capture(self.data)))
 
+    def test_schema7_label_upgrade_preserves_deployment_revision_and_note_history(self):
+        self.populated()
+        with sqlite3.connect(self.data/'portfolio.sqlite') as db:
+            db.execute('DROP TABLE holding_labels')
+            db.execute("UPDATE meta SET value='7' WHERE key='schema'")
+            db.execute("UPDATE alembic_version SET version_num='0006_storage'")
+        before=capture(self.data)
+        backup=snapshot(self.data,self.root/'schema7-protected.zip')
+        runtime=self.root/'rehearsal-runtime';runtime.mkdir()
+        result=manage.rehearse_deployment(ROOT,{'runtime_dir':runtime,'environment':'test'},backup['backup'],before)
+        self.assertTrue(result['preserved'])
+        self.assertEqual(capture(self.data),before)
+        Store(self.data,migration_backup=False)
+        after=capture(self.data,before)
+        self.assertEqual(after['schema'],8)
+        self.assertEqual(after['counts']['holding_labels'],0)
+        self.assertEqual(after['metadata_sha256'],before['metadata_sha256'])
+        self.assertEqual(after['note_versions'],2)
+        self.assertTrue(verify(before,after)['preserved'])
+
     def test_public_archive_contains_guides_but_no_runtime_or_ledger_files(self):
         archive=self.root/'source.tar.gz'
         subprocess.run([sys.executable,str(ROOT/'scripts/source_check.py'),'--output',str(archive)],

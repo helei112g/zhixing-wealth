@@ -85,3 +85,6 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 建档与更新需稳定request_id，未知结果保留原ID先回读，不盲目重试。研究GET不联网抓取；analysis_id变更后重新读取全部分页。接口null不补零，区分来源日期、财报期、权重日与当前重述版本。应用不运行时不承诺更新。
 
 指数增强返回changes的真实基准日期；不要把缺少年初基准的表现改称年度涨跌幅。companies按全体权重排序并携带报告期财务，零值与null分开。current_years是当前篮子回溯，historical_years才使用各年有效名单，不能互相替代。scenario可传reference_window（3/5/10），曲线和历史参考点都用同一次API响应；P10–P90区间不代表主观研究结论或未来到达概率。
+
+
+研究客户端支持 `research_index(index_id, basis='price', window=3, method='overall')`，可选价格／全收益、3／5／10年及整体法／中位数／算术平均。`research_part(index_id, part, analysis_id=..., page=..., page_size=...)`读取series、constituents、financials、sources四种投影；分页携带原analysis_id，409后重读，不拼接不同版本。capabilities公开这些选择、完整日线均线期数与新增数据字段。条件试算的PE/PB与3／5／10年参考窗口通过真实HTTP回归，不依赖页面状态。

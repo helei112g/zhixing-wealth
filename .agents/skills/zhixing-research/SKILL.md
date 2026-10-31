@@ -20,3 +20,5 @@ description: 在知行财富本机系统读取指数资料、核对代码配对�
 不合并 PR、不部署、不恢复或清理数据，除非另外获得相应授权。
 
 增强读取：使用changes的from_date/to_date解释日、周、年度涨跌幅；daily_series中的MA按完整交易日计算。成分财务按financials的报告期展示，current_years不冒充历史指数。条件关系图使用scenario返回的curve/reference_points，可选reference_window=3/5/10；历史P10–P90为固定分母参照，不称底部或概率。
+
+客户端完整读取：research_index支持basis、window、method；research_part读取四种投影。跨页显式携带同一analysis_id；从capabilities发现主口径、方法、均线周期及情景参考窗口，不能只根据UI默认值推断。

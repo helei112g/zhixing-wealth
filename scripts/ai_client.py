@@ -130,8 +130,14 @@ class Client:
     def resolve_index(self,code):
         return self.preview({'code':code},'/api/research/indices/resolve')
 
-    def research_index(self,index_id,basis='price',window=3):
-        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window}))
+    def research_index(self,index_id,basis='price',window=3,method='overall'):
+        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))
+
+    def research_part(self,index_id,part,*,basis='price',window=3,method='overall',analysis_id=None,page=1,page_size=20):
+        if part not in ('series','constituents','financials','sources'):raise ValueError('Unknown research part')
+        params=dict(basis=basis,window=window,method=method,page=page,page_size=page_size)
+        if analysis_id is not None:params['analysis_id']=analysis_id
+        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/'+part+'?'+urllib.parse.urlencode(params))
 
     def update_settings(self):
         return self.request('/api/settings/data-updates')

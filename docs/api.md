@@ -398,3 +398,6 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 指数增强（method_version `index-library-2`）：detail新增`changes.daily/weekly/ytd`（ratio/from_date/to_date或null）、`top10_weight`（百分数）、`daily_series`（完整显示日线及ma51/ma120/ma250/ma850，缺期null）、按权重降序的`companies[].weight_rank/financials[报告期]`与`financials.current_years`。`valuation.*.windows.*.quantiles`为有效同源历史样本的p10/p25/p50/p75/p90。list亦提供changes。旧字段保持兼容。
 
 `POST .../scenarios`可选`reference_window:3|5|10`（默认5），返回`curve`（change_pct、point）、`reference_points`（分位→multiple/point）和reference_window。曲线与所选结果均由后端Decimal计算；参考点固定分母不变，窗口不足则空对象。只接受同日整体法价格序列与明确固定篮子假设；所有结果仍绑定analysis_id。
+
+
+研究能力发现补充 `research.bases`、`valuation_methods`、`detail_fields`、`moving_averages`及`scenario_reference_windows`。标准库客户端的 `research_index(..., method='overall')`显式透传估值方法；`research_part(index_id, part, *, basis='price', window=3, method='overall', analysis_id=None, page=1, page_size=20)`覆盖四种资料投影，part限series／constituents／financials／sources。调用者在跨页读取时传入刚读取的analysis_id，遵守409版本冲突规则。

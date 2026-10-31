@@ -22,3 +22,5 @@ html.nav-collapsed .app-shell{grid-template-columns:76px minmax(0,1fr)}.compact-
 .financial-annual-scroll{overflow-x:auto}.financial-annual-canvas{min-width:620px}
 
 .research-current-finance table{min-width:760px}
+
+.scenario-update-state{min-height:18px;margin:6px 0}

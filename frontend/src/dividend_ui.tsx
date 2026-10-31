@@ -5,6 +5,7 @@ import {Button,ErrorBox,Modal} from './components';
 export function DividendNotices({rows,action,onReload}:Obj){
  const[error,E]=useState(''),[selected,S]=useState<Obj|null>(null),[busy,B]=useState(false);
  const pending=(rows||[]).filter((r:Obj)=>['pending','future','needs_review'].includes(r.status)),ignored=(rows||[]).filter((r:Obj)=>r.status==='ignored');
+ const canKeep=(r:Obj)=>['DIVIDEND','REINVEST'].includes(r.recorded_event?.kind)&&r.recorded_event?.instrument_id===r.instrument.id;
  async function ignore(row:Obj,ignored=true){try{await api('/dividends/'+row.notice.id+'/ignore',{portfolio_id:row.portfolio_id,ignored});onReload();}catch(e:any){E(e.message);}}
  async function keep(){if(!selected||busy)return;B(true);E('');try{
   await api('/dividends/'+selected.notice.id+'/review',{portfolio_id:selected.portfolio_id,event_id:selected.event_id,mode:'keep_recorded',review_basis:selected.review_basis,expected_revision:selected.revision,reason:'已核对实际到账，保留原分红流水并完成核对'});
@@ -16,7 +17,7 @@ export function DividendNotices({rows,action,onReload}:Obj){
   <p>权益份额 {units(r.eligible_quantity)} × 每份 {r.notice.per_share} {r.notice.currency} = <b>{money(r.estimated_gross)} {r.notice.currency}</b>（参考估算）</p>
   {r.recorded_event&&<p className="reconcile-difference">原记账税前 {exactMoney(r.recorded_event.gross_amount)} {r.recorded_event.currency} · 参考差额 {signedMoney(r.gross_difference)} {r.notice.currency}；原方式：{kindNames[r.recorded_event.kind]}。确认前保留原到账记录。{r.review_changes?.length>0&&<>需核对：{r.review_changes.join('、')}。</>}</p>}
   <div className="inline-actions">
-   {r.status==='needs_review'&&<Button small primary disabled={busy} onClick={()=>{E('');S(r);}}>保留实际到账金额并完成核对</Button>}
+   {r.status==='needs_review'&&<Button small primary disabled={busy||!canKeep(r)} title={canKeep(r)?undefined:'来源关联的原记录不是本标的的分红或再投，请先更正原流水'} onClick={()=>{E('');S(r);}}>保留实际到账金额并完成核对</Button>}
    {r.status==='needs_review'&&Number(r.estimated_gross)===0&&r.estimated_gross!==null?<Button small disabled={busy} onClick={()=>action('cancel',{entity:r.recorded_event})}>已无权益，核对并删除原分红</Button>:<Button small primary={r.status!=='needs_review'} disabled={busy||r.status==='future'||r.notice.currency!==r.instrument.currency||(r.notice.pay_date&&r.notice.pay_date<r.notice.ex_date)} onClick={()=>action('event',{proposal:r,initialKind:r.suggested_event.kind,instrumentId:r.instrument.id})}>{r.status==='future'?'除息日未到':r.notice.pay_date&&r.notice.pay_date<r.notice.ex_date?'特殊派息安排，需手工核对':r.notice.currency!==r.instrument.currency?'币种需手工核对':r.status==='needs_review'?'重新核对并重算':'核对现金分红 / 红利再投'}</Button>}
    {r.status!=='needs_review'&&<Button small disabled={busy} onClick={()=>ignore(r)}>忽略</Button>}
    {r.notice.source_url?.startsWith('https://')&&<a href={r.notice.source_url} target="_blank" rel="noreferrer">查看来源</a>}

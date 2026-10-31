@@ -8,13 +8,13 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
  const page=await browser.newPage({viewport:{width:1440,height:1100}});page.setDefaultTimeout(20000);
  let csrf='',count=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const check=(value,label)=>{assert.ok(value,label);console.log('PASS',++count,label);};
- const api=async(url,body)=>{const response=await page.request.fetch(base+'/api'+url,{method:body===undefined?'GET':'POST',data:body,headers:{'x-csrf-token':csrf,origin:base}});const value=await response.json();assert.ok(response.ok(),JSON.stringify(value));return value;};
+ const api=async(url,body,method=body===undefined?'GET':'POST')=>{const response=await page.request.fetch(base+'/api'+url,{method,data:body,headers:{'x-csrf-token':csrf,origin:base}});const value=await response.json();assert.ok(response.ok(),JSON.stringify(value));return value;};
  const dialog=()=>page.getByRole('dialog',{name:'分红确认与历史重算'});
  const keep=()=>dialog().getByRole('button',{name:'保留实际到账金额并完成核对',exact:true});
- function fixture(id,per_share){
+ function fixture(id,per_share,code='00700'){
   const result=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',
-   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');p=json.load(sys.stdin);Service(Store(d)).cache_dividends(p['id'],[dict(code='00700',source_ref='synthetic-browser-review',record_date=None,ex_date='2024-01-11',pay_date=None,per_share=p['per_share'],currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')])"],
-   {cwd:root,encoding:'utf8',input:JSON.stringify({id,per_share})});assert.equal(result.status,0,result.stderr);
+   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');p=json.load(sys.stdin);Service(Store(d)).cache_dividends(p['id'],[dict(code=p['code'],source_ref='synthetic-browser-review',record_date=None,ex_date='2024-01-11',pay_date=None,per_share=p['per_share'],currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')])"],
+   {cwd:root,encoding:'utf8',input:JSON.stringify({id,per_share,code})});assert.equal(result.status,0,result.stderr);
  }
  try{
   const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
@@ -60,6 +60,38 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
   check(candidate.status==='needs_review'&&candidate.review_changes.includes('权益份额变化'),'even a tiny real share change still requires review');
   await dialog().getByRole('button',{name:'关闭',exact:true}).click();await page.goto(base+'/?reminders=1');
   await page.getByRole('button',{name:'核对分红',exact:true}).waitFor();await page.screenshot({path:path.join(out,'dividend-review-reminder.png'),fullPage:true});
+  await api('/dividends/'+candidate.notice.id+'/review',{portfolio_id:p.id,event_id:saved.id,mode:'keep_recorded',review_basis:candidate.review_basis,expected_revision:candidate.revision,reason:'合成结束前一核对，隔离手工分红场景'});
+  const manualPortfolio=await api('/portfolios',{name:'合成手工分红关联验收',start_date:'2024-01-01',planned_amount:'10000'});
+  const manualBuy=await api('/events',{portfolio_id:manualPortfolio.id,kind:'BUY',date:'2024-01-02',instrument:{market:'HK',code:'00701',name:'合成手工分红'},quantity:'100',gross_amount:'1000',fx_rate:'.91'});
+  fixture(manualBuy.instrument_id,'1','00701');
+  const manualCandidates=()=>api('/portfolios/'+manualPortfolio.id+'/dividends');
+  let manualCandidate=(await manualCandidates())[0];
+  const manual=await api('/events',{...manualCandidate.suggested_event,source_dividend_id:'',dividend_basis:null,gross_amount:'99',tax:'1',net_amount:'98',tax_known:true,pay_date:'2024-01-18',fx_rate:'.91'});
+  await page.goto(base+'/?reminders=1');await page.getByRole('button',{name:'核对分红',exact:true}).click();await keep().click();
+  await dialog().getByRole('button',{name:'确认保留并完成核对',exact:true}).click();await dialog().getByText(/暂无待确认或待重算/).waitFor();
+  check((await manualCandidates())[0].status==='manual_recorded','manual receipt review completes without adding a source link to original event');
+  const corrected=await api('/events/'+manual.id,{...manual,date:'2024-01-12',change_reason:'合成更正实际日期',expected_revision:(await api('/bootstrap')).revision},'PUT');
+  manualCandidate=(await manualCandidates())[0];
+  check(manualCandidate.status==='needs_review'&&manualCandidate.event_id===manual.id,'correcting manual receipt date retains original binding and requires review');
+  await dialog().getByRole('button',{name:'关闭',exact:true}).click();await page.goto(base+'/?reminders=1');
+  await page.getByRole('button',{name:'核对分红',exact:true}).click();await keep().click();
+  await dialog().getByRole('button',{name:'确认保留并完成核对',exact:true}).click();await dialog().getByText(/暂无待确认或待重算/).waitFor();
+  const manualRows=await api('/portfolios/'+manualPortfolio.id+'/transactions');
+  assert.deepEqual(manualRows.find(r=>r.event.id===manual.id).event,corrected);
+  check(manualRows.filter(r=>r.event.kind==='DIVIDEND').length===1,'reviewing corrected manual receipt preserves every event field and cannot duplicate it');
+  await api('/events/'+manualBuy.id,{reason:'合成取消历史买入',expected_revision:(await api('/bootstrap')).revision},'DELETE');
+  await api('/portfolios/'+manualPortfolio.id,{...manualPortfolio,start_date:'2024-01-11',expected_revision:(await api('/bootstrap')).revision},'PUT');
+  manualCandidate=(await manualCandidates())[0];
+  check(manualCandidate.eligible_quantity===null&&manualCandidate.status==='needs_review','known entitlement becoming unknown remains pending review');
+  await dialog().getByRole('button',{name:'关闭',exact:true}).click();await page.goto(base+'/?reminders=1');
+  await page.getByRole('button',{name:'核对分红',exact:true}).click();await keep().waitFor();
+  check((await dialog().innerText()).includes('权益份额 —'),'UI displays unknown entitlement without replacing it with zero');
+  await page.screenshot({path:path.join(out,'dividend-review-unknown-entitlement.png'),fullPage:true});
+  await api('/events/'+saved.id,{...saved,kind:'BUY',quantity:'1',price:saved.gross_amount,change_reason:'合成错误类型关联',expected_revision:(await api('/bootstrap')).revision},'PUT');
+  await dialog().getByRole('button',{name:'关闭',exact:true}).click();await page.goto(base+'/?dividend='+p.id);
+  await keep().waitFor();
+  check(!await keep().isEnabled()&&(await keep().getAttribute('title')).includes('不是本标的的分红或再投'),'invalid source binding cannot use keep action in UI');
+  await page.screenshot({path:path.join(out,'dividend-review-invalid-binding.png'),fullPage:true});
   check(!errors.length,'no uncaught browser errors');
   fs.writeFileSync(path.join(out,'dividend-review-results.json'),JSON.stringify({checks:count,errors},null,2));
  }catch(error){await page.screenshot({path:path.join(out,'failure.png'),fullPage:true}).catch(()=>{});throw error;}finally{await browser.close();}

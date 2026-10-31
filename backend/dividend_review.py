@@ -14,6 +14,7 @@ CHANGE_LABELS = dict(eligible_quantity='权益份额变化', record_date='权益
                      notice_record_date='来源登记日变化', pay_date='来源派息日变化',
                      ex_date='除息日变化', currency='派息币种变化',
                      split_restore_factor='来源拆分还原因子变化', per_share='每份分红实质变化',
+                     event_date='原流水发生日期变化',
                      missing_basis='原记录缺少核对依据')
 
 
@@ -44,14 +45,16 @@ def minor_yahoo_change(before, after):
 
 
 def review_changes(before, after):
-    if not before:
+    if not before or 'eligible_quantity' not in before or before.get('per_share') is None:
         return ['missing_basis']
     changes = []
     for key in ('eligible_quantity', 'record_date', 'notice_record_date', 'pay_date', 'ex_date', 'currency', 'split_restore_factor'):
-        if key not in before or after.get(key) is None:
+        # Quantity is a computed entitlement, not an optional source field.
+        # Losing a previously known quantity must keep the review open.
+        if key not in before or (key!='eligible_quantity' and after.get(key) is None):
             continue
         old, new = before[key], after[key]
-        if key in ('eligible_quantity', 'split_restore_factor') and old is not None:
+        if key in ('eligible_quantity', 'split_restore_factor') and old is not None and new is not None:
             equal = dec(old) == dec(new)
         else:
             equal = old == new

@@ -288,6 +288,156 @@ class DividendReviewTests(unittest.TestCase):
             self.assertEqual(calls[-1], ([], []))
             self.assertEqual(native._read(native.result_path)['dividend_dispatches'], {})
 
+    def test_legacy_basis_currency_correction_still_requires_review(self):
+        event = self.confirm()
+        legacy = {k:event['dividend_basis'][k] for k in ('eligible_quantity','per_share','estimated_gross','record_date')}
+        self.service.save_event(dict(event,dividend_basis=legacy,change_reason='合成旧格式兼容'),event['id'])
+        before = self.store.state()['events']
+        row = self.notice(currency='USD')
+        self.assertEqual(row['status'],'needs_review')
+        self.assertIn('派息币种变化',row['review_changes'])
+        self.assertEqual(len(self.reminders()),1)
+        self.assertEqual(self.store.state()['events'],before)
+
+    def test_known_entitlement_becoming_unknown_is_not_treated_as_unchanged(self):
+        self.confirm()
+        self.service.delete_event(self.buy['id'],'合成取消历史买入')
+        self.assertEqual(self.candidate()['status'],'needs_review')
+        self.service.save_portfolio(dict(self.portfolio,start_date='2024-01-11'),self.pid)
+        row = self.candidate()
+        self.assertIsNone(row['eligible_quantity'])
+        self.assertEqual(row['status'],'needs_review')
+        self.assertIn('权益份额变化',row['review_changes'])
+        self.assertEqual(len(self.reminders()),1)
+
+    def test_receipt_note_or_tax_correction_cannot_revert_last_reviewed_entitlement(self):
+        event = self.confirm()
+        added = self.service.save_event(dict(portfolio_id=self.pid,instrument_id=self.iid,kind='BUY',
+            date='2024-01-03',quantity='1',gross_amount='10',fx_rate='.91'))
+        self.keep()
+        for changes in (dict(reason='合成备注更正'),dict(tax='2.2345',net_amount='97.7531')):
+            event = self.service.save_event(dict(event,**changes,change_reason='合成凭证补充'),event['id'])
+            row = self.candidate()
+            self.assertEqual(row['status'],'confirmed')
+            self.assertEqual(row['previous_basis']['eligible_quantity'],'101')
+        self.service.delete_event(added['id'],'合成取消补录买入')
+        row = self.candidate()
+        self.assertEqual(row['status'],'needs_review')
+        self.assertEqual(row['previous_basis']['eligible_quantity'],'101')
+        self.assertIn('权益份额变化',row['review_changes'])
+
+    def manual_receipt(self):
+        row = self.notice()
+        return self.service.save_event(dict(row['suggested_event'],source_dividend_id='',dividend_basis=None,
+            gross_amount='99',net_amount='98',tax='1',tax_known=True,pay_date='2024-01-18',fx_rate='.91'))
+
+    def test_manual_receipt_date_correction_retains_binding_and_uses_original_event(self):
+        event = self.manual_receipt()
+        self.keep()
+        changed = self.service.save_event(dict(event,date='2024-01-12',change_reason='合成除息日更正'),event['id'])
+        row = self.candidate()
+        self.assertEqual(row['status'],'needs_review')
+        self.assertEqual(row['event_id'],event['id'])
+        self.assertEqual(row['recorded_event'],changed)
+        self.assertIn('原流水发生日期变化',row['review_changes'])
+        original = self.store.state()['events']
+        self.keep(row)
+        self.assertEqual(self.candidate()['status'],'manual_recorded')
+        self.assertEqual(self.store.state()['events'],original)
+        with self.assertRaises(DomainError):
+            self.service.confirm_dividend(row['notice']['id'],dict(row['suggested_event'],expected_revision=self.store.state()['revision']))
+
+    def test_manual_source_ex_date_correction_cannot_create_second_receipt(self):
+        event = self.manual_receipt()
+        self.keep()
+        row = self.notice(ex_date='2024-01-12')
+        self.assertEqual(row['status'],'needs_review')
+        self.assertEqual(row['event_id'],event['id'])
+        self.assertIn('除息日变化',row['review_changes'])
+        before = len(self.store.state()['events'])
+        updated = self.service.confirm_dividend(row['notice']['id'],dict(row['suggested_event'],tax_known=True,expected_revision=row['revision']))
+        self.assertEqual(updated['id'],event['id'])
+        self.assertEqual(len(self.store.state()['events']),before)
+
+    def test_bound_manual_receipt_remains_visible_when_entitlement_is_unknown(self):
+        event = self.manual_receipt()
+        self.keep()
+        self.service.save_event(dict(event,date='2024-01-12',change_reason='合成日期更正'),event['id'])
+        self.service.delete_event(self.buy['id'],'合成取消唯一买入')
+        self.service.save_portfolio(dict(self.portfolio,start_date='2024-01-11'),self.pid)
+        row = self.candidate()
+        self.assertEqual(row['event_id'],event['id'])
+        self.assertIsNone(row['eligible_quantity'])
+        self.assertEqual(row['status'],'needs_review')
+        self.assertEqual(len(self.reminders()),1)
+
+    def test_keep_succeeds_with_all_event_writes_denied_and_legacy_bytes_preserved(self):
+        import json, sqlite3
+        from contextlib import contextmanager
+        event = self.confirm('REINVEST')
+        with self.store.transaction() as db:
+            raw = json.loads(db.execute('SELECT data FROM events WHERE id=?',(event['id'],)).fetchone()[0])
+            raw.update(legacy_custom_fact={'synthetic':'preserve exactly'},tax_known=False)
+            db.execute('UPDATE events SET data=? WHERE id=?',(json.dumps(raw,ensure_ascii=False,indent=2),event['id']))
+        self.notice(per_share='1.01')
+        with self.store.connection() as db:
+            before = [tuple(r) for r in db.execute('SELECT * FROM events ORDER BY id')]
+        connect = self.store.connection
+        attempts = []
+        @contextmanager
+        def guarded_connection():
+            with connect() as db:
+                def authorize(action,table,*args):
+                    if table=='events' and action in (sqlite3.SQLITE_INSERT,sqlite3.SQLITE_UPDATE,sqlite3.SQLITE_DELETE):
+                        attempts.append(action)
+                        return sqlite3.SQLITE_DENY
+                    return sqlite3.SQLITE_OK
+                db.set_authorizer(authorize)
+                yield db
+        with patch.object(self.store,'connection',guarded_connection):
+            self.keep()
+        with self.store.connection() as db:
+            self.assertEqual([tuple(r) for r in db.execute('SELECT * FROM events ORDER BY id')],before)
+        self.assertEqual(attempts,[])
+        self.assertEqual(self.candidate()['status'],'confirmed')
+
+    def test_keep_refuses_source_binding_to_non_receipt_without_writing(self):
+        event = self.confirm()
+        self.service.save_event(dict(event,kind='BUY',quantity='1',price=event['gross_amount'],change_reason='合成类型更正'),event['id'])
+        row = self.candidate()
+        self.assertEqual(row['status'],'needs_review')
+        self.assertEqual(row['recorded_event']['kind'],'BUY')
+        before = self.store.state()
+        with self.assertRaisesRegex(DomainError,'本标的的分红或再投'):
+            self.keep(row)
+        self.assertEqual(self.store.state(),before)
+
+    def test_keep_refuses_source_binding_to_another_instrument_without_writing(self):
+        event = self.confirm()
+        other = self.service.save_event(dict(portfolio_id=self.pid,kind='BUY',date='2024-01-02',
+            instrument=dict(market='HK',code='00701',name='合成另一标的'),quantity='1',gross_amount='10',fx_rate='.91'))
+        self.service.save_event(dict(event,instrument_id=other['instrument_id'],change_reason='合成标的更正'),event['id'])
+        row = self.notice(per_share='1.01')
+        self.assertEqual(row['status'],'needs_review')
+        before = self.store.state()
+        with self.assertRaisesRegex(DomainError,'本标的的分红或再投'):
+            self.keep(row)
+        self.assertEqual(self.store.state(),before)
+
+    def test_http_rejects_non_receipt_review_with_422_and_no_write(self):
+        event = self.confirm()
+        self.service.save_event(dict(event,kind='BUY',quantity='1',price=event['gross_amount'],change_reason='合成类型更正'),event['id'])
+        app = create_app(self.directory,testing=True,auto_sync=False)
+        client = TestClient(app,base_url='http://127.0.0.1')
+        bootstrap = client.get('/api/bootstrap').json()
+        row = client.get('/api/portfolios/'+self.pid+'/dividends').json()[0]
+        before = self.store.state()
+        response = client.post('/api/dividends/'+row['notice']['id']+'/review',json=self.body(row),
+            headers={'x-csrf-token':bootstrap['csrf_token'],'origin':'http://127.0.0.1'})
+        self.assertEqual(response.status_code,422)
+        self.assertIn('本标的的分红或再投',response.json()['error'])
+        self.assertEqual(self.store.state(),before)
+
     def test_http_contract_required_revision_csrf_audit_and_notification_invalidation(self):
         self.confirm()
         self.notice(per_share='1.01')

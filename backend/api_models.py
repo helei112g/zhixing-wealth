@@ -40,7 +40,7 @@ class WriteRequest(BaseModel):
 class DividendReviewRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     portfolio_id: str
-    event_id: str = Field(description='候选 recorded_event.id；只核对此原流水，不新增或更改流水')
+    event_id: str = Field(description='候选 recorded_event.id；必须仍是本标的的DIVIDEND/REINVEST，只核对此原流水，不新增或更改流水')
     mode: Literal['keep_recorded']
     review_basis: dict[str, Any] = Field(description='原样传回候选 review_basis，拒绝过时的权益或公告依据')
     expected_revision: int = Field(ge=0, strict=True, description='必须使用候选 revision；旧版本409，不重试')

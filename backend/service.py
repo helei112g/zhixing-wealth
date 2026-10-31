@@ -658,12 +658,24 @@ class Service:
             if instrument_id and notice['instrument_id']!=instrument_id:continue
             if notice['ex_date']<p['start_date']:continue
             inst=instruments[notice['instrument_id']]
-            existing=next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('source_dividend_id')==notice['id']),None)
-            manual=next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['kind'] in ('DIVIDEND','REINVEST') and e['date']==notice['ex_date'] and not e.get('source_dividend_id')),None)
-            recorded=existing or manual
             decision=next((r for r in state['corporate_actions'] if r.get('kind')=='dividend_decision' and r.get('portfolio_id')==portfolio_id and r.get('notice_id')==notice['id']),None)
-            reviewed=bool(recorded and decision and decision.get('event_id')==recorded['id'] and decision.get('event_fingerprint')==event_fingerprint(recorded))
+            existing=next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('source_dividend_id')==notice['id']),None)
+            # keep_recorded links manual receipts without changing their source
+            # fields. Consume that explicit link before trying the date heuristic.
+            bound=next((e for e in state['events'] if decision and e['id']==decision.get('event_id') and
+                e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and
+                e['kind'] in ('DIVIDEND','REINVEST') and e.get('source_dividend_id') in (None,'',notice['id'])),None)
+            manual=bound or next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['kind'] in ('DIVIDEND','REINVEST') and e['date']==notice['ex_date'] and not e.get('source_dividend_id')),None)
+            recorded=existing or manual
+            # Receipt corrections do not revoke the accepted entitlement. Only
+            # an explicit notice confirmation/review advances the decision.
+            reviewed=bool(bound and recorded and bound['id']==recorded['id'] and decision.get('mode')=='keep_recorded')
             baseline=decision.get('review_basis') if reviewed else (recorded or {}).get('dividend_basis')
+            if baseline:
+                baseline=dict(baseline)
+                # Confirming a notice has always required matching currencies;
+                # the receipt therefore supplies this missing legacy basis fact.
+                baseline.setdefault('currency',recorded['currency'])
             cutoff=(day(notice['ex_date'])-timedelta(days=1)).isoformat() if inst['market'] in ('HK','US') else notice.get('record_date')
             if not cutoff and recorded:cutoff=(baseline or {}).get('record_date') or recorded.get('record_date')
             qty=None
@@ -677,12 +689,14 @@ class Service:
                 qty=sum((lot['quantity'] for lot in pos['lots'] if lot['available_on']<=cutoff),ZERO) if inst['market']=='FUND' else pos['quantity']
                 if qty<=0 and not (existing or manual):continue
             relevant=any(e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['date']<=notice['ex_date'] for e in state['events'])
-            if qty is None and not relevant:continue
+            if qty is None and not relevant and not recorded:continue
             gross=(qty*dec(notice['per_share'])).quantize(Decimal('.01'),rounding=ROUND_HALF_UP) if qty is not None and notice['currency']==inst['currency'] else None
             pending_date=notice['ex_date']>str(today())
             basis=reference_basis(notice,ds(qty) if qty is not None else None,cutoff,baseline)
             basis['estimated_gross']=ds(gross) if gross is not None else None
             changes=review_changes(baseline,basis) if recorded and (baseline or existing) else ['missing_basis'] if manual and gross is not None and dec(manual['gross_amount'])!=gross else []
+            if reviewed and recorded['date']!=decision.get('event_date',baseline.get('ex_date',recorded['date'])):
+                changes.append('event_date')
             changed=bool(changes)
             status='needs_review' if changed else 'confirmed' if existing else 'manual_recorded' if manual else 'ignored' if decision and decision.get('ignored') else 'future' if pending_date else 'pending'
             if inst['currency']!='CNY' and market_data is None: market_data=Market(state)
@@ -744,6 +758,8 @@ class Service:
             candidate=next((r for r in self.dividend_candidates(pid,state=state) if r['notice']['id']==notice_id),None)
             if not candidate or candidate['status']!='needs_review':raise DomainError('该分红没有待核对的原记录，请刷新后核对')
             event=candidate['recorded_event']
+            if event['kind'] not in ('DIVIDEND','REINVEST') or event.get('instrument_id')!=candidate['instrument']['id']:
+                raise DomainError('来源关联的原记录不是本标的的分红或再投，请先更正原流水')
             if payload.get('event_id')!=event['id']:raise DomainError('原分红流水不匹配，请刷新后核对')
             if payload.get('review_basis')!=candidate['review_basis']:raise DomainError('持仓或公告已变化，请刷新后重新核对')
             key='decision:'+pid+':'+notice_id
@@ -751,6 +767,7 @@ class Service:
             decision=dict(id=key,kind='dividend_decision',portfolio_id=pid,instrument_id=event['instrument_id'],
                           notice_id=notice_id,event_id=event['id'],ignored=False,mode='keep_recorded',
                           review_basis=candidate['review_basis'],event_fingerprint=event_fingerprint(event),
+                          event_date=event['date'],
                           review_revision=revision+1,reason=reason,updated_at=now())
             db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(key,event['instrument_id'],json_dumps(decision)))
             self.store.audit(db,'dividend_decision',key,before,decision,reason)

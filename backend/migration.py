@@ -9,8 +9,8 @@ from sqlalchemy.engine import URL
 
 from .common import DomainError
 
-SCHEMA = 9
-HEAD = '0008_retire_legacy_labels'
+SCHEMA = 10
+HEAD = '0009_index_research'
 ROOT = Path(__file__).resolve().parents[1]
 
 

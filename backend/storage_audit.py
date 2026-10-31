@@ -58,6 +58,12 @@ def verify(before, after):
     if (before['schema'] < 8 <= after['schema'] and 'holding_labels' not in before_hashes
             and after['counts'].get('holding_labels') == 0 and after_hashes.get('holding_labels') == digest([])):
         after_hashes.pop('holding_labels')
+    if before['schema'] < 10 <= after['schema']:
+        from .research.service import TABLES
+        for table in TABLES:
+            if table not in after_hashes: raise DomainError('研究表缺失，禁止开放写入')
+            if table not in before_hashes and after['counts'].get(table)==0 and after_hashes[table]==digest([]):
+                after_hashes.pop(table)
     changed = [key for key in keys if (before_hashes != after_hashes if key == 'business_table_hashes' else before[key] != after[key])]
     if changed or before['integrity'] != 'ok' or after['integrity'] != 'ok':
         raise DomainError('存储迁移等价核验失败，禁止开放写入；差异项：' + ','.join(changed))

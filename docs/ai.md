@@ -77,3 +77,9 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 ### 持仓标签与当前分布
 
 通过capabilities.holding_analysis发现接口。用客户端holding_labels(P,I)读取当前归属和revision，展示scope/direction/detail差异后按原revision PUT labels；409或超时先回读核对，不自动覆盖。无独立标签预览接口，不声称服务端预览已完成。holding_distribution(P,basis)读取完整树与同一后端分母，不能只统计已打标签持仓或自行重复相加父子节点。股票可自动识别市场，基金不按上市地或币种猜投资敞口。旧/api/tags统计已退役；旧风格/主题tags已清除，保留资产类别和地区筛选；计划写入不传tags，地区不再接受混合。总资产value为null时可说明known_value是已知资产合计，不能冒充完整总额。
+
+## 指数研究
+
+通过 [zhixing-research](../.agents/skills/zhixing-research/SKILL.md) 与 [研究合同](research.md) 操作。客户端新增resolve_index、research_index、update_settings、research_scenario；CLI preview支持 `/api/research/indices/resolve`，write支持建档、更新策略及显式更新任务。研究建档用expected_research_revision，设置用expected_settings_revision，计划/标签继续用expected_revision，不能混用。
+
+建档与更新需稳定request_id，未知结果保留原ID先回读，不盲目重试。研究GET不联网抓取；analysis_id变更后重新读取全部分页。接口null不补零，区分来源日期、财报期、权重日与当前重述版本。应用不运行时不承诺更新。

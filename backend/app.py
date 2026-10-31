@@ -49,6 +49,10 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def writes_blocked():
         return read_only or (guard_path is not None and guard_path.exists())
 
+    from .research.service import ResearchService
+    from .research.api import router as research_router
+    research = ResearchService(store, service, lambda: not writes_blocked())
+
     @asynccontextmanager
     async def lifespan(app):
         if writes_blocked():
@@ -57,14 +61,16 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
             yield
             return
         store.recover_jobs()
-        if auto_sync: service.start_sync(trigger='startup')
+        research.recover(resume=auto_sync)
+        if auto_sync: research.tick(trigger='startup')
         async def clock():
-            last = today().isoformat() if now()[11:16] >= '23:30' else ''
             while True:
                 await asyncio.sleep(45)
-                current = now()
-                if not writes_blocked() and current[:10] != last and current[11:16] >= '23:30':
-                    service.start_sync(trigger='schedule'); last = current[:10]
+                if not writes_blocked():
+                    try:await asyncio.to_thread(research.tick)
+                    except Exception:
+                        import logging
+                        logging.getLogger(__name__).exception('公共数据调度检查失败，下一轮重试')
         async def notification_clock():
             while True:
                 if not writes_blocked():
@@ -74,6 +80,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         task = asyncio.create_task(clock()) if auto_sync else None
         try: yield
         finally:
+            await asyncio.to_thread(research.shutdown)
             notification_task.cancel()
             try: await notification_task
             except asyncio.CancelledError: pass
@@ -86,7 +93,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                   docs_url=None, redoc_url=None, openapi_url='/api/openapi.json',
                   description='本机单用户投资账本。AI 客户端与界面共用服务。先 GET /api/bootstrap 获取会话与 revision；写入带 Cookie 和 X-CSRF-Token。金额为十进制字符串，收益率为比例，未知为 null。核心写入可携带 expected_revision 进行原子并发校验。详见 /api/guide。')
     app.state.service = service; app.state.store = store; app.state.instance = instance
+    app.state.research = research
     app.include_router(household_router)
+    app.include_router(research_router(research))
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'] + (['testserver'] if testing else []))
 
     @app.middleware('http')
@@ -159,6 +168,14 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'authentication': {'bootstrap': '/api/bootstrap', 'cookie': session_cookie, 'header': 'X-CSRF-Token'},
                 'concurrency': {'field': 'expected_revision', 'conflict_status': 409,
                                 'operations': ['portfolios', 'allocations', 'holding_labels', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
+                'research': {'resolve':'/api/research/indices/resolve','indices':'/api/research/indices','detail':'/api/research/indices/{id}',
+                             'parts':['series','constituents','financials','sources'],'scenarios':'/api/research/indices/{id}/scenarios',
+                             'revision_field':'expected_research_revision','request_id_required':True,'scope':'A-share verified registry; no name or prefix guessing',
+                             'windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-library-1','missing':'null with status; UI -'},
+                'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
+                                 'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials'],
+                                 'retry':'use the exact failed item.resource; preserve request_id after unknown result',
+                                 'execution':'while app runs only; restart resumes durable work unless --no-sync or read-only'},
                 'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',
                                        'field': 'capital_summary', 'cumulative_input': 'cost',
                                        'cumulative_input_basis': '历次买入及红利再投含费税成本累计；不扣卖出与分红，再投非新增个人本金',
@@ -247,14 +264,14 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def create_portfolio(payload: PortfolioRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_portfolio(payload)
-        if auto_sync and value.get('benchmark_id'):service.start_sync(value['benchmark_id'],full=True,trigger='portfolio_create')
+        if auto_sync and value.get('benchmark_id'):research.updates.after_write(value['benchmark_id'],trigger='portfolio_create')
         return reply(value)
 
     @app.put('/api/portfolios/{portfolio_id}')
     def edit_portfolio(portfolio_id: str, payload: PortfolioRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_portfolio(payload, portfolio_id)
-        if auto_sync and value.get('benchmark_id'):service.start_sync(value['benchmark_id'],full=True,trigger='portfolio_edit')
+        if auto_sync and value.get('benchmark_id'):research.updates.after_write(value['benchmark_id'],trigger='portfolio_edit')
         return reply(value)
 
     @app.post('/api/instruments')
@@ -322,14 +339,14 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def event(payload: EventRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_event(payload)
-        if auto_sync and value.get('instrument_id'):service.start_sync(value['instrument_id'],full=True,trigger='event_create')
+        if auto_sync and value.get('instrument_id'):research.updates.after_write(value['instrument_id'],trigger='event_create')
         return reply(value)
 
     @app.put('/api/events/{event_id}')
     def edit_event(event_id: str, payload: EventRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_event(payload,event_id)
-        if auto_sync and value.get('instrument_id'):service.start_sync(value['instrument_id'],full=True,trigger='event_edit')
+        if auto_sync and value.get('instrument_id'):research.updates.after_write(value['instrument_id'],trigger='event_edit')
         return reply(value)
 
     @app.get('/api/events/{event_id}/deletion-preview', response_model=EventDeletionPreview, summary='只读预览关联删除清单及账务校验结果')
@@ -416,7 +433,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.post('/api/csv/import')
     def csv_import(payload: dict):
         value=service.csv_import(payload.get('text', ''), payload.get('category', 'events'), payload.get('portfolio_id'), payload.get('instrument_id'))
-        if auto_sync and value['imported'] and payload.get('category','events')=='events':service.start_sync(full=True,trigger='import')
+        if auto_sync and value['imported'] and payload.get('category','events')=='events':research.updates.after_write(trigger='import')
         return reply(value)
 
     @app.get('/api/portfolios/{portfolio_id}/export.csv')
@@ -434,7 +451,11 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         if payload.get('confirm') != 'RESTORE': raise DomainError('恢复备份需要明确确认')
         try: content = base64.b64decode(payload.get('content', ''), validate=True)
         except ValueError: raise DomainError('备份文件编码无效') from None
-        value = service.restore(content)
+        with research.worker_lock, store.lock:
+            if research.updating(): raise DomainError('研究数据仍在更新，请结束后恢复备份')
+            value = service.restore(content)
+            research.cache.clear()
+            research.secret=secrets.token_bytes(32)
         household_notifications.invalidate()
         value['notifications'] = household_notifications.reconcile(True)
         return reply(value)

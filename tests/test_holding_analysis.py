@@ -134,6 +134,8 @@ class HoldingAnalysisTests(unittest.TestCase):
         before = old.state()
         with sqlite3.connect(old.path) as db:
             db.execute('DROP TABLE holding_labels')
+            for table in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):
+                db.execute('DROP TABLE IF EXISTS '+table)
             db.execute("UPDATE meta SET value='7' WHERE key='schema'")
             db.execute("UPDATE alembic_version SET version_num='0006_storage'")
         upgraded = Store(path)

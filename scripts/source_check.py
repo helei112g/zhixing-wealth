@@ -18,7 +18,7 @@ STATIC = {'frontend/public/zhixing-logo.png', '.githooks/pre-commit', '.githooks
 SHOWCASE_IMAGES = {f'docs/images/{name}.jpg' for name in (
     'assets-overview', 'asset-trends', 'portfolio-overview', 'holdings', 'investment-notes', 'income')}
 STATIC |= SHOWCASE_IMAGES | {'.github/pull_request_template.md'}
-SKILLS = {'zhixing-assets', 'zhixing-portfolios', 'zhixing-notes'}
+SKILLS = {'zhixing-assets', 'zhixing-portfolios', 'zhixing-notes', 'zhixing-research'}
 STATIC |= {f'.agents/skills/{name}/{part}' for name in SKILLS for part in ('SKILL.md','agents/openai.yaml')}
 FRONTEND = {'package.json','package-lock.json','index.html','tsconfig.json','tsconfig.app.json','tsconfig.node.json','vite.config.ts'}
 

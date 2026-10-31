@@ -8,8 +8,8 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=path.join
  let csrf='',checks=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const check=(value,message)=>{assert.ok(value,message);console.log('PASS',++checks,message);};
  const api=async(url,data,method=data===undefined?'GET':'POST')=>{const r=await page.request.fetch(base+'/api'+url,{method,data,headers:{'x-csrf-token':csrf,origin:base}});const value=await r.json();assert.ok(r.ok(),url+' '+JSON.stringify(value));return value;};
- const nav=async name=>{await page.getByRole('navigation',{name:name==='全局设置'?'全局页面':'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
- const dialog=()=>page.getByRole('dialog'),target=()=>dialog().getByLabel('计划占总预算比例 · %',{exact:true});
+ const nav=async name=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:name==='全局设置'?'全局页面':'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
+ const dialog=()=>page.getByRole('dialog'),target=()=>dialog().getByLabel('计划占总预算比例',{exact:true});
  const waitText=async(text)=>{await dialog().locator('.plan-funding>strong').filter({hasText:text}).waitFor();};
  const row=name=>page.locator('.holding-row').filter({hasText:name});
  try{

@@ -79,6 +79,7 @@ class HoldingAnalysis:
         state = self.store.state()
         _, instrument = self.context(state, portfolio_id, instrument_id)
         return wire(dict(portfolio_id=portfolio_id, instrument_id=instrument_id, revision=state['revision'],
+                         allocation=next(a for a in state['allocations'] if a['portfolio_id']==portfolio_id and a['instrument_id']==instrument_id),
                          labels=resolve_labels(instrument, label_map(state, portfolio_id).get(instrument_id)),
                          options=self.options(state, portfolio_id)))
 

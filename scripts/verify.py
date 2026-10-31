@@ -17,7 +17,7 @@ sys.path.insert(0,str(ROOT))
 from backend.environment import LedgerProcessLock, claim_environment, workspace_for
 from backend.deployment_guard import require_empty
 
-SCENARIOS = ('empty','acceptance','pagination','profit','holdings','holding_analysis','refinements','portfolio_layout','entry','reinvestment','dividend_review','notes','plan_forward','brand','family','settings','interface_refinements')
+SCENARIOS = ('empty','research','acceptance','pagination','profit','holdings','holding_analysis','refinements','portfolio_layout','entry','reinvestment','dividend_review','notes','plan_forward','brand','family','settings','interface_refinements')
 
 
 def run(command, **kwargs):
@@ -51,6 +51,8 @@ def main():
                  'PLAYWRIGHT_MODULE_PATH':str(ROOT/'frontend/node_modules/playwright')}
             command=[sys.executable,str(ROOT/'run.py'),'--environment','test','--data-dir',str(data),
                      '--runtime-dir',str(runtime),'--port',str(args.port),'--no-open','--no-sync']
+            if name == 'research':
+                command=[sys.executable,'-c',"import runpy,sys;from tests.research_fixtures import install_providers;install_providers();sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')",*command[1:]]
             if name == 'empty':
                 config=base/'config.toml'
                 config.write_text(f'environment = "test"\nport = {args.port}\ndata_dir = "browser-test"\nruntime_dir = ".runtime"\nauto_sync = true\n')
@@ -68,6 +70,7 @@ def main():
                         except (urllib.error.URLError,ConnectionError):time.sleep(.1)
                     if not ready:raise RuntimeError('测试服务启动超时')
                     run(['node',f'scripts/browser_{name}.cjs'],env=env)
+                    if name == 'research': run([sys.executable,'scripts/verify_research_ai.py'],env=env)
                     if name == 'empty':
                         (case_output/'empty-install.json').write_text(json.dumps(require_empty(data),indent=2))
                     if name in ('family', 'holding_analysis', 'reinvestment', 'dividend_review', 'refinements'): run([sys.executable,'scripts/verify_ai.py'],env=env)

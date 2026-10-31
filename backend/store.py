@@ -62,6 +62,8 @@ class Store:
         if old_schema is not None and old_schema < SCHEMA and migration_backup:
             self.backup('before-schema-upgrade-' + uuid.uuid4().hex)
         migrate(self.path)
+        from .research.service import validate_structure
+        with self.connection() as db: validate_structure(db)
 
     @contextmanager
     def connection(self):
@@ -285,6 +287,9 @@ class Store:
                             raise DomainError('备份持仓标签的作用域与索引不一致')
                     from .holding_analysis import validate_labels_backup
                     validate_labels_backup(state)
+                if int(version[0]) >= 10:
+                    from .research.service import validate_backup as validate_research_backup
+                    validate_research_backup(db)
                 from .ledger import Ledger
                 for portfolio in state['portfolios']:
                     Ledger(state, portfolio).validate()
@@ -321,6 +326,7 @@ class Store:
                 before = self.backup('before-restore-' + uuid.uuid4().hex)
                 with self.connection() as db:
                     previous_revision = int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0])
+                    previous_public=dict(db.execute('SELECT key,value FROM research_meta'))
                 # Prepare and validate everything before switching the live DB. Immutable files
                 # can be installed first: a failed switch leaves the previous DB fully usable.
                 prepared = sqlite3.connect(temp)
@@ -334,6 +340,12 @@ class Store:
                 finally:
                     prepared.close()
                 migrate(temp)
+                with sqlite3.connect(temp) as public:
+                    public.execute('PRAGMA journal_mode=DELETE')
+                    restored_public=dict(public.execute('SELECT key,value FROM research_meta'))
+                    for key in ('revision','settings_revision'):
+                        value=max(int(previous_public.get(key,0)),int(restored_public.get(key,0)))+1
+                        public.execute('INSERT INTO research_meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,str(value)))
                 for path, content in files.items():
                     self.note_files.install(path, content)
                 with self.connection() as db:

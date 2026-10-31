@@ -9,7 +9,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
  const check=(value,message)=>{assert.ok(value,message);console.log('PASS',++checks,message);};
  const api=async(url,data,method=data===undefined?'GET':'POST')=>{const response=await page.request.fetch(base+'/api'+url,{method,data,headers:{'x-csrf-token':csrf,origin:base}});const body=await response.json();assert.ok(response.ok(),JSON.stringify(body));return body;};
  const command=async(operation,payload)=>{const boot=await api('/bootstrap');return (await api('/family/commands',{operation,payload,expected_revision:boot.revision})).result;};
- const nav=async name=>{await page.getByRole('navigation',{name:'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
+ const nav=async name=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
  const shot=async name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true});
  const ready=()=>page.locator('.transaction-viewport[aria-busy="false"]').waitFor();
  const dialog=()=>page.getByRole('dialog');

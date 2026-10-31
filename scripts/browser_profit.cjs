@@ -9,7 +9,7 @@ fs.mkdirSync(out,{recursive:true});
  let csrf='',checks=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const check=(v,m)=>{assert.ok(v,m);console.log('PASS',++checks,m);};
  const api=async(u,data,method=data===undefined?'GET':'POST')=>{const r=await page.request.fetch(base+'/api'+u,{method,data,headers:{'x-csrf-token':csrf,origin:base}});const value=await r.json();assert.ok(r.ok(),JSON.stringify(value));return value;};
- const nav=async name=>{await page.getByRole('navigation',{name:name==='全局设置'?'全局页面':'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
+ const nav=async name=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:name==='全局设置'?'全局页面':'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
  const money=v=>Number(v).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
  const signed=v=>(Number(v)>0?'+':'')+money(v);
  function quote(iid,value,today){const r=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,sys;from pathlib import Path;from backend.store import Store;from backend.service import Service;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();Service(Store(d)).cache_prices(p['id'],[{'date':'2023-01-02','price':'10'},{'date':p['today'],'price':p['price']}])"],{cwd:root,encoding:'utf8',input:JSON.stringify({directory:path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')),id:iid,price:value,today})});assert.equal(r.status,0,r.stderr);}

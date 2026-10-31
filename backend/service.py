@@ -238,9 +238,16 @@ class Service:
             state = self.store.state(db); portfolio = self.portfolio(state, portfolio_id)
             if not any(i['id'] == instrument_id for i in state['instruments']): raise DomainError('标的不存在')
             old = next((a for a in state['allocations'] if a['portfolio_id'] == portfolio_id and a['instrument_id'] == instrument_id), None)
-            pct = plan_percentage(data.get('target_pct'))
+            if portfolio.get('archived'): raise DomainError('组合已归档，请先恢复后再设置计划')
+            pct = plan_percentage(data.get('target_pct', (old or {}).get('target_pct', '0')))
             funding = plan_funding(self.plan_snapshot(state, portfolio), instrument_id=instrument_id, target_pct=pct)
-            item = {'portfolio_id': portfolio_id, 'instrument_id': instrument_id, 'target_pct': ds(pct), **classification(data)}
+            merged = dict(old or {}, **{k: v for k, v in data.items() if k in ('asset_class', 'region')})
+            item = dict(old or {}, portfolio_id=portfolio_id, instrument_id=instrument_id, target_pct=ds(pct), **classification(merged))
+            if old and 'region' not in data: item['region'] = old.get('region', '未分类')
+            if data.get('holding_labels') is not None:
+                if type(data.get('expected_revision')) is not int: raise DomainError('合并保存须携带读取时的 expected_revision')
+                _, instrument = self.holding_analysis.context(state, portfolio_id, instrument_id)
+                self.holding_analysis.write(db, state, portfolio_id, instrument, data['holding_labels'])
             db.execute('INSERT OR REPLACE INTO allocations VALUES (?,?,?)', (portfolio_id, instrument_id, json_dumps(item)))
             self.store.audit(db, 'allocation', portfolio_id + ':' + instrument_id, old, item, '更新持仓计划及资产类别、地区')
         return wire(dict(item, plan_funding=funding))
@@ -1151,7 +1158,11 @@ class Service:
             preserved=self.store.restore(data, files);self.upgrade_budget_model()
             return {'restored': True, 'preserved_backup': preserved}
 
-    def start_sync(self, instrument_id=None, *, full=False, trigger='manual_update', _triggers=None, _queued=False):
+    def start_sync(self, instrument_id=None, *, full=False, trigger='manual_update', _triggers=None, _queued=False, scopes=None, fx_currencies=None):
+        fx_currencies=set(fx_currencies if fx_currencies is not None else ('HKD','USD'))
+        if not fx_currencies or not fx_currencies.issubset({'HKD','USD'}): raise DomainError('汇率币种无效')
+        scopes=set(scopes if scopes is not None else ('quotes','fx'))
+        if not scopes or not scopes.issubset({'quotes','fx'}): raise DomainError('无效的行情或汇率更新范围')
         causes=set(_triggers or [trigger])
         if not causes or not causes.issubset(TRIGGERS):raise DomainError('无效的更新触发原因')
         if causes.issubset({'startup', 'schedule'}):
@@ -1165,13 +1176,15 @@ class Service:
                 return {'skipped': True, 'reason': 'empty_ledger'}
         with self.job_lock:
             if self.syncing:
-                pending=self.pending_sync.setdefault(instrument_id or '*',{'full':False,'triggers':set()})
+                pending=self.pending_sync.setdefault(instrument_id or '*',{'full':False,'triggers':set(),'scopes':set(),'fx_currencies':set()})
                 pending['full'] |= full
                 pending['triggers'].update(causes)
+                pending['scopes'].update(scopes)
+                pending['fx_currencies'].update(fx_currencies)
                 return {'already_running': True,'queued':True}
             self.syncing = True
         job = {'id': uid(), 'status': 'running', 'started_at': now(), 'items': [], 'message': '正在更新本地缓存',
-               'instrument_id':instrument_id,'full':full,**trigger_metadata(causes,_queued)}
+               'instrument_id':instrument_id,'full':full,'scopes':sorted(scopes),**trigger_metadata(causes,_queued)}
         self.store.save_job(job)
         def work():
             try:
@@ -1180,7 +1193,7 @@ class Service:
                 start = min((p['start_date'] for p in state['portfolios']), default=(today() - timedelta(days=90)).isoformat())
                 start = (day(start) - timedelta(days=14)).isoformat()
                 # Only public symbol/date queries leave the device. No portfolio data is transmitted.
-                for c in ('HKD', 'USD'):
+                for c in (sorted(fx_currencies) if 'fx' in scopes else ()):
                     try:
                         existing = [r['date'] for r in state['fx'] if r['currency'] == c and not r.get('manual')]
                         beginning = start if full or not existing else max(start, (day(max(existing)) - timedelta(days=7)).isoformat())
@@ -1193,7 +1206,7 @@ class Service:
                     except Exception as exc:
                         job['items'].append({'source_kind':'fx','currency':c,'name': c + '/CNY', 'status': 'error', 'message': str(exc)[:500]})
                     self.store.save_job(job)
-                for inst in instruments:
+                for inst in (instruments if 'quotes' in scopes else []):
                     if inst['market'] == 'CUSTOM':
                         job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name':inst['name'],'status':'error','message':'该标的暂无可用同步数据源，请检查代码或稍后重试'})
                         self.store.save_job(job)
@@ -1247,9 +1260,9 @@ class Service:
                 if pending:
                     if '*' in pending:
                         self.start_sync(full=any(r['full'] for r in pending.values()),
-                            _triggers=set().union(*(r['triggers'] for r in pending.values())),_queued=True)
+                            _triggers=set().union(*(r['triggers'] for r in pending.values())),_queued=True,scopes=set().union(*(r['scopes'] for r in pending.values())),fx_currencies=set().union(*(r['fx_currencies'] for r in pending.values())))
                     else:
                         for target,request in sorted(pending.items()):
-                            self.start_sync(target,full=request['full'],_triggers=request['triggers'],_queued=True)
+                            self.start_sync(target,full=request['full'],_triggers=request['triggers'],_queued=True,scopes=request['scopes'],fx_currencies=request['fx_currencies'])
         threading.Thread(target=work, daemon=True, name='portfolio-market-update').start()
         return {'job_id': job['id'], 'status': 'running'}

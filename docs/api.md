@@ -367,3 +367,30 @@ Dashboard full 视图包含 `curve_quality`：`missing_days`、`from/to` 和 `re
 资产类别：权益、债券、大宗商品、其他、未分类；地区：A股、美股、港股、海外其他、未分类。AllocationRequest不再接受tags，流水tag筛选返回422；事件写入拒绝tags。旧CSV的tags列兼容忽略且不入库，导出不含tags列。schema9清除业务行根级旧tags，将混合地区转未分类；独立holding_labels保持不变。
 
 GET /api/notifications返回missing_requests：每项含id、schedule_id、item_id、portfolio_id、name、kind、due_date、at、reason及可选error_domain/error_code；未知系统原因明确标注。POST action支持refresh（重新排程并验证系统队列）、open_settings（打开本机macOS通知设置）、enable/disable/test。原生弹出通知继续隐藏名称与金额；详情只在本机设置页面展示。排程成功不等于用户看见或业务已处理。
+
+## 指数研究与全局数据更新（schema10）
+
+指数不绑定组合。会话、Origin、CSRF、停写保护与现有接口相同；GET不发起采集。细节、来源频率与限制见[研究合同](research.md)。
+
+| 接口 | 合同 |
+|---|---|
+| POST `/api/research/indices/resolve` | `{code}`；返回 profile、resolve_token、research_revision、expires_at。只读身份预览。 |
+| POST `/api/research/indices` | `{resolve_token, expected_research_revision, request_id}`；短期签名绑定精确配对，CAS建档及首次补齐意图同事务持久化；返回 id、basis、job_id、research_revision、existing。原 request_id 重放返回原结果，变更负载409。 |
+| GET `/api/research/indices?kind=宽基&page=1` | 固定每页20；价格摘要、PE/PB 3/5/10年分位和独立高点日期。无搜索、关注及组合关联。 |
+| GET `/api/research/indices/{id}?basis=price&method=overall&window=3` | basis为price/total_return；method为overall/median/arithmetic；窗口3/5/10。返回analysis_id、独立research_revision及四页签投影。当前可得版本；历史asof参数明确拒绝，避免冒充PIT。 |
+| GET `.../{id}/series` | basis、window、可选analysis_id；返回抽样曲线与完整日线计算的高点/最大回撤。 |
+| GET `.../{id}/constituents`、`financials` | page≥1、page_size默认20上限100、analysis_id；分页前先核对输入集合。financials返回当前篮子摘要、历史断点及原始财报字段分页。 |
+| GET `.../{id}/sources` | 各模块snapshot_id、源日期、抓取时间、字段及SHA-256；与指定analysis_id不一致时409。 |
+| POST `.../{id}/scenarios` | `{analysis_id,basis,metric,target_multiple,change_ratio,accept_fixed_basket_assumption:true}`；只读Decimal试算，metric为pe/pb，ratio为比例。仅同日价格序列、整体法、正估值可用；无未来分红假设不开放全收益。 |
+| GET/PUT `/api/settings/data-updates` | GET返回policies及settings_revision；PUT完整六项policies及expected_settings_revision，冲突409。scope、enabled、cadence（daily/trade_day/weekly/manual）、time、timezone=Asia/Shanghai。 |
+| POST `/api/data-updates/run` | `{scopes,request_id,targets?}` 或加精确 `resources`；202仅表示受理。scopes为quotes/fx/index_prices/memberships/valuations/financials。重复request_id不重复执行；不同负载409。 |
+| GET `/api/data-updates/jobs/{job_id}` | 按已受理ID读取持久任务与逐项结果，不依赖最近20条展示列表。 |
+| GET `/api/data-updates/jobs` | 最近20条任务、resources、逐项实际数据日、来源版本、错误及状态。失败项resource可原样重试。 |
+
+精确资源示例：`{"scope":"fx","currency":"HKD"}`、`{"scope":"quotes","instrument_id":"synthetic-id"}`、`{"scope":"index_prices","target":"cni:399006","module":"total_return"}`。memberships包含memberships/historical_memberships，valuations包含valuations/stock_valuations，financials包含financials/historical_financials；重试单模块不扩大为整个scope。旧 `/api/sync` 和 `/api/jobs` 继续兼容。
+
+缺值为null，状态说明历史不足、覆盖不足、非正基数等原因；百分位/回撤均为比例字符串。高点日期按对应完整日历窗口、指定序列的最高收盘**最近一次**出现日计算。
+
+计划PUT允许可选 `holding_labels:{scope,direction,detail}`，与计划同事务、原expected_revision保存。GET labels同时返回当前allocation。省略region/holding_labels分别保留原地区/标签，不把默认值写回；独立labels PUT语义保持不变。
+
+公共更新的行情/汇率资源支持可选布尔`full`（默认false），用于历史补齐；精确重试须保留它。记账、基准与导入后的自动补齐进入同一队列，遵守全局scope开关及仅手动设置。

@@ -74,3 +74,28 @@ def install_providers():
     from backend.research import history
     history.memberships=historical_memberships
     providers.prices=browser_prices
+
+
+# A richer synthetic browser basket verifies top10 boundaries and fixed weight ordering.
+def browser_members(profile,asof=ASOF):
+    weights=[30,20,10,8,6,5,5,4,4,3,3,2]
+    rows=[dict(code='600201' if n==0 else f'{200+n:06d}',name='合成科技' if n==0 else '合成银行' if n==1 else f'合成公司{n+1}',weight=str(w),market='SH' if n==0 else 'SZ',industry='银行' if n==1 else '信息技术',date='2026-09-30') for n,w in enumerate(weights)]
+    return dict(rows=rows,effective_date='2026-09-30',source='synthetic',evidence=[])
+
+_install_small=install_providers
+def install_providers():
+    _install_small();providers.constituents=browser_members
+
+
+_base_finance_payload=finance_payload
+def browser_finance(members,asof=ASOF):
+    value=_base_finance_payload(members,asof)
+    for r in value['rows']:
+        for field in ('revenue','profit','operating_cf'):
+            r[field]=str(int(r[field])*1000000)
+            r[field+'_published_at']=str(int(r['period'][:4])+1)+'-04-30'
+    return value
+
+_install_rich=install_providers
+def install_providers():
+    _install_rich();providers.financials=browser_finance

@@ -15,7 +15,7 @@ from backend.common import ConflictError,DomainError,json_dumps
 from backend.deployment_guard import capture,verify,require_empty
 from backend.migration import migrate
 from backend.research import providers
-from backend.research.metrics import drawdown,valuation,financial_totals,years_before
+from backend.research.metrics import drawdown,valuation,financial_totals,years_before,price_changes,moving_averages
 from backend.research.service import ResearchService,validate_backup
 from backend.research.snapshots import encode,decode,MAX_PAYLOAD
 from backend.service import Service
@@ -76,6 +76,23 @@ class MetricTests(unittest.TestCase):
         rows=[dict(code='a',period='2025-12-31',profit='10'),dict(code='a',period='2024-12-31',profit='-10')]
         r=financial_totals(rows,members,'2025-12-31')['profit']
         self.assertEqual(r['status'],'nonpositive_base');self.assertIsNone(r['growth']);self.assertEqual(r['change'],'20')
+
+    def test_calendar_returns_and_missing_anchors(self):
+        rows=[dict(date='2025-12-31',close='100'),dict(date='2026-10-23',close='110'),dict(date='2026-10-29',close='120'),dict(date='2026-10-30',close='132')]
+        c=price_changes(rows,'2026-10-30')
+        self.assertEqual(c['daily']['ratio'],'0.1');self.assertEqual(c['weekly']['ratio'],'0.2');self.assertEqual(c['ytd']['ratio'],'0.32')
+        self.assertEqual(c['weekly']['from_date'],'2026-10-23')
+        self.assertIsNone(price_changes(rows[1:],'2026-10-30')['ytd'])
+        self.assertIsNone(price_changes(rows,'2026-11-06')['weekly'])
+        self.assertIsNone(price_changes(rows[:1],'2025-12-31')['daily'])
+    def test_moving_average_uses_full_history_and_exact_observation_counts(self):
+        start=date(2023,1,1);rows=[dict(date=str(start+timedelta(days=i)),close=str(i+1)) for i in range(1000)]
+        ma=moving_averages(rows,10)
+        self.assertIsNone(ma[49]['ma51']);self.assertEqual(ma[50]['ma51'],'26')
+        self.assertIsNone(ma[848]['ma850']);self.assertEqual(ma[849]['ma850'],'425.5')
+        self.assertEqual(ma[-1]['ma51'],'975');self.assertEqual(ma[-1]['ma850'],'575.5')
+        clipped=moving_averages(rows,1)
+        self.assertEqual(clipped[0]['ma51'],str(int(clipped[0]['close'])-25))
 
 
 class ResearchTests(unittest.TestCase):
@@ -199,6 +216,33 @@ class ResearchTests(unittest.TestCase):
         with patch.object(providers,'prices',side_effect=TimeoutError('synthetic timeout')):
             self.r.run(dict(scopes=['index_prices'],request_id='fail'));self.r.updates._work()
         self.assertEqual(self.r.jobs()[0]['state'],'partial');self.assertEqual(self.r.module(p['id'],'total_return')['snapshot_id'],old)
+
+    def test_same_revision_cache_does_not_keep_last_week_or_last_year_returns(self):
+        p=self.populate()
+        with patch.object(providers,'cutoff',return_value='2026-10-30'):first=self.r.detail(p['id'])
+        self.assertIsNotNone(first['changes']['weekly']);self.assertIsNotNone(first['changes']['ytd'])
+        with patch.object(providers,'cutoff',return_value='2026-11-06'):later=self.r.detail(p['id'])
+        self.assertIsNone(later['changes']['weekly']);self.assertEqual(first['research_revision'],later['research_revision'])
+        with patch.object(providers,'cutoff',return_value='2027-01-05'):newyear=self.r.detail(p['id'])
+        self.assertIsNone(newyear['changes']['ytd'])
+
+    def test_company_financials_rank_annual_reference_and_scenario_curve(self):
+        p=self.populate();d=self.r.detail(p['id'])
+        self.assertEqual([r['weight_rank'] for r in d['companies']],[1,2])
+        self.assertEqual(d['top10_weight'],'100')
+        self.assertEqual(d['companies'][0]['financials']['2025-12-31']['revenue'],'202500')
+        years=d['financials']['current_years'];self.assertEqual(len(years),10)
+        self.assertEqual(years[0]['period'],'2016-12-31');self.assertEqual(years[-1]['metrics']['revenue']['amount'],'405000')
+        body=dict(analysis_id=d['analysis_id'],metric='pe',target_multiple='10',change_ratio='0',accept_fixed_basket_assumption=True,reference_window=5)
+        r=self.r.scenario(p['id'],body);self.assertEqual(r['point'],d['latest']['close']);self.assertEqual(len(r['curve']),21)
+        self.assertEqual(r['reference_window'],5);self.assertEqual(set(r['reference_points']),{'p10','p25','p50','p75','p90'})
+        self.assertEqual(r['curve'][0]['point'],'60');self.assertEqual(r['curve'][-1]['point'],'180')
+        changed=self.r.scenario(p['id'],dict(body,change_ratio='0.25'))
+        self.assertEqual(changed['point'],'150');self.assertEqual(changed['reference_points'],r['reference_points'])
+        short=valuation_payload(p);short['series']['pe']['overall']['rows']=short['series']['pe']['overall']['rows'][-10:]
+        self.r.publish(p['id'],'valuations',short);latest=self.r.detail(p['id'])
+        limited=self.r.scenario(p['id'],dict(body,analysis_id=latest['analysis_id']))
+        self.assertEqual(limited['reference_points'],{})
 
 
 class CombinedPlanTests(unittest.TestCase):

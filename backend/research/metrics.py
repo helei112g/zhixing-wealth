@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'index-library-1'
+METHOD_VERSION = 'index-library-2'
 WINDOWS = (3, 5, 10)
 
 
@@ -70,7 +70,8 @@ def valuation(series, asof):
         v = dec(current['value']); vals = [dec(r['value']) for r in history if dec(r['value']) > 0]
         rank = (sum(x < v for x in vals) + Decimal('.5') * sum(x == v for x in vals)) / len(vals) if vals else None
         windows[str(years)] = {'status': 'available' if rank is not None else 'insufficient_history',
-                               'rank': ds(rank) if rank is not None else None, 'count': len(vals)}
+                               'rank': ds(rank) if rank is not None else None, 'count': len(vals),
+                               'quantiles': quantiles(vals)}
     return dict(source=series.get('source'), field=series.get('field'), frequency=series.get('frequency'),
                 date=current['date'] if current else None, current=current['value'] if current else None, windows=windows)
 
@@ -97,4 +98,44 @@ def financial_totals(rows, members, period):
         out[metric] = dict(current=a, previous=b, growth=growth, status=status,
                            change=ds(dec(a['amount']) - dec(b['amount'])) if a['amount'] is not None and b['amount'] is not None else None,
                            yoy_basis='independent_period_totals',excluded_count=len(members)-len(eligible),excluded_weight=ds(sum(weights.values())-sum(weights[c] for c in eligible)))
+    return out
+
+
+def quantiles(values):
+    ordered=sorted(values)
+    result={}
+    for q in (10,25,50,75,90):
+        position=Decimal(len(ordered)-1)*q/100
+        lower=int(position);upper=min(lower+1,len(ordered)-1)
+        result['p'+str(q)]=ds(ordered[lower]+(ordered[upper]-ordered[lower])*(position-lower))
+    return result
+
+
+def price_changes(rows,asof):
+    """Calendar week/YTD anchors use the last close strictly before the boundary."""
+    if not rows:return {k:None for k in ('daily','weekly','ytd')}
+    latest=rows[-1];end=day(latest['date']);at=day(asof)
+    monday=at-timedelta(days=at.weekday());year=at.replace(month=1,day=1)
+    def change(base):
+        if not base:return None
+        return dict(ratio=ds(dec(latest['close'])/dec(base['close'])-1),from_date=base['date'],to_date=latest['date'])
+    previous=rows[-2] if len(rows)>1 and (end-day(rows[-2]['date'])).days<=15 else None
+    def anchor(boundary):
+        before=[r for r in rows if day(r['date'])<boundary]
+        return before[-1] if before and (boundary-day(before[-1]['date'])).days<=15 else None
+    return dict(daily=change(previous),weekly=change(anchor(monday)) if end>=monday else None,
+                ytd=change(anchor(year)) if end>=year else None)
+
+
+def moving_averages(rows,window):
+    """SMA over trading observations, computed before the display-window cut."""
+    if not rows:return []
+    starts=years_before(rows[-1]['date'],window);sums={n:Decimal(0) for n in (51,120,250,850)};out=[]
+    for i,row in enumerate(rows):
+        point=dict(row)
+        for n in sums:
+            sums[n]+=dec(row['close'])
+            if i>=n:sums[n]-=dec(rows[i-n]['close'])
+            point['ma'+str(n)]=ds(sums[n]/n) if i+1>=n else None
+        if day(row['date'])>=starts:out.append(point)
     return out

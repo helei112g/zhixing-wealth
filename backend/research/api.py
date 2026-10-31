@@ -44,6 +44,7 @@ class ScenarioRequest(BaseModel):
     target_multiple:str|int|float
     change_ratio:str|int|float='0'
     accept_fixed_basket_assumption:StrictBool
+    reference_window:Literal[3,5,10]=5
 
 
 def router(service):

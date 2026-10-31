@@ -118,7 +118,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
    await page.locator('.family-period-controls').getByRole('button',{name:button,exact:true}).click();summary=await api('/family/summary?'+query);
    await page.waitForFunction(text=>document.querySelector('[data-summary-income] b')?.textContent===text,summary.period.start+' 至 '+summary.period.end+' 已记录收入');check(true,button+' income label follows actual returned dates');
   }
-  for(const width of [390,320]){await page.setViewportSize({width,height:1000});check(await page.locator('[data-summary-debt-ratio] strong').isVisible()&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'dates and debt ratio remain readable at '+width);await shot('asset-overview-'+width);}
+  for(const width of [390,320]){await page.setViewportSize({width,height:1000});await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().right<=0&&document.documentElement.scrollWidth<=innerWidth+1);check(await page.locator('[data-summary-debt-ratio] strong').isVisible()&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'dates and debt ratio remain readable at '+width);await shot('asset-overview-'+width);}
   await command('valuation',{item_id:cash.id,effective_on:boot.today,household_amount:'0'});await page.reload();await page.locator('[data-summary-debt-ratio] strong').getByText('暂无法计算',{exact:true}).waitFor();check(true,'zero assets display unavailable ratio instead of zero percent');
   check(errors.length===0,'no browser runtime errors');fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({checks,errors},null,2));
  }catch(error){await shot('failure').catch(()=>{});throw error;}finally{await browser.close();}

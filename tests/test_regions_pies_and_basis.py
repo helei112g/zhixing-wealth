@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import date
 from decimal import Decimal as D
 from unittest.mock import patch
-from backend.common import DomainError,REGIONS,tags
+from backend.common import DomainError,REGIONS,classification
 from backend.service import Service
 from backend.store import Store
 
@@ -17,7 +17,7 @@ class RegionsPiesAndBasisTests(unittest.TestCase):
     def price(self,e,value='11'):
         self.s.cache_prices(e['instrument_id'],[{'date':'2023-01-01','price':'10'},{'date':'2024-01-01','price':value}])
     def plan(self,e,**kw):
-        return self.s.attach_instrument(self.p['id'],e['instrument_id'],{'asset_class':'权益','region':'A股','tags':[],**kw})
+        return self.s.attach_instrument(self.p['id'],e['instrument_id'],{'asset_class':'权益','region':'A股',**kw})
     def test_idle_budget_change_does_not_change_investment_xirr_or_flows(self):
         e=self.buy(transaction_costs='10');self.price(e)
         before=self.s.dashboard(self.p['id'],end='2024-01-01')['capital_summary']
@@ -38,10 +38,12 @@ class RegionsPiesAndBasisTests(unittest.TestCase):
             self.assertEqual(sorted(D(f['amount']) for f in summary['cash_flows']),[D(-1000),D(1100)])
         self.assertEqual(rates[0],rates[1]);self.assertAlmostEqual(float(rates[0]),.1,places=10)
     def test_all_new_regions_accepted_and_legacy_values_canonicalized(self):
-        self.assertEqual(REGIONS,('A股','美股','港股','海外其他','混合','未分类'))
-        for region in REGIONS:self.assertEqual(tags({'region':region})['region'],region)
-        self.assertEqual(tags({'region':'国内'})['region'],'A股');self.assertEqual(tags({'region':'海外'})['region'],'海外其他')
-        with self.assertRaises(DomainError):tags({'region':'不存在地区'})
+        self.assertEqual(REGIONS,('A股','美股','港股','海外其他','未分类'))
+        for region in REGIONS:self.assertEqual(classification({'region':region})['region'],region)
+        self.assertEqual(classification({'region':'国内'})['region'],'A股');self.assertEqual(classification({'region':'海外'})['region'],'海外其他')
+        with self.assertRaises(DomainError):classification({'region':'不存在地区'})
+        with self.assertRaises(DomainError):classification({'region':'混合'})
+        self.assertEqual(classification({'asset_class':'大宗商品'})['asset_class'],'大宗商品')
     def test_legacy_region_read_compatibility_does_not_modify_storage_or_guess_market(self):
         e=self.buy();allocation=self.plan(e,region='港股');allocation['region']='海外'
         with self.store.connection() as db:
@@ -62,7 +64,7 @@ class RegionsPiesAndBasisTests(unittest.TestCase):
         self.assertTrue(changed['errors']);self.assertEqual(self.store.state()['events'],before)
     def test_legacy_analysis_is_retired_and_new_tree_counts_each_holding_once(self):
         e=self.buy();f=self.buy('515080');self.price(e,'10');self.price(f,'10')
-        self.plan(e,tags=['成长','消费']);self.plan(f,tags=[])
+        self.plan(e);self.plan(f)
         self.assertFalse(hasattr(self.s,'tag_report'))
         r=self.s.holding_analysis.report(self.p['id'],'assets')
         self.assertTrue(r['eligible'])

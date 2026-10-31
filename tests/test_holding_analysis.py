@@ -64,7 +64,7 @@ class HoldingAnalysisTests(unittest.TestCase):
 
     def test_labels_do_not_change_plans_events_prices_or_financial_values(self):
         e = self.buy()
-        self.s.attach_instrument(self.p['id'], e['instrument_id'], dict(target_pct='20', tags=['历史属性']))
+        self.s.attach_instrument(self.p['id'], e['instrument_id'], dict(target_pct='20', asset_class='权益'))
         before = self.store.state(); finance = self.s.dashboard(self.p['id'], view='summary')
         self.put(e, scope='大宗商品', direction='贵金属', detail='黄金')
         after = self.store.state(); updated = self.s.dashboard(self.p['id'], view='summary')

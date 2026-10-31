@@ -112,10 +112,10 @@ class EventRequest(WriteRequest):
 
 
 class AllocationRequest(WriteRequest):
+    model_config = ConfigDict(extra='forbid')
     target_pct: Amount = Field('0', description='单标的计划占总预算百分数，0至100；组合计划资金缺口仅提醒，允许保存')
-    asset_class: str = '未分类'
-    region: str = Field('未分类', description='A股、美股、港股、海外其他、混合、未分类')
-    tags: list[str] | str = Field(default_factory=list, description='推荐字符串数组；兼容旧界面的逗号分隔文本')
+    asset_class: Literal['权益', '债券', '大宗商品', '其他', '未分类'] = '未分类'
+    region: str = Field('未分类', description='A股、美股、港股、海外其他、未分类；兼容旧国内/海外别名，拒绝混合')
 
 
 class HoldingLabelRequest(BaseModel):
@@ -370,7 +370,6 @@ class AllocationResult(BaseModel):
     target_pct: str
     asset_class: str
     region: str
-    tags: list[str]
     plan_funding: PlanFunding
 
 

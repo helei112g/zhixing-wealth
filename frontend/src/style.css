@@ -129,3 +129,9 @@
 .overview-summary .summary-facts{grid-template-columns:repeat(5,minmax(0,1fr))}.overview-summary .summary-facts>div{min-width:0}.overview-summary .summary-facts small{display:block;line-height:1.7;margin-top:6px}.profit-equation>.equation-dividend-total{flex-basis:100%;line-height:1.6}.profit-equation.compact>.equation-dividend-total{margin-top:7px}
 @media(max-width:1150px){.overview-summary .summary-facts{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:650px){.overview-summary .summary-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-summary .summary-facts dt{min-height:3em}}
+
+/* Shared captions sit beside the page title across every navigation section. */
+.page-heading-meta .page-caption{color:#9299a3;font-size:12px;font-weight:400;line-height:1.7}
+.profit-equation.compact,.profit-equation.compact small,.profit-equation.compact b,.profit-equation.compact .equation-symbol{color:#9299a3;font-size:11px;font-weight:400}
+.holdings-table{min-width:1320px}.holding-dividends{margin-top:6px;color:var(--muted)}.holding-actions .text-button{white-space:nowrap}
+@media(max-width:650px){.page-heading-meta .page-caption{font-size:11px}.profit-equation.compact b{font-size:11px}}

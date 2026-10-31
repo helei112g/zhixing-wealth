@@ -17,7 +17,7 @@ class FamilyCommand(BaseModel):
 
 class NotificationCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    action: Literal['enable', 'disable', 'refresh', 'test']
+    action: Literal['enable', 'disable', 'refresh', 'test', 'open_settings']
 
 
 def family_router(store, environment):

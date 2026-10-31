@@ -186,7 +186,7 @@ class FamilyService:
             return obj
         reason = text(data.get('reason'), '修订说明', 300) or '资产资料更新'
         if operation == 'item':
-            check_fields(data, 'name category currency share economic_id platform member effective_on closed_on review_days coverage_type coverage_amount insured beneficiary policy_number policy_end source amount household_amount restricted household_restricted interest fees reason liability_asset_id started_on due_on payment_plan')
+            check_fields(data, 'name category currency share economic_id platform member effective_on closed_on review_days coverage_type coverage_amount insured beneficiary policy_number policy_end policy_lifetime source amount household_amount restricted household_restricted interest fees reason liability_asset_id started_on due_on payment_plan')
             category = data.get('category')
             if category not in CATEGORIES:
                 raise DomainError('资产类别无效')
@@ -222,6 +222,12 @@ class FamilyService:
             if category != 'insurance':
                 meta['member'] = ''
             meta['coverage_amount'] = money(data.get('coverage_amount'), '保障额度', True)
+            lifetime = data.get('policy_lifetime', False)
+            if not isinstance(lifetime, bool):
+                raise DomainError('终身保障须为布尔值')
+            if lifetime and (category != 'insurance' or data.get('policy_end')):
+                raise DomainError('终身保障仅适用于保险，且不能同时填写到期日')
+            meta['policy_lifetime'] = lifetime
             meta['policy_end'] = str(day(data['policy_end'])) if data.get('policy_end') else None
             meta['started_on'] = past(data['started_on'], '借款或借出日期') if data.get('started_on') else None
             meta['due_on'] = str(day(data['due_on'])) if data.get('due_on') else None
@@ -488,6 +494,9 @@ def validate_family_backup(db):
             if v['category'] not in CATEGORIES:
                 raise DomainError('资产分类无效')
             currency(v['currency']); fraction(v['share']); day(v['effective_on'])
+            lifetime = v.get('policy_lifetime', False)
+            if not isinstance(lifetime, bool) or lifetime and (v['category'] != 'insurance' or v.get('policy_end')):
+                raise DomainError('备份保险保障期限无效')
             if 'payment_plan' in v:
                 from .family_plans import payment_plan
                 plan = v['payment_plan']

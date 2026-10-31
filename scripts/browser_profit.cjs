@@ -58,7 +58,7 @@ fs.mkdirSync(out,{recursive:true});
   check(await page.locator('.instrument-return-grid>div').count()===4,'detail groups market value profit return rate and XIRR together');
   const perf=dash.holdings[0].performance,b=perf.profit_breakdown;
   check(await page.locator('.instrument-profit>strong').innerText()===signed(perf.profit),'detail prominently shows total profit');
-  const formula=await page.locator('.instrument-profit-breakdown').innerText();check([signed(b.total),signed(b.price_net),signed(b.dividends_net)].every(s=>formula.includes(s)),'detail equation includes actual component numbers');
+  const formula=await page.locator('.instrument-profit').innerText();check([signed(b.total),signed(b.price_net),signed(b.dividends_net)].every(s=>formula.includes(s)),'detail equation includes actual component numbers');
   check((await page.locator('.instrument-summary-facts').innerText()).includes('累计买入成本')&&(await page.locator('.instrument-summary-facts').innerText()).includes('净投入'),'cost and cash recovery remain distinct');
   check(await page.locator('.price-profit-details').getAttribute('open')!==null,'price arithmetic is visible by default');
   await page.locator('.transaction-table').waitFor();check(JSON.stringify(await page.locator('.transaction-table th').allTextContents())===JSON.stringify(headers),'shared tables retain identical headers');

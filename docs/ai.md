@@ -76,4 +76,4 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 
 ### 持仓标签与当前分布
 
-通过capabilities.holding_analysis发现接口。用客户端holding_labels(P,I)读取当前归属和revision，展示scope/direction/detail差异后按原revision PUT labels；409或超时先回读核对，不自动覆盖。无独立标签预览接口，不声称服务端预览已完成。holding_distribution(P,basis)读取完整树与同一后端分母，不能只统计已打标签持仓或自行重复相加父子节点。股票可自动识别市场，基金不按上市地或币种猜投资敞口。旧/api/tags统计已退役；历史交易标签和筛选仍保留。总资产value为null时可说明known_value是已知资产合计，不能冒充完整总额。
+通过capabilities.holding_analysis发现接口。用客户端holding_labels(P,I)读取当前归属和revision，展示scope/direction/detail差异后按原revision PUT labels；409或超时先回读核对，不自动覆盖。无独立标签预览接口，不声称服务端预览已完成。holding_distribution(P,basis)读取完整树与同一后端分母，不能只统计已打标签持仓或自行重复相加父子节点。股票可自动识别市场，基金不按上市地或币种猜投资敞口。旧/api/tags统计已退役；旧风格/主题tags已清除，保留资产类别和地区筛选；计划写入不传tags，地区不再接受混合。总资产value为null时可说明known_value是已知资产合计，不能冒充完整总额。

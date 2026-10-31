@@ -20,30 +20,30 @@ class PaginationTests(unittest.TestCase):
             e=self.s.save_event({'portfolio_id':self.p['id'],'kind':'BUY','date':'2024-01-02','instrument':{'market':'CN','code':'510300' if n%2==0 else '159915'},'quantity':'1','gross_amount':str(100+n),'fx_rate':'1'})
             self.ids.append(e['id'])
         self.events=self.s.store.state()['events'];self.iids=sorted({e['instrument_id'] for e in self.events})
-        self.s.attach_instrument(self.p['id'],self.events[0]['instrument_id'],{'tags':['收益 & 增长'],'region':'国内','asset_class':'权益'})
-        self.s.attach_instrument(self.p['id'],self.events[1]['instrument_id'],{'tags':['科技'],'region':'A股','asset_class':'权益'})
+        self.s.attach_instrument(self.p['id'],self.events[0]['instrument_id'],{'region':'港股','asset_class':'权益'})
+        self.s.attach_instrument(self.p['id'],self.events[1]['instrument_id'],{'region':'A股','asset_class':'权益'})
     def tearDown(self):self.tmp.cleanup()
     def test_pages_do_not_duplicate_and_sort_stably(self):
         pages=[self.s.transaction_page(self.p['id'],page=n) for n in range(1,4)]
         self.assertEqual([len(r['items']) for r in pages],[20,20,5]);self.assertEqual(pages[0]['total'],45)
         ids=[r['event']['id'] for p in pages for r in p['items']]
         self.assertEqual(ids,list(reversed(self.ids)));self.assertEqual(len(set(ids)),45)
-    def test_tag_filter_is_applied_before_pagination_and_combines_with_other_filters(self):
-        opts=dict(tag='收益 & 增长',market='CN',region='A股',asset_class='权益',page_size=7)
+    def test_classification_filter_is_applied_before_pagination_and_combines_with_other_filters(self):
+        opts=dict(market='CN',region='港股',asset_class='权益',page_size=7)
         pages=[self.s.transaction_page(self.p['id'],page=n,**opts) for n in range(1,5)]
         self.assertEqual([len(r['items']) for r in pages],[7,7,7,2]);self.assertEqual(pages[0]['total'],23)
-        self.assertTrue(all(r['filters']['tag']==opts['tag'] for r in pages))
+        self.assertTrue(all(r['filters']['region']==opts['region'] for r in pages))
         self.assertEqual(len({r['event']['id'] for p in pages for r in p['items']}),23)
         self.assertIn(self.ids[0],[r['event']['id'] for p in pages for r in p['items']])
-    def test_current_plan_labels_not_historical_event_labels(self):
+    def test_current_classification_not_historical_event_classification(self):
         iid=self.events[0]['instrument_id'];before=self.s.store.state()['events']
-        self.s.attach_instrument(self.p['id'],iid,{'tags':['新标签'],'region':'港股'})
-        self.assertEqual(self.s.transaction_page(self.p['id'],tag='收益 & 增长')['total'],0)
-        self.assertEqual(self.s.transaction_page(self.p['id'],tag='新标签',region='港股')['total'],23)
+        self.s.attach_instrument(self.p['id'],iid,{'region':'美股'})
+        self.assertEqual(self.s.transaction_page(self.p['id'],region='港股')['total'],0)
+        self.assertEqual(self.s.transaction_page(self.p['id'],region='美股')['total'],23)
         self.assertEqual(before,self.s.store.state()['events'])
     def test_instrument_and_portfolio_isolation(self):
         p2=self.s.save_portfolio({'name':'另一个','planned_amount':'1000','start_date':'2024-01-01'})
-        self.assertEqual(self.s.transaction_page(p2['id'],tag='科技')['total'],0)
+        self.assertEqual(self.s.transaction_page(p2['id'],asset_class='权益')['total'],0)
         with self.assertRaises(DomainError):self.s.transaction_page(p2['id'],self.iids[0])
         one=self.s.transaction_page(self.p['id'],self.events[0]['instrument_id'],page_size=100)
         self.assertEqual(one['total'],23);self.assertTrue(all(r['event']['instrument_id']==self.events[0]['instrument_id'] for r in one['items']))
@@ -51,7 +51,7 @@ class PaginationTests(unittest.TestCase):
         self.s.delete_event(self.ids[-1],'合成取消')
         end=self.s.transaction_page(self.p['id'],page=100)
         self.assertEqual((end['page'],end['total'],len(end['items'])),(3,44,4))
-        none=self.s.transaction_page(self.p['id'],tag='不存在',page=30)
+        none=self.s.transaction_page(self.p['id'],region='海外其他',page=30)
         self.assertEqual((none['page'],none['page_count'],none['items']),(1,1,[]))
     def test_invalid_queries_rejected(self):
         for kw in ({'page':0},{'page_size':101},{'market':'bad'},{'page_size':0}):
@@ -99,10 +99,19 @@ class ApiCollaborationTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/bootstrap',headers={'host':'example.invalid'}).status_code,400)
         self.assertEqual(self.client.get('/api/portfolios/'+self.p['id']+'/transactions?page_size=101&page=1').status_code,422)
 
-    def test_legacy_ui_plan_tag_text_and_readable_validation_errors(self):
+    def test_retired_tags_rejected_and_classification_errors_are_readable(self):
         event=self.client.post('/api/events',json=self.payload,headers=self.headers).json()
         response=self.client.put('/api/portfolios/'+self.p['id']+'/instruments/'+event['instrument_id'],headers=self.headers,json={'tags':'红利,成长','region':'A股'})
-        self.assertEqual(response.status_code,200,response.text);self.assertEqual(response.json()['tags'],['红利','成长'])
+        self.assertEqual(response.status_code,422,response.text)
+        endpoint='/api/portfolios/'+self.p['id']+'/instruments/'+event['instrument_id']
+        saved=self.client.put(endpoint,headers=self.headers,json={'asset_class':'大宗商品','region':'A股'})
+        self.assertEqual(saved.status_code,200,saved.text);self.assertEqual(saved.json()['asset_class'],'大宗商品')
+        self.assertNotIn('tags',saved.json())
+        alias=self.client.put(endpoint,headers=self.headers,json={'asset_class':'权益','region':'国内'})
+        self.assertEqual(alias.status_code,200,alias.text);self.assertEqual(alias.json()['region'],'A股')
+        mixed=self.client.put(endpoint,headers=self.headers,json={'region':'混合'})
+        self.assertEqual(mixed.status_code,422,mixed.text)
+        self.assertEqual(self.client.get('/api/portfolios/'+self.p['id']+'/transactions?page=1&tag=old').status_code,422)
         invalid=self.client.post('/api/events',headers=self.headers,json={'kind':'BUY'})
         self.assertEqual(invalid.status_code,422);self.assertIsInstance(invalid.json()['error'],str)
     def test_source_export_and_client_restrictions(self):

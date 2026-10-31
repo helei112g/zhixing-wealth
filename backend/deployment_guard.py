@@ -30,7 +30,8 @@ def capture(directory, baseline=None):
         db.execute('PRAGMA query_only=ON'); db.execute('BEGIN')
         integrity = db.execute('PRAGMA quick_check').fetchone()[0]
         names = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        tables, counts = {}, {}
+        tables, counts, cleanup = {}, {}, {}
+        schema = int(db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0])
         for name in names:
             count = db.execute('SELECT COUNT(*) FROM '+quoted(name)).fetchone()[0]
             counts[name] = count
@@ -44,6 +45,14 @@ def capture(directory, baseline=None):
             rows = db.execute('SELECT '+','.join(map(quoted, expected))+' FROM '+quoted(name)).fetchall()
             serialized = sorted(json.dumps(tuple(r), ensure_ascii=False, separators=(',', ':')) for r in rows)
             tables[name] = {'columns': expected, 'count': count, 'sha256': digest(serialized)}
+            if schema < 9 and name in ('instruments', 'allocations', 'events', 'reservations') and 'data' in expected:
+                from .legacy_labels import clean_data
+                index = expected.index('data')
+                normalized = []
+                for row in rows:
+                    values = list(row); values[index] = clean_data(values[index])
+                    normalized.append(json.dumps(values, ensure_ascii=False, separators=(',', ':')))
+                cleanup[name] = dict(tables[name], sha256=digest(sorted(normalized)))
         metadata = dict(db.execute('SELECT key,value FROM meta'))
         schema = int(metadata.pop('schema'))
         # Schema and Alembic history may advance. Revision, app identity and all
@@ -53,13 +62,17 @@ def capture(directory, baseline=None):
                        for name in sorted(references(db))}
         return {'schema': schema, 'integrity': integrity, 'tables': tables, 'counts': counts,
                 'metadata_sha256': digest(metadata), 'notes_sha256': digest(note_hashes),
-                'note_versions': len(note_hashes)}
+                'note_versions': len(note_hashes), 'schema9_cleanup_tables': cleanup}
     finally:
         db.close()
 
 
 def verify(before, after):
-    changed = [name for name, value in before['tables'].items() if after['tables'].get(name) != value]
+    # A schema9 transition permits exactly the confirmed cleanup hashes. Every
+    # other column, financial field, row, note and audit entry is checked as before.
+    permitted = before.get('schema9_cleanup_tables', {}) if before['schema'] < 9 and after['schema'] == 9 else {}
+    changed = [name for name, value in before['tables'].items()
+               if after['tables'].get(name) != permitted.get(name, value)]
     changed += [name for name, value in after['tables'].items() if name not in before['tables'] and value['count']]
     changed += [key for key in ('metadata_sha256', 'notes_sha256', 'note_versions') if before[key] != after[key]]
     if before['integrity'] != 'ok' or after['integrity'] != 'ok': changed.append('integrity')

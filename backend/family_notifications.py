@@ -41,6 +41,27 @@ def notification_plan(rows, current=None):
     return sorted(plan, key=lambda r: (r['at'], r['id']))
 
 
+def missing_details(desired, rows, result, current):
+    accepted = set(result.get('pending_ids', [])) | set(result.get('delivered_ids', []))
+    sources = {r['id']: r for r in rows}
+    failures = {r['id']: r for r in result.get('request_errors', [])}
+    details = []
+    for request in desired:
+        if request['id'] in accepted or datetime.fromisoformat(request['at']) <= current:
+            continue
+        row = sources.get(request['schedule_id'], {})
+        failure = failures.get(request['id'], {})
+        reason = failure.get('message') or '系统未在待发或已送达队列中返回此提醒，未提供具体原因。'
+        if result.get('authorization') != 'authorized':
+            reason = 'macOS 通知未授权，请打开系统通知设置并允许知行财富通知。'
+        details.append(dict(id=request['id'], schedule_id=request['schedule_id'],
+                            item_id=row.get('item_id'), portfolio_id=row.get('portfolio_id'),
+                            name=row.get('name') or '分红待核对', kind=row.get('kind'),
+                            due_date=row.get('due_date'), at=request['at'], reason=reason,
+                            error_domain=failure.get('domain'), error_code=failure.get('code')))
+    return details
+
+
 class FamilyNotifications:
     def __init__(self, store, family, environment):
         self.store, self.family, self.environment = store, family, environment
@@ -148,15 +169,15 @@ class FamilyNotifications:
                     self._save(self.result_path, result)
                     return self.status()
                 accepted = set(result.get('pending_ids', [])) | set(result.get('delivered_ids', []))
-                missing = [r for r in desired if r['id'] not in accepted and datetime.fromisoformat(r['at']) > datetime.now(TZ)]
+                missing = missing_details(desired, rows, result, datetime.now(TZ))
                 covered = [r['at'] for r in desired if r['id'] in accepted]
-                result.update(checked_at=now(), desired_count=len(desired), missing_count=len(missing),
+                result.update(checked_at=now(), desired_count=len(desired), missing_count=len(missing), missing_requests=missing,
                               coverage_until=max(covered) if covered else None, fingerprint=fingerprint,
                               # Failed / denied submissions must be retried after permission
                               # recovery, even after their proposed fire date has passed.
                               dividend_dispatches={k:v for k,v in dispatched.items()
                                                    if k in accepted or k in old.get('dividend_dispatches', {})},
-                              error=('部分计划未在系统待发队列中，请重试或缩短计划范围' if missing else None))
+                              error=(f'{len(missing)} 条提醒未成功排入系统通知队列，请查看下方事项并重试排程' if missing else None))
                 if result.get('authorization') != 'authorized':
                     result['error'] = 'macOS 通知未授权；请在系统设置中允许知行财富通知'
                 elif result.get('alerts') == 1:
@@ -170,6 +191,13 @@ class FamilyNotifications:
 
     def action(self, action):
         with self.lock:
+            if action == 'open_settings':
+                if platform.system() != 'Darwin': raise DomainError('系统通知当前仅支持 macOS')
+                try:
+                    subprocess.run(['/usr/bin/open', 'x-apple.systempreferences:com.apple.Notifications-Settings.extension'], check=True, timeout=10, capture_output=True)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    raise DomainError('无法打开系统通知设置，请在 macOS 系统设置中选择“通知”') from exc
+                return dict(self.status(), settings_opened=True)
             if action == 'enable':
                 self._build()
                 self.prepared = True

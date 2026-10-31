@@ -183,7 +183,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},
                 'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system']},
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,
-                               'filters': ['instrument_id', 'market', 'tag', 'asset_class', 'region'],
+                               'filters': ['instrument_id', 'market', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},
                 'dashboard': {'endpoint': '/api/portfolios/{portfolio_id}/dashboard', 'default_view': 'full',
                               'views': {'full': 'summary plus historical curves, calendar and periods',
@@ -352,14 +352,16 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
              summary='读取本组合流水；显式page返回筛选分页对象，无参兼容全量数组')
     def transactions(request: Request, portfolio_id: str, instrument_id: str | None = None,
                      page: int | None = Query(None, ge=1), page_size: int = Query(20, ge=1, le=100),
-                     market: str = 'ALL', tag: str = '', asset_class: str = '', region: str = ''):
+                     market: str = 'ALL', asset_class: str = '', region: str = ''):
+        if 'tag' in request.query_params:
+            raise DomainError('旧主题标签筛选已移除，请使用资产类别或地区筛选')
         if 'scope' in request.query_params:
             raise DomainError('交易复盘筛选已移除，请删除 scope 参数')
         # Unparameterized legacy reads remain compatible. All new clients use the paginated envelope.
-        if page is None and (market, tag, asset_class, region) == ('ALL', '', '', ''):
+        if page is None and (market, asset_class, region) == ('ALL', '', ''):
             return reply(service.transaction_rows(portfolio_id, instrument_id))
         return reply(service.transaction_page(portfolio_id, instrument_id, page=page or 1, page_size=page_size,
-                     market=market, tag=tag, asset_class=asset_class, region=region))
+                     market=market, asset_class=asset_class, region=region))
 
     @app.get('/api/portfolios/{portfolio_id}/transactions/{event_id}', response_model=TransactionDetail, response_model_exclude_unset=True, summary='本组合流水详情、真实收益、同标的买卖导航和修订记录')
     def transaction_detail(portfolio_id: str, event_id: str):

@@ -92,7 +92,7 @@ class LedgerTests(unittest.TestCase):
     def test_reinvestment_no_external_principal(self):
         self.cash();self.buy(1000,10);self.price(10)
         self.event('REINVEST','2024-01-02',instrument_id=self.i['id'],gross_amount='200',net_amount='200',
-            pay_date='2024-01-02',reinvest_quantity='20',reinvest_price='10',tags=['红利'],asset_class='权益',region='国内')
+            pay_date='2024-01-02',reinvest_quantity='20',reinvest_price='10',asset_class='权益',region='国内')
         self.price('9.8','2024-01-02');r=self.snap()
         self.assertEqual(D(r['capital']),10000);self.assertEqual(D(self.holding(r)['quantity']),1020)
         self.assertEqual(D(self.holding(r)['net_invested_base']),10000)
@@ -132,17 +132,17 @@ class LedgerTests(unittest.TestCase):
         m=Market(self.store.state());self.assertEqual(dec_rate(m,'2024-01-01'),D('.9'))
         self.assertEqual(dec_rate(m,'2024-01-02'),D('.92'));self.assertEqual(dec_rate(m,'2024-01-03'),D('.9'))
 
-    def test_fifo_tag_quantity_independent_of_average_cost(self):
-        self.cash(40000);self.buy(100,100,tags=['红利']);self.buy(100,200,tags=['成长','消费'])
+    def test_fifo_classification_quantity_independent_of_average_cost(self):
+        self.cash(40000);self.buy(100,100,asset_class='权益');self.buy(100,200,asset_class='债券')
         self.event('SELL','2024-01-02',instrument_id=self.i['id'],quantity='50',price='100');self.price(100,'2024-01-02')
         r=self.snap();h=self.holding(r)
         self.assertEqual(D(h['cost_native']),22500)  # moving average cost
         self.assertEqual([D(l['quantity']) for l in h['lots']],[D(50),D(100)])
         values={}
         for lot in h['lots']:
-            for label in lot['tags']:
-                values[label]=values.get(label,D(0))+D(lot['value_base'])
-        self.assertEqual(values,{'红利':D(5000),'成长':D(10000),'消费':D(10000)})
+            label=lot['asset_class']
+            values[label]=values.get(label,D(0))+D(lot['value_base'])
+        self.assertEqual(values,{'权益':D(5000),'债券':D(10000)})
 
     def test_same_security_separate_portfolio_records(self):
         q=self.s.save_portfolio({'funding_mode':'cash','name':'另一个','planned_amount':'10000','start_date':'2024-01-01'})
@@ -187,8 +187,8 @@ class LedgerTests(unittest.TestCase):
         self.price(110,'2024-01-02');r=self.snap();self.assertEqual(D(r['pnl']),1000)
         self.assertIsNone(self.holding(r)['net_invested_base'])
 
-    def test_split_preserves_assets_cost_and_tags(self):
-        self.cash();self.buy(tags=['红利']);self.price(100)
+    def test_split_preserves_assets_cost_and_classification(self):
+        self.cash();self.buy(asset_class='权益');self.price(100)
         self.event('SPLIT','2024-01-02',instrument_id=self.i['id'],factor='2');self.price(50,'2024-01-02')
         r=self.snap();self.assertEqual(D(r['pnl']),0);self.assertEqual(D(self.holding(r)['quantity']),200)
         self.assertEqual(D(self.holding(r)['cost_native']),10000)
@@ -296,9 +296,9 @@ class LedgerTests(unittest.TestCase):
         with self.assertRaises(DomainError):self.s.delete_event(e['id'],'测试取消')
         self.assertEqual(len(self.store.state()['events']),2)
 
-    def test_default_tag_changes_do_not_reclassify_history(self):
-        self.cash();self.buy(tags=['红利']);self.s.attach_instrument(self.p['id'],self.i['id'],{'target_pct':'50','tags':['成长']})
-        self.assertEqual(self.store.state()['events'][-1]['tags'],['红利'])
+    def test_default_classification_changes_do_not_reclassify_history(self):
+        self.cash();self.buy(asset_class='权益');self.s.attach_instrument(self.p['id'],self.i['id'],{'target_pct':'50','asset_class':'债券'})
+        self.assertEqual(self.store.state()['events'][-1]['asset_class'],'权益')
 
     def test_calendar_month_end(self):
         self.assertEqual(month_after(date(2024,1,31),1),date(2024,2,29))

@@ -30,6 +30,7 @@ PAYLOADS = {
         'coverage_type': dict(type='string', description='仅保险：险种'),
         'coverage_amount': MONEY,
         'policy_end': dict(type=['string', 'null'], format='date'),
+        'policy_lifetime': dict(type='boolean', description='终身保障；仅保险使用，为true时policy_end必须留空，不影响保费计划'),
         'payment_plan': PLAN, 'reason': REASON,
     }, ['category', 'currency', 'name', 'effective_on', 'household_amount']),
     'valuation': obj({

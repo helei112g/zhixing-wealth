@@ -137,7 +137,7 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(capture(self.data),before)
         Store(self.data,migration_backup=False)
         after=capture(self.data,before)
-        self.assertEqual(after['schema'],8)
+        self.assertEqual(after['schema'],SCHEMA)
         self.assertEqual(after['counts']['holding_labels'],0)
         self.assertEqual(after['metadata_sha256'],before['metadata_sha256'])
         self.assertEqual(after['note_versions'],2)

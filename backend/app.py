@@ -18,7 +18,7 @@ from .common import ConflictError, DomainError, now, today, wire
 from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
-from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview
+from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -157,7 +157,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         return {'api_version': VERSION, 'openapi': '/api/openapi.json', 'guide': '/api/guide',
                 'authentication': {'bootstrap': '/api/bootstrap', 'cookie': session_cookie, 'header': 'X-CSRF-Token'},
                 'concurrency': {'field': 'expected_revision', 'conflict_status': 409,
-                                'operations': ['portfolios', 'allocations', 'events', 'investment_notes', 'dividend_confirm', 'family']},
+                                'operations': ['portfolios', 'allocations', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
                 'family': {'label': '资产分析', 'read': '/api/family/overview',
                            'catalog': '/api/family/catalog', 'command_schema': '/api/family/command-schema',
                            'recommended_operations': ['item','valuation','links','unlink','income'],
@@ -205,6 +205,16 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'reinvestment_estimate': {'endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/reinvestment-estimate',
                                          'query': ['date', 'gross_amount'], 'market': 'FUND', 'exact_date': True,
                                          'quantity_decimals': 2, 'rounding': 'ROUND_HALF_UP', 'read_only': True},
+                'dividend_review': {'read': '/api/portfolios/{portfolio_id}/dividends',
+                                    'write': '/api/dividends/{notice_id}/review', 'method': 'POST', 'mode': 'keep_recorded',
+                                    'expected_revision_required': True, 'event_write': False,
+                                    'receipt_binding': 'scoped decision.event_id; date corrections review the original event',
+                                    'basis_lifetime': 'last explicit notice confirm/review; receipt edits never revert it',
+                                    'unknown_entitlement': 'a known quantity becoming null requires review',
+                                    'audit': '/api/revisions/dividend_decision/{decision_id}',
+                                    'yahoo_reference_tolerance': {'relative': '0.0001', 'per_share_absolute': '0.0001',
+                                                                 'both_required': True, 'anchor': 'last reviewed basis'},
+                                    'entitlement_tolerance': 'none; quantity, dates, currency and split factors compare exactly'},
                 'storage': {'schema': SCHEMA, 'prices': 'skip identical latest automatic quote; preserve changed versions',
                             'jobs_visible': 5, 'jobs_total_retained': 20, 'jobs_finished_retained': 20, 'jobs_running_retained': True,
                             'automatic_backup_dates_retained': 30},
@@ -347,6 +357,13 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
 
     @app.post('/api/dividends/{notice_id}/confirm')
     def confirm_dividend(notice_id:str,payload:dict):return reply(service.confirm_dividend(notice_id,payload))
+
+    @app.post('/api/dividends/{notice_id}/review', response_model=DividendReviewResult,
+              responses={409:{'description':'读取后账本已变化；不写入'},422:{'description':'候选、原流水或核对依据不匹配；不写入'}})
+    def review_dividend(notice_id:str,payload:DividendReviewRequest):
+        result=service.review_dividend(notice_id,payload.model_dump())
+        household_notifications.invalidate()
+        return result
 
     @app.post('/api/dividends/{notice_id}/ignore')
     def ignore_dividend(notice_id:str,payload:dict):return reply(service.ignore_dividend(notice_id,payload))

@@ -18,6 +18,7 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 - 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理不代表行情更新成功，应看jobs逐项状态。
 - jobs只返回最近20条，后台默认最多保存20条（含运行中），不清理运行中任务，不当作完整业务审计。价格子项saved/unchanged表示新增变化版本/跳过重复；交易锁定汇率不随同步改变。部署和文件清理须另有授权。
 - 企业行动数据的同步失败不代表存在送转计划。纯现金方案可含中小股东／大股东差异化金额；金额差异见jobs子项notes与分红候选note，按公告和实际到账核对，基础金额不保证适用于特定股东。获授权重试后核对同标的最新corporate_actions子项及reminders；成功自动消除旧同步失败提醒，不删除历史、不为消除提醒创建SPLIT。
+- 分红 needs_review 可按明确授权保留实际到账并完成核对：读取 recorded_event、review_basis、review_changes、revision，展示金额/税费/日期/锁定汇率；用 `write POST /api/dividends/NOTICE_ID/review` 传 portfolio_id、event_id、mode=keep_recorded、原样 review_basis、原 expected_revision 和 reason。此操作只保存可审计结论，不重存或新增流水；手工流水改期后仍按原event_id核对，权益未知不视作完成。无独立预览接口，不声称已做服务端预览。回读候选与reminders；409、超时先查证，不自动换版本或重复提交。权益和实质公告修正仍提醒，不能以消除提示为由自动操作。
 - 待核对分红和其他事项统一从`/api/reminders`进入，再到对应组合查看原事实；不能将通知已读等同于分红已记账。未完成复核不自动确认、忽略或更正。
 
 报告明确净投入、累计买入成本、持仓市值、净分红与收益的区别；资产增减不等于投资收益。精确Decimal值来自API，万/亿仅作展示。投资笔记任务使用项目的`zhixing-notes`技能。

@@ -109,7 +109,7 @@ class Client:
         core = (method == 'POST' and path in ('/api/portfolios', '/api/events') or
                 method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+)?|events/[^/]+)', path) or
                 method == 'DELETE' and re.fullmatch(r'/api/events/[^/]+', path) or
-                method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/confirm', path))
+                method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/(confirm|review)', path))
         notes = (method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes(?:/[^/]+/restore)?', path) or
                  method in ('PUT', 'DELETE') and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes/[^/]+', path))
         assets = method == 'POST' and path == '/api/family/commands'

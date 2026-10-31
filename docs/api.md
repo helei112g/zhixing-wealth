@@ -81,7 +81,7 @@ macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当
 | GET `/api/portfolios/{pid}/transactions` | 见分页约定 |
 | GET `/api/portfolios/{pid}/transactions/{event_id}` | 本笔流水 facts、actual、同组合同标的 neighbors、revisions；不含复盘正文 |
 | GET `/api/portfolios/{pid}/sale-lots` | `instrument_id`、`date`；可选 `exclude_event_id`、`sequence`，返回可卖批次 |
-| GET `/api/portfolios/{pid}/dividends` | 可选 `instrument_id`；公告、权益、状态、suggested_event |
+| GET `/api/portfolios/{pid}/dividends` | 可选 `instrument_id`；公告、权益、状态、suggested_event、revision、review_basis、review_changes、review_decision |
 | GET `/api/tags` | `portfolio_id` 可选；`dimension=asset_class/region/tags`；groups、互斥 pie_groups、pie_eligible |
 | GET `/api/reference-rate` | `currency`、`date`；历史参考汇率，交易确认后锁定 |
 | GET `/api/portfolios/{pid}/instruments/{iid}/reinvestment-estimate` | `date`、`gross_amount`；同日场外基金单位净值估算份额，只读 |
@@ -89,6 +89,22 @@ macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当
 | GET `/api/revisions/{entity}/{id}` | 修订记录；entity 使用服务支持的实体名，如 event、portfolio；笔记不能通过此接口读取 |
 | GET `/api/portfolios/{pid}/export.csv` | 私人交易数据，不得提交 Git |
 | GET `/api/backup` | 一致性完整ZIP备份，私人数据，不得提交 Git |
+
+### 分红核对：保留实际到账
+
+`GET /api/portfolios/{pid}/dividends` 的 `needs_review` 候选返回 `recorded_event`、`event_id`、`revision`、`review_basis` 和中文 `review_changes`。读取只计算差异，不改账。核对实际金额、税费、到账日、再投份额及三项锁定汇率后，可选择更正原流水，或 `POST /api/dividends/{notice_id}/review`：
+
+```json
+{"portfolio_id":"P_FROM_READ","event_id":"E_FROM_READ","mode":"keep_recorded","review_basis":{"COPY":"完整原样使用候选的 review_basis"},"expected_revision":42,"reason":"按合成凭证核对，保留实际到账"}
+```
+
+`review_basis` 是候选返回的完整对象，不是上述占位示例：包括 eligible_quantity、per_share、estimated_gross、record_date（权益计算截止日）、notice_record_date（来源登记日）、pay_date（来源派息日）、ex_date、currency、source、split_restore_factor。未知为 null。此入口没有独立预览：展示读取的原流水与核对依据，并明确只保存核对结论，再按授权提交。额外金额或日期修改字段被拒绝；需要更正金额时用既有预览和 confirm/更正接口。
+
+返回 `{decision, event, revision}`：event 与原记录一致，不新增或更新任何流水字段；decision 保存 mode、event_id、event_date、核对依据、原流水 fingerprint、说明、时间和 review_revision，审计位于 `GET /api/revisions/dividend_decision/{decision.id}`。提交后回读候选的 confirmed/manual_recorded 与 `/api/reminders`。required expected_revision 必须是非负整数；旧 revision 返回409；未找到待核对原记录、原记录已不是本标的的分红/再投、作用域/事件/依据不匹配及无说明返回422；均不写入。超时先回读，不自动重试。
+
+仅 Yahoo 每份参考值同时满足相对变化 ≤0.01% 且绝对变化 ≤0.0001 派息币种/份，才视为微调；基准固定为最近核对值，不逐次滚动。estimated_gross 是派生参考值，不单独用完整字典比较。权益份额、有效日期、币种、拆分还原因子仍精确比较，其他来源的每份变化仍需核对。旧依据未记录来源时，变化先提示核对，不推定旧来源为 Yahoo。来源日期/因子缺失不清空已核对依据或原流水，来源补全或实质修正仍可提醒。计算权益由已知变为未知仍需核对，null不当作无变化或零；旧依据缺少币种时按原已确认流水的币种比较，币种修正仍提醒。读取或升级不自动完成历史核对。核对决定通过 event_id 在同组合、同标的、有效分红/再投事件内保持关联，不因手工流水或来源除息日更正而转成新增候选。只改备注、税费等原流水事实不会让最近接受的权益依据回退；只有显式分红确认/复核推进该依据。原流水发生日期变化单独提示复核；fingerprint保留审计用途，不用它使权益依据失效。
+
+同一未完成事项按公告、组合、权益、固定来源参考基准与最近核对版本去重，Yahoo参考微调、抓取时间和说明刷新不重复派发；金额变化仍更新核对页。来源基准只在实质变化时更新，实质金额修正即使尚未完成核对也会重新通知。完成后撤销对应通知，后续实质变化产生新事项版本。系统通知状态与业务核对状态分开，不声称通知已被用户看见。
 
 ### 筛选与分页
 
@@ -126,6 +142,7 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 | PUT `/api/events/{id}` | 更正后的完整事件、change_reason、expected_revision；从原记录合并，不丢弃隐藏历史字段 |
 | GET `/api/events/{id}/deletion-preview` | 只读关联删除预览：revision、event_ids、items、can_delete、validation_error |
 | DELETE `/api/events/{id}` | reason、expected_revision；cascade=true 时必须提交预览全部 event_ids，逻辑删除并保留修订；默认兼容单条/转移对 |
+| POST `/api/dividends/{notice_id}/review` | 保留已确认流水并完成核对；请求与错误见下文，必须附候选原 revision |
 | POST `/api/dividends/{notice_id}/confirm` | 在候选 suggested_event 上核对税前总额、税费、到账、再投信息，保留 dividend_basis，附 expected_revision；权益变更时拒绝旧核对 |
 
 组合介绍随组合对象在保存响应、bootstrap.portfolios 和 dashboard.portfolio 返回。创建时省略或null为空；编辑时省略或null保留原介绍，空字符串清空。旧组合可没有该字段，读取不回写。超长或非字符串返回422；过期revision返回409且不保存介绍或其他变更。介绍仅作展示，不参与财务计算。

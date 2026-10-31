@@ -37,6 +37,20 @@ class SummaryReminderTests(unittest.TestCase):
     def income(self,month,amount,**extra):
         return self.write('income',dict(kind='salary',month=month,amount=amount,currency='CNY',**extra))
 
+    def test_missing_policy_value_exposes_known_subtotal_without_fabricating_total(self):
+        self.item('cash', '1000', '2026-01-01')
+        policy = self.item('insurance', None, '2026-01-01')
+        metric = self.family.summary('month', '2026-10')['metrics']['total_assets']
+        self.assertIsNone(metric['value']); self.assertFalse(metric['complete'])
+        self.assertEqual(metric['known_value'], '1000')
+        self.assertEqual(metric['missing_count'], 1)
+        self.assertEqual(metric['missing_categories'], ['insurance'])
+        self.assertIsNone(metric['amount']); self.assertIsNone(metric['rate'])
+        self.value(policy, '200', '2026-10-01')
+        complete = self.family.summary('month', '2026-10')['metrics']['total_assets']
+        self.assertTrue(complete['complete']); self.assertEqual(complete['value'], '1200')
+        self.assertEqual(complete['missing_count'], 0)
+
     def test_summary_debt_ratio_uses_selected_end_and_preserves_unknown(self):
         cash = self.item('cash', '100000', '2026-01-01')
         debt = self.item('debt', '25000', '2026-01-01')

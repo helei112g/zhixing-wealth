@@ -2,6 +2,8 @@
 
 界面和 Agent 访问同一后端服务。支持直接 HTTP、OpenAPI 和标准库客户端，不要求额外 MCP 服务或插件。部署、恢复、数据搬迁不是记账技能的隐含权限。
 
+组合指标从 `capabilities.investment_summary` 定位，或调用客户端 `investment_summary(P)`。累计投入取 `capital_summary.cost`（累计买入成本，含再投及期初记账成本），不能用净投入替代、不能称为外部新增本金；净投入仍为总预算减剩余可投金额。收益分解中的 `cash_dividends_net` 与 `reinvested_dividends_net` 按原分红记录类型拆分、各扣关联费税一次，相加仍是 `dividends_net`，不能再次叠加到收益或资产。应收可计入收益，到账前不能称为已回收现金；未知分项保留 null。
+
 首次接手安装或每次升级先读 [安装与升级指南](install.md)。安装后默认进入生成的独立日常工作区，不使用开发账本。首次安装为空，不创建演示记录；查询、能力发现和读取文档不构成记账授权。发布保全与账务更正分开处理，不能用发布脚本更改正式业务数据。
 
 ## 发现技能与能力
@@ -71,3 +73,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 送转股/拆股：读取 capabilities.corporate_actions 与 dashboard/instrument_detail 的 todos。先核对公开公告和实际持仓，使用 `SPLIT` 专项预览，再按原 revision 提交并回读份额、成本和收益。10送8转12填 factor=3，总成本保持不变；现金分红、扣税另行核对。若送转没有出现在 todos 中，先检查 jobs 中 corporate_actions 同步状态并重试，不要用前复权价格掩盖缺失的份额调整。确认后回读独立 SPLIT 流水；原 BUY 数量仍是历史成交数量，不应变成送转后的数量。同步公告不等于确认记账，不得因价格骤降自动造流水或用前复权价格改写历史买入。资产相邻期变化包含新增/移除/份额调整，原样报告 scope_changed/reason，不能称为投资收益率。
 
 删除流水先用客户端 `deletion_preview(event_id)` 或 GET `/api/events/ID/deletion-preview`，逐项核对 `items`（含共享批次），再以原revision、完整event_ids、cascade=true和原因提交DELETE。旧接口默认仅单条/转移对，不会静默扩大范围。过期409或超时先回读，不能自动换revision、重试删除。按返回 `deleted_event_ids` 回读交易详情的 `cancelled=true` 及持仓；审计保留。Dashboard 的 `curve_quality` 解释历史缺段，不能为了补线自动确认送转或将null补零。
+
+### 持仓标签与当前分布
+
+通过capabilities.holding_analysis发现接口。用客户端holding_labels(P,I)读取当前归属和revision，展示scope/direction/detail差异后按原revision PUT labels；409或超时先回读核对，不自动覆盖。无独立标签预览接口，不声称服务端预览已完成。holding_distribution(P,basis)读取完整树与同一后端分母，不能只统计已打标签持仓或自行重复相加父子节点。股票可自动识别市场，基金不按上市地或币种猜投资敞口。旧/api/tags统计已退役；历史交易标签和筛选仍保留。总资产value为null时可说明known_value是已知资产合计，不能冒充完整总额。

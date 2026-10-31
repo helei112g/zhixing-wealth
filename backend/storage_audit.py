@@ -50,7 +50,15 @@ def capture(directory):
 def verify(before, after):
     keys = ('business_table_hashes', 'stable_meta_sha256', 'effective_prices_sha256',
             'distinct_price_versions_sha256', 'manual_prices_sha256', 'notes_sha256', 'note_versions')
-    changed = [key for key in keys if before[key] != after[key]]
+    before_hashes, after_hashes = before['business_table_hashes'], dict(after['business_table_hashes'])
+    if after['schema'] >= 8 and 'holding_labels' not in after_hashes:
+        raise DomainError('持仓标签表缺失，禁止开放写入')
+    # Schema 8 adds an empty metadata table. Existing label rows are always
+    # protected; never waive a changed/nonempty table or another new table.
+    if (before['schema'] < 8 <= after['schema'] and 'holding_labels' not in before_hashes
+            and after['counts'].get('holding_labels') == 0 and after_hashes.get('holding_labels') == digest([])):
+        after_hashes.pop('holding_labels')
+    changed = [key for key in keys if (before_hashes != after_hashes if key == 'business_table_hashes' else before[key] != after[key])]
     if changed or before['integrity'] != 'ok' or after['integrity'] != 'ok':
         raise DomainError('存储迁移等价核验失败，禁止开放写入；差异项：' + ','.join(changed))
     return {'equivalent': True, 'checked': list(keys), 'before': before, 'after': after}

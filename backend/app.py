@@ -19,6 +19,7 @@ from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
 from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
+from .api_models import HoldingLabelRequest
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -157,7 +158,19 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         return {'api_version': VERSION, 'openapi': '/api/openapi.json', 'guide': '/api/guide',
                 'authentication': {'bootstrap': '/api/bootstrap', 'cookie': session_cookie, 'header': 'X-CSRF-Token'},
                 'concurrency': {'field': 'expected_revision', 'conflict_status': 409,
-                                'operations': ['portfolios', 'allocations', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
+                                'operations': ['portfolios', 'allocations', 'holding_labels', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
+                'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',
+                                       'field': 'capital_summary', 'cumulative_input': 'cost',
+                                       'cumulative_input_basis': '历次买入及红利再投含费税成本累计；不扣卖出与分红，再投非新增个人本金',
+                                       'net_input': 'planned_amount - available_amount',
+                                       'dividend_components': ['profit_breakdown.cash_dividends_net','profit_breakdown.reinvested_dividends_net'],
+                                       'dividend_total': 'profit_breakdown.dividends_net',
+                                       'unpaid_dividends': '已确认应收计入分红收益，到账前不属于已回收现金'},
+                'holding_analysis': {'read': '/api/portfolios/{portfolio_id}/holding-analysis?basis=holdings',
+                                     'bases': ['holdings', 'assets'], 'current_only': True,
+                                     'labels': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels',
+                                     'expected_revision_required': True, 'levels': ['scope', 'direction', 'detail'],
+                                     'cardinality': 'one path per portfolio instrument; no duplicated values'},
                 'family': {'label': '资产分析', 'read': '/api/family/overview',
                            'catalog': '/api/family/catalog', 'command_schema': '/api/family/command-schema',
                            'recommended_operations': ['item','valuation','links','unlink','income'],
@@ -251,6 +264,18 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def allocation(portfolio_id: str, instrument_id: str, payload: AllocationRequest):
         payload = payload.model_dump(exclude_unset=True)
         return reply(service.attach_instrument(portfolio_id, instrument_id, payload))
+
+    @app.get('/api/portfolios/{portfolio_id}/holding-analysis', summary='当前持仓层级分布；不含历史标签回看')
+    def holding_analysis(portfolio_id: str, basis: str = 'holdings'):
+        return reply(service.holding_analysis.report(portfolio_id, basis))
+
+    @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels', summary='当前组合同标的标签、可选方向及原revision')
+    def holding_labels(portfolio_id: str, instrument_id: str):
+        return reply(service.holding_analysis.read(portfolio_id, instrument_id))
+
+    @app.put('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels', summary='原revision保存当前持仓标签；不修改计划与流水')
+    def save_holding_labels(portfolio_id: str, instrument_id: str, payload: HoldingLabelRequest):
+        return reply(service.holding_analysis.put(portfolio_id, instrument_id, payload.model_dump()))
 
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/plan-check', response_model=PlanCheck)
     def plan_check(portfolio_id: str, instrument_id: str, target_pct: str):
@@ -367,10 +392,6 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
 
     @app.post('/api/dividends/{notice_id}/ignore')
     def ignore_dividend(notice_id:str,payload:dict):return reply(service.ignore_dividend(notice_id,payload))
-
-    @app.get('/api/tags')
-    def tag_report(portfolio_id: str | None = None, dimension: str = 'asset_class'):
-        return reply(service.tag_report(portfolio_id, dimension))
 
     @app.post('/api/fx')
     def fx(payload: dict): return reply(service.save_fx(payload))

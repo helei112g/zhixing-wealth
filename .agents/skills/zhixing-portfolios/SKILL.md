@@ -14,6 +14,8 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 - 用`preview REQUEST.json`预览交易；编辑请求包含原事件id，提交PUT时路径使用同一id。保存前核对份额、费用、现金与收益影响，以及用户授权。
 - 保存使用`write POST /api/events REQUEST.json --confirm-write`，更正用PUT。删除先 GET `/api/events/ID/deletion-preview`（或客户端 deletion_preview），核对完整 items 和共享批次，再用DELETE带 reason、cascade=true、原event_ids及原expected_revision提交；不拆分共享流水金额，不删除其他买入父批次。旧单条删除兼容保留，不能跳过预览静默扩大范围。按deleted_event_ids回读cancelled与持仓，409不自动重试。
 - 新建组合用`write POST /api/portfolios`，编辑用`PUT /api/portfolios/ID`，先读取并核对拟变字段和revision。组合/笔记没有独立服务端预览接口时，展示读取值与拟保存差异，不声称已完成服务端预览。
+- 持仓分析使用capabilities.holding_analysis：GET /api/portfolios/P/holding-analysis?basis=holdings（或assets）；仅当前持仓，待确认标签仍计分母，父子金额不能重复相加。股票按市场识别，基金不按上市地或币种推断；旧/api/tags已退役。
+- 当前标签用客户端holding_labels(P,I)读取，展示scope/direction/detail差异，再以原revision PUT /api/portfolios/P/instruments/I/labels并回读。每层单选、可留空，细分标签须先选方向；标签独立于计划与历史流水。没有标签预览接口时展示明确差异，不声称服务端预览；409/超时先回读，不自动换revision。首次BUY可附带holding_labels，随交易预览、同事务保存，不能改写已有标签或将标签塞进历史交易。
 - 投入计划先调用`GET /api/portfolios/P/instruments/I/plan-check?target_pct=...`，再按返回revision提交PUT；缺口仅提醒，不自动加预算或卖出。
 - 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理不代表行情更新成功，应看jobs逐项状态。
 - jobs只返回最近20条，后台默认最多保存20条（含运行中），不清理运行中任务，不当作完整业务审计。价格子项saved/unchanged表示新增变化版本/跳过重复；交易锁定汇率不随同步改变。部署和文件清理须另有授权。
@@ -22,6 +24,8 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 - 待核对分红和其他事项统一从`/api/reminders`进入，再到对应组合查看原事实；不能将通知已读等同于分红已记账。未完成复核不自动确认、忽略或更正。
 
 报告明确净投入、累计买入成本、持仓市值、净分红与收益的区别；资产增减不等于投资收益。精确Decimal值来自API，万/亿仅作展示。投资笔记任务使用项目的`zhixing-notes`技能。
+
+组合指标直接用客户端`investment_summary(P)`读取：累计投入取`cost`（历次买入、再投及期初记账成本），不是净投入或外部新增本金。`profit_breakdown.cash_dividends_net`与`reinvested_dividends_net`按原分红记录类型拆分，关联费税只扣一次，两项相加仍为累计净分红；不改变原收益和资产。含已确认未到账应收时不能称为已回收现金，未知分项不补零。
 
 送转/拆股专项：从 dashboard 或标的详情 todos 读取 confirm_split/verify_split；按公告和实际持仓核对除权日期与新旧份额倍数，走同一 preview → 原 revision 提交 → 回读。10送8转12填 factor=3；总成本不变，现金红利和扣税另行记录。公告同步不授权自动记账，已确认事件不重复添加；复权价格只作走势参考，不替换账本原成交价。
 历史补录／更正还须核对 preview.split_changes 的前后份额及参与批次；按原 SPLIT ID 回读 facts.split。仅除权日前剩余份额参与，已售份额与当日新买入排除；批次随历史重算，不固定在首次确认时。全部售完为 no_position，已确认流水保留但不调整份额；不能把流水保留当作待办未完成。同日重复送转返回422，需更正原记录而非 allow_duplicate。

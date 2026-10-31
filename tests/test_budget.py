@@ -52,8 +52,9 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(len(state['instruments']),1);self.assertEqual(len(state['allocations']),1)
         self.assertEqual(state['instruments'][0]['name'],'最新名称');self.assertEqual(state['events'][0]['tags'],['红利'])
         self.s.cache_prices(a['instrument_id'],[{'date':str(today()),'price':'1.2'}])
-        report=self.s.tag_report(self.p['id'],'tags');self.assertEqual([g['label'] for g in report['groups']],['红利'])
-        self.assertEqual(D(report['groups'][0]['value']),4800)
+        holding=self.s.dashboard(self.p['id'],view='summary')['holdings'][0]
+        self.assertTrue(all(lot['tags']==['红利'] for lot in holding['lots']))
+        self.assertEqual(sum(D(lot['value_base']) for lot in holding['lots']),4800)
     def test_same_security_other_portfolio_keeps_independent_tags(self):
         a=self.buy();q=self.s.save_portfolio({'name':'另一组合','planned_amount':'50000','start_date':'2024-01-01'})
         b=self.buy(portfolio_id=q['id'],tags=['成长'])

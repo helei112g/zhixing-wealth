@@ -147,6 +147,7 @@ class Store:
         return {
             'portfolios': objects('portfolios'), 'instruments': objects('instruments'),
             'allocations': objects('allocations'),
+            'holding_labels': objects('holding_labels') if db.execute("SELECT 1 FROM sqlite_master WHERE name='holding_labels'").fetchone() else [],
             'events': objects('events', 'WHERE deleted=0 ORDER BY date,sequence,id'),
             'prices': [dict(json.loads(r['data']), version_id=r['id']) for r in db.execute('SELECT id,data FROM prices ORDER BY id')],
             'fx': [dict(json.loads(r['data']), version_id=r['id']) for table in ('fx', 'fx_overrides') if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() for r in db.execute(f'SELECT id,data FROM {table} ORDER BY id')],
@@ -275,6 +276,15 @@ class Store:
                     validate_family_backup(db)
                 references(db)
                 state = self.state(db)
+                if int(version[0]) >= 8:
+                    if 'holding_labels' not in found:
+                        raise DomainError('备份缺少持仓标签表')
+                    for row in db.execute('SELECT portfolio_id,instrument_id,data FROM holding_labels'):
+                        payload = json.loads(row['data'])
+                        if (payload.get('portfolio_id'), payload.get('instrument_id')) != (row['portfolio_id'], row['instrument_id']):
+                            raise DomainError('备份持仓标签的作用域与索引不一致')
+                    from .holding_analysis import validate_labels_backup
+                    validate_labels_backup(state)
                 from .ledger import Ledger
                 for portfolio in state['portfolios']:
                     Ledger(state, portfolio).validate()

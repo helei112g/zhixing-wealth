@@ -275,6 +275,8 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
     for h in holdings:
         iid=h['instrument_id'];flows=[];cost=ZERO;dividends_net=ZERO;complete=h['value_base'] is not None;pending=False
         proceeds=ZERO;other_income=ZERO;extra_costs=ZERO;dividends_complete=True
+        dividend_parts={'DIVIDEND':ZERO,'REINVEST':ZERO}
+        dividend_parts_complete={'DIVIDEND':True,'REINVEST':True}
         for e in events:
             if e.get('instrument_id')!=iid:continue
             k=e['kind'];fx=dec(e['fx_rate'])
@@ -295,15 +297,18 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
             elif k in ('DIVIDEND','REINVEST'):
                 for part in dividend_segments(e,market,end):
                     pending|=part['pending']
-                    if part['amount'] is None:complete=False;dividends_complete=False
+                    if part['amount'] is None:
+                        complete=False;dividends_complete=False;dividend_parts_complete[k]=False
                     else:
-                        dividends_net+=part['amount'];add(min(part['date'],end),part['amount'])
+                        dividends_net+=part['amount'];dividend_parts[k]+=part['amount'];add(min(part['date'],end),part['amount'])
                 if k=='REINVEST' and e['reinvest_date']<=end:
                     paid=(dec(e.get('reinvest_gross_amount') or dec(e['reinvest_quantity'])*dec(e['reinvest_price']))+dec(e['fee']))*dec(e['reinvest_fx_rate'])
                     cost+=paid;add(e['reinvest_date'],-paid)
             elif k in ('FEE','TAX'):
                 fee=dec(e['amount'])*fx;add(e['date'],-fee)
-                if any(d['id']==e.get('related_event_id') and d['kind'] in ('DIVIDEND','REINVEST') for d in events):dividends_net-=fee
+                dividend=next((d for d in events if d['id']==e.get('related_event_id') and d['kind'] in ('DIVIDEND','REINVEST')),None)
+                if dividend:
+                    dividends_net-=fee;dividend_parts[dividend['kind']]-=fee
                 else:extra_costs+=fee
             elif k=='INTEREST':
                 value=dec(e['amount'])*fx;other_income+=value;add(e['date'],value)
@@ -318,6 +323,8 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
         if any(e['kind']=='OPENING_POSITION' for e in own):annual['status']+='；期初份额仅自记账起计算'
         price_net=dec(h['value_base'])+proceeds-cost-extra_costs if complete else None
         breakdown=profit_breakdown(profit,price_net,dividends_net if dividends_complete else None,other_income,
+            cash_dividends_net=dividend_parts['DIVIDEND'] if dividend_parts_complete['DIVIDEND'] else None,
+            reinvested_dividends_net=dividend_parts['REINVEST'] if dividend_parts_complete['REINVEST'] else None,
             market_value=h['value_base'],sale_proceeds=proceeds if complete else None,buy_cost=cost,extra_costs=extra_costs)
         result[iid]={'profit':profit,'return_on_cost':ratio(profit,cost) if profit is not None else None,'cost':cost,'profit_breakdown':breakdown,
             'dividends_net':dividends_net,'xirr':annual['rate'],'xirr_status':annual['status'],'xirr_basis':XIRR_BASIS,'provisional':provisional,
@@ -360,6 +367,7 @@ def investment_summary(state, portfolio, snapshot, performances, as_of):
     price_net=combined('price_net');dividends=combined('dividends_net');other=combined('other_income')+extra_income
     if price_net is not None:price_net-=extra_expenses
     breakdown=profit_breakdown(profit,price_net,dividends,other,market_value=snapshot['securities_total'],
+        cash_dividends_net=combined('cash_dividends_net'),reinvested_dividends_net=combined('reinvested_dividends_net'),
         sale_proceeds=combined('sale_proceeds'),buy_cost=cost,extra_costs=combined('extra_costs')+extra_expenses)
     return {
         'planned_amount': planned, 'invested_amount': invested,
@@ -384,6 +392,8 @@ def profit_breakdown(total,price_net,dividends_net,other_income,**facts):
     # The UI can disclose the rare one-cent difference caused only by display rounding.
     cents=lambda v:dec(v).quantize(Decimal('.01'),rounding=ROUND_HALF_UP)
     rounding=cents(total)-sum((cents(v) for v in values),ZERO) if complete else None
+    components=[price_net,facts.get('cash_dividends_net'),facts.get('reinvested_dividends_net'),other_income]
+    component_rounding=cents(total)-sum((cents(v) for v in components),ZERO) if complete and all(v is not None for v in components) else None
     return {'total':total,'price_net':price_net,'dividends_net':dividends_net,'other_income':other_income,
-            'rounding_adjustment':rounding,'complete':complete,
+            'rounding_adjustment':rounding,'component_rounding_adjustment':component_rounding,'complete':complete,
             'price_basis':'价格及汇兑收益，已扣买卖费税与非分红费用；含已实现及未实现收益',**facts}

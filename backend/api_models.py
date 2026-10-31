@@ -76,6 +76,7 @@ class SellLot(BaseModel):
 
 
 class EventRequest(WriteRequest):
+    holding_labels: dict[str, str] | None = Field(None, description='首次买入时可选的scope/direction/detail；仅保存为组合同标的当前标签，不写入历史流水；保存时须携带expected_revision')
     factor: Amount | None = Field(None, description='SPLIT 专项核对：送转/拆股后的数量倍数，10送8转12为3；保留总成本，先于除权日买卖执行。现金红利单独核对。')
     source_split_id: str | None = Field(None, max_length=128, description='SPLIT 所核对的公告ID，来自todo；修改日期后仍关联原公告，避免重复确认')
     portfolio_id: str
@@ -115,6 +116,14 @@ class AllocationRequest(WriteRequest):
     asset_class: str = '未分类'
     region: str = Field('未分类', description='A股、美股、港股、海外其他、混合、未分类')
     tags: list[str] | str = Field(default_factory=list, description='推荐字符串数组；兼容旧界面的逗号分隔文本')
+
+
+class HoldingLabelRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: int = Field(ge=0, strict=True)
+    scope: str = Field('', max_length=30, description='留空自动识别；基金不按上市地或币种推断投资范围')
+    direction: str = Field('', max_length=30, description='所选投资范围下的单个配置方向，可留空')
+    detail: str = Field('', max_length=40, description='单个细分标签；须先选择配置方向，可留空')
 
 
 class NoteMutationRequest(BaseModel):
@@ -218,6 +227,7 @@ class EventPreview(BaseModel):
     model_config = ConfigDict(extra='allow')
     revision: int
     event: dict[str, Any]
+    holding_labels: dict[str, Any] | None = Field(None, description='本次首次买入拟保存的当前持仓标签，预览无副作用')
     split_changes: list[SplitChange] = Field(description='本次记账或更正引起的送转效果变化，含后续已确认记录；预览不写入')
 
 
@@ -245,12 +255,15 @@ class ProfitBreakdown(BaseModel):
     total: str | None
     price_net: str | None = Field(description='CNY价格及汇兑收益，扣除买卖及非分红费用；含已实现/未实现收益')
     dividends_net: str | None = Field(description='净分红，含再投与已确认应收，扣关联补税/费用；不重复计入价格项')
+    cash_dividends_net: str | None = Field(None, description='现金分红记录的净收益，含已确认未到账应收，扣该记录关联补税/费用；未到账不属于已回收现金')
+    reinvested_dividends_net: str | None = Field(None, description='红利再投记录的净分红收益，扣该记录关联补税/费用；不是新增个人本金，不重复增加资产')
     other_income: str = Field(description='利息等其他收入；非零时单独展示')
     market_value: str | None
     sale_proceeds: str | None
     buy_cost: str
     extra_costs: str
     rounding_adjustment: str | None = Field(description='仅用于两位小数显示对账的舍入差，不是新增收益')
+    component_rounding_adjustment: str | None = Field(None, description='价格收益、现金净分红、再投净分红及其他收入分别显示两位小数后的舍入差；保留原合并分红rounding_adjustment')
     complete: bool
     price_basis: str
 

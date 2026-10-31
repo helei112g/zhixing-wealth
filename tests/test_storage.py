@@ -55,6 +55,7 @@ class StorageTests(unittest.TestCase):
                 row = dict(row, instrument_id=self.iid, kind='raw', manual=row.get('manual', False), fetched_at=str(n))
                 db.execute('INSERT INTO prices(instrument_id,date,kind,manual,data) VALUES (?,?,?,?,?)',
                            (self.iid, row['date'], 'raw', int(row['manual']), json_dumps(row)))
+            db.execute('DROP TABLE holding_labels')
             db.execute('CREATE INDEX fx_scope ON fx(currency,date)')
             db.execute("UPDATE meta SET value='6' WHERE key='schema'")
             db.execute("UPDATE alembic_version SET version_num='0005_family_income'")

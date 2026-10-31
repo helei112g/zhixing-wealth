@@ -74,6 +74,10 @@ def period_summary(state, family, grain='month', period=None, start=None, end=No
         metric = comparison(value, value_of(previous,key), changed)
         old = value_of(opening,key)
         metric.update(value=value, period_change=value-old if value is not None and old is not None else None)
+        if key == 'total_assets':
+            missing = [r for r in ending['items'] if r['category'] != 'debt' and r['value'] is None]
+            metric.update(known_value=ending['known_assets'], missing_count=len(missing),
+                          missing_categories=sorted({r['category'] for r in missing}), complete=value is not None)
         metrics[key] = metric
     metrics['income'] = dict(value=income['value'], **comparison(income['value'], previous_income['value']))
     repayment = debt_summary(state, family, ending, market=market)

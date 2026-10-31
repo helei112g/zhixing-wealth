@@ -74,6 +74,8 @@ class RefinementTests(unittest.TestCase):
                     db.execute(f'UPDATE {table} SET data=? WHERE rowid=?', (json_dumps(value), rowid))
             label = dict(portfolio_id=p['id'], instrument_id=e['instrument_id'], scope='A股', direction='行业', detail='合成细分')
             db.execute('INSERT INTO holding_labels VALUES (?,?,?)', (p['id'], e['instrument_id'], json_dumps(label)))
+            for table in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):
+                db.execute('DROP TABLE IF EXISTS '+table)
             db.execute("UPDATE meta SET value='8' WHERE key='schema'")
             db.execute("UPDATE alembic_version SET version_num='0007_holding_labels'")
             db.commit()

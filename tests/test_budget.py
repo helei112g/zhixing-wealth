@@ -165,12 +165,17 @@ class AutomaticUpdateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             app=create_app(directory,testing=True,auto_sync=True);client=TestClient(app)
             header={'x-csrf-token':client.get('/api/bootstrap').json()['csrf_token']}
-            with patch.object(app.state.service,'start_sync') as sync:
+            with patch.object(app.state.research.updates,'start'),patch.object(app.state.service,'start_sync') as sync:
                 r=client.post('/api/portfolios',headers=header,json={'name':'自动更新测试','planned_amount':'10000','start_date':'2024-01-01','benchmark_id':BENCHMARKS[0]['id']})
                 self.assertEqual(r.status_code,200,r.text);p=r.json()
-                sync.assert_called_with(BENCHMARKS[0]['id'],full=True,trigger='portfolio_create')
+                job=app.state.research.jobs()[0]
+                self.assertEqual(job['trigger'],'portfolio_create')
+                self.assertIn({'scope':'quotes','instrument_id':BENCHMARKS[0]['id'],'full':True},job['resources'])
                 r=client.post('/api/events',headers=header,json={'portfolio_id':p['id'],'kind':'BUY','date':'2024-01-01',
                     'instrument':{'market':'CN','code':'159307','name':'手工名称','currency':'CNY'},'quantity':'100','gross_amount':'100','fx_rate':'1'})
                 self.assertEqual(r.status_code,200,r.text)
-                sync.assert_called_with(r.json()['instrument_id'],full=True,trigger='event_create')
+                job=app.state.research.jobs()[0]
+                self.assertEqual(job['trigger'],'event_create')
+                self.assertIn({'scope':'quotes','instrument_id':r.json()['instrument_id'],'full':True},job['resources'])
+                sync.assert_not_called()  # Execution belongs to the durable planner.
             client.close()

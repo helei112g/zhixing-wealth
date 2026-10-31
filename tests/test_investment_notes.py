@@ -196,6 +196,8 @@ class NotesTests(unittest.TestCase):
             from backend.family_domain import TABLES
             for table in TABLES: db.execute('DROP TABLE ' + table)
             db.execute('DROP TABLE holding_labels')
+            for table in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):
+                db.execute('DROP TABLE IF EXISTS '+table)
             db.execute('DROP TABLE investment_notes');db.execute("UPDATE meta SET value='1' WHERE key='schema'")
             db.execute('INSERT INTO reviews VALUES (?,?)',('old-event',json.dumps({'note':'旧复盘正文','completed':True})));db.commit()
             before=[tuple(r) for r in db.execute('SELECT * FROM reviews')]

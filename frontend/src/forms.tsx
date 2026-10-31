@@ -2,10 +2,10 @@ import React, {useEffect, useRef, useState} from 'react';
 import {api, decimalSum, exactMoney, amount, downloadText, kindNames, money, units, query, Obj, signedMoney, regionOptions, regionValue} from './api';
 import {Button, Chips, ErrorBox, Field, Modal, Notice} from './components';
 import {DatedRateField,useDatedRate} from './fx_ui';
+import {HoldingLabelFields} from './holding_labels_ui';
 import {PlanFundingNotice} from './plan_ui';
 import {ReinvestmentQuantityField,useReinvestmentEstimate} from './reinvestment_ui';
 import {SplitEffectView,SplitSummary} from './split_ui';
-import {HoldingLabelFields} from './holding_labels_ui';
 
 type BaseProps={boot:Obj;portfolio?:Obj;onClose:()=>void;onSaved:(value?:any)=>void};
 export function PortfolioForm({boot,portfolio,onClose,onSaved}:BaseProps){
@@ -146,23 +146,20 @@ export function EventForm({boot,portfolio,onClose,onSaved,event,initialKind='BUY
 
 export function PlanForm({boot,portfolio,onClose,onSaved,holding}:BaseProps&{holding:Obj}){
  const allocation=boot.allocations.find((a:Obj)=>a.portfolio_id===portfolio!.id&&a.instrument_id===holding.instrument_id)||{};
- const[f,F]=useState<Obj>({target_pct:allocation.target_pct??'0',asset_class:allocation.asset_class||'未分类',region:regionValue(allocation.region)});
- const[error,E]=useState(''),[busy,B]=useState(false),[check,Check]=useState<Obj|null>(null),[checkError,CheckError]=useState(''),[retry,Retry]=useState(0);
- const set=(k:string,v:any)=>F({...f,[k]:v}),target=String(f.target_pct??'0');
- const base='/portfolios/'+encodeURIComponent(portfolio!.id)+'/instruments/'+encodeURIComponent(holding.instrument_id),key=base+'?'+target;
- const current=check?.key===key?check.value:null;
- useEffect(()=>{let active=true;Check(null);CheckError('');
-  if(target===''||!Number.isFinite(Number(target))||Number(target)<0||Number(target)>100)return;
-  const timer=setTimeout(()=>{api(base+'/plan-check?target_pct='+encodeURIComponent(target)).then(value=>{if(active)Check({key,value});}).catch(e=>{if(active)CheckError(e.message);});},200);
-  return()=>{active=false;clearTimeout(timer);};
- },[base,target,key,retry]);
- async function submit(e:React.FormEvent){e.preventDefault();B(true);E('');try{
-  await api(base,{...f,expected_revision:current?.revision??boot.revision},'PUT');onSaved();
- }catch(e:any){E(e.message);Retry(n=>n+1);}finally{B(false);}}
- return <Modal title="设置计划" subtitle={portfolio?.name+' / '+holding.instrument.name} onClose={onClose} busy={busy}>
- <form onSubmit={submit}><fieldset disabled={busy}><div className="form-grid"><Field label="计划占总预算比例 · %" wide><input required type="number" step="any" min="0" max="100" value={f.target_pct??'0'} onFocus={()=>{if(Number(f.target_pct||0)===0)set('target_pct','');}} onBlur={()=>{if(f.target_pct==='')set('target_pct','0');}} onChange={e=>set('target_pct',e.target.value.replace(/^0+(?=\d)/,''))}/></Field><ClassificationFields f={f} set={set}/></div>
- {current?<><p className="muted small">本标的计划金额 {money(current.target_amount)} CNY · 组合计划比例合计 {money(current.plan_funding.total_target_pct)}%</p><PlanFundingNotice value={current.plan_funding}/></>:checkError?<div className="plan-funding"><small>额度校验暂不可用：{checkError}。仍可保存计划。</small><Button small onClick={()=>Retry(n=>n+1)}>重试额度校验</Button></div>:<p className="muted small" role="status">{target===''?'填写计划比例后核对资金需求。':'正在核对剩余计划与可投金额…'}</p>}
- <Notice>资产类别和地区用于本组合此标的的分类与流水筛选；持仓分类路径可在“设置标签”中单独调整。</Notice><ErrorBox error={error}/><footer className="form-actions"><Button onClick={onClose}>取消</Button><button className="button primary">保存计划</button></footer></fieldset></form></Modal>;
+ const[f,F]=useState<Obj>({target_pct:allocation.target_pct??'0',asset_class:allocation.asset_class||'未分类'});
+ const[labels,Labels]=useState<Obj|null>(null),[context,Context]=useState<Obj|null>(null),[error,E]=useState(''),[busy,B]=useState(false),[check,Check]=useState<Obj|null>(null),[checkError,CheckError]=useState(''),[review,Review]=useState(false),[retry,Retry]=useState(0),[checkRetry,CheckRetry]=useState(0);
+ const base='/portfolios/'+encodeURIComponent(portfolio!.id)+'/instruments/'+encodeURIComponent(holding.instrument_id),target=String(f.target_pct??'0'),key=base+'?'+target;
+ const current=check?.key===key?check.value:null;const initialized=useRef(false);
+ useEffect(()=>{let active=true;api(base+'/labels').then(v=>{if(active){Context(v);E('');if(!initialized.current){F({target_pct:v.allocation.target_pct??'0',asset_class:v.allocation.asset_class||'未分类'});initialized.current=true;}Labels(old=>old||{scope:v.labels.scope,direction:v.labels.direction,detail:v.labels.detail});}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[base,retry]);
+ useEffect(()=>{let active=true;Check(null);CheckError('');if(target===''||!Number.isFinite(Number(target))||Number(target)<0||Number(target)>100)return;
+ const timer=setTimeout(()=>{api(base+'/plan-check?target_pct='+encodeURIComponent(target)).then(v=>{if(active)Check({key,value:v});}).catch(e=>{if(active)CheckError(e.message);});},200);return()=>{active=false;clearTimeout(timer);};},[base,target,key,retry,checkRetry]);
+ async function submit(e:React.FormEvent){e.preventDefault();if(!context||!labels||review)return;B(true);E('');try{await api(base,{...f,holding_labels:labels,expected_revision:context.revision},'PUT');await api(base+'/labels');onSaved();}catch(e:any){E(e.message);if(e.status===409)Review(true);}finally{B(false);}}
+ return <Modal className="holding-label-drawer unified-plan-drawer" title="设置计划" subtitle={portfolio?.name+' / '+holding.instrument.name} onClose={onClose} busy={busy}><form onSubmit={submit}><fieldset disabled={busy||!context}><h3>投入计划</h3><Field label="计划占总预算比例 · %"><input required aria-label="计划占总预算比例" type="number" step="any" min="0" max="100" value={f.target_pct} onFocus={()=>{if(Number(f.target_pct||0)===0)F(old=>({...old,target_pct:''}));}} onBlur={()=>{if(f.target_pct==='')F(old=>({...old,target_pct:'0'}));}} onChange={e=>F({...f,target_pct:e.target.value.replace(/^0+(?=\d)/,'')})}/></Field><small className="muted">0表示未设投入目标，仍可设置资产类别和持仓标签。</small>
+ {current?<><p className="muted small">本标的计划金额 {money(current.target_amount)} CNY · 组合计划比例合计 {money(current.plan_funding.total_target_pct)}%</p><PlanFundingNotice value={current.plan_funding}/></>:checkError?<div className="plan-funding"><small>额度校验暂不可用：{checkError}。保存时由服务端重新核算。</small><Button small onClick={()=>CheckRetry(v=>v+1)}>重试额度校验</Button></div>:<p className="muted small">正在核对计划资金…</p>}
+ <h3>资产类别与持仓标签</h3><Field label="资产类别"><select aria-label="资产类别" value={f.asset_class} onChange={e=>F({...f,asset_class:e.target.value})}>{['权益','债券','大宗商品','其他','未分类'].map(v=><option key={v}>{v}</option>)}</select></Field>
+ {labels&&context?<HoldingLabelFields value={labels} onChange={Labels} automatic={context.labels.automatic_scope} options={context.options} suggestions={context.options.suggestions}/>:<p className="muted small">读取当前标签…</p>}
+ <Notice>仅修改本组合此标的的投入计划、资产类别与持仓分类路径；历史交易保持原录入内容。</Notice><ErrorBox error={error}/>
+ <footer className="form-actions"><Button onClick={onClose}>取消</Button><button className="button primary" disabled={!context||!labels||review}>保存计划</button></footer></fieldset>{!context&&error&&<Button onClick={()=>Retry(v=>v+1)}>重新读取当前计划</Button>}{review&&<Notice>草稿已保留，组合数据已变化。请重新读取当前标签核对后再保存。当前计划：{context?.allocation.target_pct}% / {context?.allocation.asset_class}；当前保存路径：{context?.labels.path.join(' / ')}<Button small onClick={()=>{Retry(v=>v+1);Context(null);}}>重新读取并核对</Button>{context&&<Button small onClick={()=>Review(false)}>已核对，继续保存草稿</Button>}</Notice>}</form></Modal>;
 }
 
 export function FxForm({boot,onClose,onSaved}:BaseProps){const[f,F]=useState<Obj>({currency:'HKD',date:boot.today,rate:'',mode:'manual',end_date:''});const[error,E]=useState(''),[busy,B]=useState(false);const set=(k:string,v:any)=>F({...f,[k]:v});async function submit(e:React.FormEvent){e.preventDefault();B(true);try{await api('/fx',f);onSaved();}catch(e:any){E(e.message);}finally{B(false);}}

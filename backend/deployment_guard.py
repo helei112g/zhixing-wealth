@@ -70,7 +70,7 @@ def capture(directory, baseline=None):
 def verify(before, after):
     # A schema9 transition permits exactly the confirmed cleanup hashes. Every
     # other column, financial field, row, note and audit entry is checked as before.
-    permitted = before.get('schema9_cleanup_tables', {}) if before['schema'] < 9 and after['schema'] == 9 else {}
+    permitted = before.get('schema9_cleanup_tables', {}) if before['schema'] < 9 and after['schema'] >= 9 else {}
     changed = [name for name, value in before['tables'].items()
                if after['tables'].get(name) != permitted.get(name, value)]
     changed += [name for name, value in after['tables'].items() if name not in before['tables'] and value['count']]

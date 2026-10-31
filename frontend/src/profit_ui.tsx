@@ -4,7 +4,7 @@ export function ProfitEquation({value,compact=false}:Obj){const b=value;if(!b)re
  const split='cash_dividends_net' in b&&'reinvested_dividends_net' in b,rounding=split?b.component_rounding_adjustment:b.rounding_adjustment;
  const terms=[['price_net','价格收益','含汇兑，已扣费税'],...(split?[['cash_dividends_net','现金分红净收益','含已确认应收；到账后才回补可投金额'],['reinvested_dividends_net','红利再投资分红收益','按再投记录归集；非新增个人本金']]:[['dividends_net','累计净分红','含已确认应收；已计入收益']]),...(Number(b.other_income)!==0?[['other_income','其他收入','利息等收入']]:[])];
  return <div className={'profit-equation'+(compact?' compact':'')} data-profit-equation>
- {compact?<div className="equation-caption">= 收益构成 · CNY</div>:<div className="equation-total"><small>累计收益 · CNY</small><b className={tone(b.total)}>{signedMoney(b.total)}</b></div>}
+ {compact?<div className="equation-caption">收益构成 · CNY</div>:<div className="equation-total"><small>累计收益 · CNY</small><b className={tone(b.total)}>{signedMoney(b.total)}</b></div>}
  {!compact&&<span className="equation-symbol">=</span>}
  {terms.map(([key,label,note],i)=><div className="equation-part" key={key}>{i>0&&<span className="equation-symbol">+</span>}<div><small>{label}</small><b className={tone(b[key])}>{signedMoney(b[key])}</b>{!compact&&<small className="muted">{note}</small>}</div></div>)}
  {split&&<small className="muted equation-dividend-total">累计净分红合计 {signedMoney(b.dividends_net)} CNY，已包含在累计收益中。</small>}

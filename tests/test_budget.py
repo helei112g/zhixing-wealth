@@ -24,7 +24,7 @@ class BudgetTests(unittest.TestCase):
         return {'portfolio_id':self.p['id'],'kind':'BUY','date':'2024-01-01',
                 'instrument':{'market':'CN','code':'159307','name':'首次名称','currency':'CNY'},
                 'quantity':'2000','gross_amount':'2136','fee':'5','fx_rate':'1',
-                'asset_class':'权益','region':'国内','tags':['红利'],**extra}
+                'asset_class':'权益','region':'国内',**extra}
     def buy(self,**extra):return self.s.save_event(self.payload(**extra))
     def snap(self,**extra):return self.s.dashboard(self.p['id'],end='2024-01-03',**extra)
     def test_budget_available_without_deposit(self):
@@ -44,24 +44,24 @@ class BudgetTests(unittest.TestCase):
     def test_failed_buy_leaves_no_stub(self):
         with self.assertRaises(DomainError):self.buy(gross_amount='100001')
         self.assertEqual(self.store.state()['instruments'],[]);self.assertEqual(self.store.state()['allocations'],[])
-    def test_same_code_merges_latest_name_but_preserves_central_tags_and_history(self):
-        a=self.buy();self.s.attach_instrument(self.p['id'],a['instrument_id'],{'tags':['红利'],'asset_class':'权益','region':'国内'});second=self.payload(date='2024-01-02',instrument={'market':'CN','code':'159307','name':'最新名称','currency':'CNY'},tags=['成长'])
+    def test_same_code_merges_latest_name_but_preserves_central_classification_and_history(self):
+        a=self.buy();self.s.attach_instrument(self.p['id'],a['instrument_id'],{'asset_class':'权益','region':'国内'});second=self.payload(date='2024-01-02',instrument={'market':'CN','code':'159307','name':'最新名称','currency':'CNY'},asset_class='债券')
         preview=self.s.preview_event(second);self.assertEqual(len(preview['instrument_merge']['differences']),1)
         self.assertEqual(self.store.state()['instruments'][0]['name'],'首次名称')
         b=self.s.save_event(second);state=self.store.state();self.assertEqual(a['instrument_id'],b['instrument_id'])
         self.assertEqual(len(state['instruments']),1);self.assertEqual(len(state['allocations']),1)
-        self.assertEqual(state['instruments'][0]['name'],'最新名称');self.assertEqual(state['events'][0]['tags'],['红利'])
+        self.assertEqual(state['instruments'][0]['name'],'最新名称');self.assertEqual(state['events'][0]['asset_class'],'权益')
         self.s.cache_prices(a['instrument_id'],[{'date':str(today()),'price':'1.2'}])
         holding=self.s.dashboard(self.p['id'],view='summary')['holdings'][0]
-        self.assertTrue(all(lot['tags']==['红利'] for lot in holding['lots']))
+        self.assertTrue(all(lot['asset_class']=='权益' for lot in holding['lots']))
         self.assertEqual(sum(D(lot['value_base']) for lot in holding['lots']),4800)
-    def test_same_security_other_portfolio_keeps_independent_tags(self):
+    def test_same_security_other_portfolio_keeps_independent_classification(self):
         a=self.buy();q=self.s.save_portfolio({'name':'另一组合','planned_amount':'50000','start_date':'2024-01-01'})
-        b=self.buy(portfolio_id=q['id'],tags=['成长'])
+        b=self.buy(portfolio_id=q['id'],asset_class='债券')
         self.assertEqual(a['instrument_id'],b['instrument_id'])
-        self.s.attach_instrument(self.p['id'],a['instrument_id'],{'tags':['红利']});self.s.attach_instrument(q['id'],a['instrument_id'],{'tags':['成长']})
-        alloc=self.store.state()['allocations'];self.assertEqual(next(r for r in alloc if r['portfolio_id']==self.p['id'])['tags'],['红利'])
-        self.assertEqual(next(r for r in alloc if r['portfolio_id']==q['id'])['tags'],['成长'])
+        self.s.attach_instrument(self.p['id'],a['instrument_id'],{'asset_class':'权益'});self.s.attach_instrument(q['id'],a['instrument_id'],{'asset_class':'债券'})
+        alloc=self.store.state()['allocations'];self.assertEqual(next(r for r in alloc if r['portfolio_id']==self.p['id'])['asset_class'],'权益')
+        self.assertEqual(next(r for r in alloc if r['portfolio_id']==q['id'])['asset_class'],'债券')
     def test_same_code_can_distinguish_stock_and_otc_fund_namespace(self):
         self.buy(instrument={'market':'CN','code':'000001','name':'股票'},quantity='10',gross_amount='100')
         self.buy(instrument={'market':'FUND','code':'000001','name':'场外基金'},quantity='10',gross_amount='100')
@@ -69,13 +69,13 @@ class BudgetTests(unittest.TestCase):
     def test_budget_deposit_and_fx_entries_are_rejected(self):
         for k in ('DEPOSIT','OPENING_CASH','WITHDRAW','FX'):
             with self.assertRaises(DomainError):self.s.save_event({'portfolio_id':self.p['id'],'kind':k,'date':'2024-01-01','amount':'100','fx_rate':'1'})
-    def test_csv_buy_creates_instrument_and_keeps_tags_as_audit_not_current_plan(self):
+    def test_csv_buy_creates_instrument_and_ignores_retired_tags_and_roundtrips(self):
         text='kind,date,market,code,name,currency,quantity,gross_amount,fee,fx_rate,tags\nBUY,2024-01-01,CN,159307,第一名称,CNY,2000,2136,5,1,红利\nBUY,2024-01-02,CN,159307,第二名称,CNY,100,110,1,1,成长\n'
         r=self.s.csv_preview(text,'events',self.p['id']);self.assertEqual(r['errors'],[])
         self.assertEqual(self.store.state()['instruments'],[])
         self.assertEqual(self.s.csv_import(text,'events',self.p['id'])['imported'],2)
         state=self.store.state();self.assertEqual(len(state['instruments']),1)
-        self.assertEqual(state['instruments'][0]['name'],'第二名称');self.assertEqual(state['allocations'][0]['tags'],[]);self.assertEqual(state['events'][1]['tags'],['成长'])
+        self.assertEqual(state['instruments'][0]['name'],'第二名称');self.assertTrue(all('tags' not in r for name in ('allocations','events') for r in state[name]))
         r=self.s.csv_import(self.s.csv_export(self.p['id']),'events',self.p['id']);self.assertEqual(r['imported'],0)
     def test_invalid_csv_creates_no_partial_instrument(self):
         text='kind,date,market,code,currency,quantity,gross_amount,fx_rate\nBUY,2024-01-01,CN,159307,CNY,100,100,1\nBUY,2024-01-02,CN,510300,CNY,100,999999,1\n'
@@ -105,7 +105,7 @@ class BudgetTests(unittest.TestCase):
     def test_cash_dividend_reinvestment_does_not_add_budget_or_double_count(self):
         e=self.buy();p={'portfolio_id':self.p['id'],'instrument_id':e['instrument_id'],'kind':'REINVEST','date':'2024-01-02',
             'gross_amount':'10','net_amount':'10','pay_date':'2024-01-02','reinvest_quantity':'3',
-            'reinvest_gross_amount':'10','fx_rate':'1','tags':['红利']}
+            'reinvest_gross_amount':'10','fx_rate':'1'}
         self.s.save_event(p);r=self.snap();self.assertEqual(D(r['capital']),100000);self.assertEqual(D(r['cash_total']),97859)
         self.assertEqual(D(r['holdings'][0]['quantity']),2003)
     def test_budget_change_is_effective_today_and_not_profit(self):

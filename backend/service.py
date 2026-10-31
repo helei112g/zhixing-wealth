@@ -13,7 +13,7 @@ import zipfile
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
-from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, now, ratio, tags, canonical_region, today, wire
+from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, now, ratio, classification, canonical_region, today, wire
 from .ledger import Ledger, Market, normalize_event, periods, split_notice_records, split_notice_confirmed
 from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES, cached_query
 from .version import VERSION, NAME
@@ -40,7 +40,7 @@ def running_days(portfolio):
 
 
 def event_fingerprint(record):
-    canonical = {k: v for k, v in record.items() if k not in ('id', 'created_at', 'updated_at', 'sequence', 'change_reason', 'allow_duplicate', 'locked_base_amount', 'fingerprint')}
+    canonical = {k: v for k, v in record.items() if k not in ('id', 'created_at', 'updated_at', 'sequence', 'change_reason', 'allow_duplicate', 'locked_base_amount', 'fingerprint', 'tags')}
     if 'region' in canonical:canonical['region']=canonical_region(canonical['region'])
     if canonical.get('record_date') is None:canonical.pop('record_date',None)
     if record['kind'] not in ('DIVIDEND', 'REINVEST'):
@@ -181,7 +181,7 @@ class Service:
                   created_at=(old or {}).get('created_at') or now(),updated_at=now())
         old_alloc=next((a for a in state['allocations'] if a['portfolio_id']==portfolio['id'] and a['instrument_id']==inst['id']),None)
         allocation=dict(old_alloc or {},portfolio_id=portfolio['id'],instrument_id=inst['id'],
-                        target_pct=(old_alloc or {}).get('target_pct','0'),**tags(old_alloc or {}))
+                        target_pct=(old_alloc or {}).get('target_pct','0'),**classification(old_alloc or {}))
         differences=[]
         if old and old['name']!=name:differences.append({'field':'名称','before':old['name'],'after':name})
         info={'instrument':inst,'allocation':allocation,'before_instrument':old,'before_allocation':old_alloc,
@@ -196,7 +196,7 @@ class Service:
         db.execute('INSERT OR REPLACE INTO instruments VALUES (?,?,?)',(inst['id'],info['identity'],json_dumps(inst)))
         db.execute('INSERT OR REPLACE INTO allocations VALUES (?,?,?)',(allocation['portfolio_id'],inst['id'],json_dumps(allocation)))
         self.store.audit(db,'instrument',inst['id'],info['before_instrument'],inst,'买入时按代码合并标的；名称以最新填写为准')
-        self.store.audit(db,'allocation',allocation['portfolio_id']+':'+inst['id'],info['before_allocation'],allocation,'建立本组合持仓关联；保留历史筛选属性')
+        self.store.audit(db,'allocation',allocation['portfolio_id']+':'+inst['id'],info['before_allocation'],allocation,'建立本组合持仓关联及分类')
 
     def save_instrument(self, data):
         scope = data.get('portfolio_id')
@@ -229,7 +229,7 @@ class Service:
                 existing = next((a for a in state['allocations'] if a['portfolio_id'] == scope and a['instrument_id'] == result['id']), None)
                 if not existing:
                     allocation = {'portfolio_id': scope, 'instrument_id': result['id'],
-                                  'target_pct': '0', **tags(data)}
+                                  'target_pct': '0', **classification(data)}
                     db.execute('INSERT INTO allocations VALUES (?,?,?)', (scope, result['id'], json_dumps(allocation)))
         return result
 
@@ -240,9 +240,9 @@ class Service:
             old = next((a for a in state['allocations'] if a['portfolio_id'] == portfolio_id and a['instrument_id'] == instrument_id), None)
             pct = plan_percentage(data.get('target_pct'))
             funding = plan_funding(self.plan_snapshot(state, portfolio), instrument_id=instrument_id, target_pct=pct)
-            item = {'portfolio_id': portfolio_id, 'instrument_id': instrument_id, 'target_pct': ds(pct), **tags(data)}
+            item = {'portfolio_id': portfolio_id, 'instrument_id': instrument_id, 'target_pct': ds(pct), **classification(data)}
             db.execute('INSERT OR REPLACE INTO allocations VALUES (?,?,?)', (portfolio_id, instrument_id, json_dumps(item)))
-            self.store.audit(db, 'allocation', portfolio_id + ':' + instrument_id, old, item, '更新持仓计划/当前标签；保留原始流水录入标签')
+            self.store.audit(db, 'allocation', portfolio_id + ':' + instrument_id, old, item, '更新持仓计划及资产类别、地区')
         return wire(dict(item, plan_funding=funding))
 
     def plan_snapshot(self, state, portfolio):
@@ -984,7 +984,9 @@ class Service:
             try:
                 if category == 'events':
                     payload = dict(raw, portfolio_id=portfolio_id)
-                    if (raw.get('tags') or '').startswith('['):payload['tags']=json.loads(raw['tags'])
+                    # Legacy CSV columns are ignored and cannot reintroduce retired tags.
+                    payload.pop('tags', None)
+                    if payload.get('region') == '混合': payload['region'] = '未分类'
                     instrument_input=None
                     if payload.get('code') and str(payload.get('kind','')).upper() in ('BUY','OPENING_POSITION','SUBSCRIBE_PENDING','REINVEST') and not any(i['id']==payload.get('instrument_id') for i in state['instruments']):
                         instrument_input={'market':payload.get('market') or ('HK' if len(payload['code'])==5 else 'CN'),
@@ -996,7 +998,6 @@ class Service:
                         matching = [i for i in state['instruments'] if i['code'] == payload['code'].zfill(5 if raw.get('market') == 'HK' else 6) and (not raw.get('market') or i['market'] == raw['market'])]
                         if len(matching) != 1: raise DomainError('请用instrument_id或准确市场+代码指定标的')
                         payload['instrument_id'] = matching[0]['id']
-                    if raw.get('tags', '').startswith('['): payload['tags'] = json.loads(raw['tags'])
                     source_id = raw.get('event_id') or None
                     e, duplicate, candidate = self.prepared_csv_event(state_for_row, payload, source_id)
                     if not source_id: duplicate = duplicate or (e['fingerprint'] if e['fingerprint'] in seen else None)
@@ -1072,12 +1073,12 @@ class Service:
                   'fx_rate', 'fx_type', 'fx_source_date', 'payment_date', 'confirmation_date', 'net_amount', 'pay_date', 'pay_fx_rate',
                   'reinvest_quantity', 'reinvest_price', 'reinvest_gross_amount', 'reinvest_date', 'reinvest_fx_rate', 'pay_fx_source_date', 'pay_fx_type', 'reinvest_fx_source_date', 'reinvest_fx_type', 'tax_known', 'ex_date_known',
                   'from_currency', 'to_currency', 'from_amount', 'to_amount', 'from_fx_rate', 'to_fx_rate', 'factor',
-                  'new_quantity', 'new_cost', 'historical_cost', 'initial_net_invested', 'asset_class', 'region', 'tags', 'reason', 'external_ref', 'reservation_id', 'transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined']
+                  'new_quantity', 'new_cost', 'historical_cost', 'initial_net_invested', 'asset_class', 'region', 'reason', 'external_ref', 'reservation_id', 'transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined']
         buf = io.StringIO(); writer = csv.DictWriter(buf, fieldnames=fields, extrasaction='ignore'); writer.writeheader()
         for e in state['events']:
             if e['portfolio_id'] == portfolio_id:
                 inst=next((i for i in state['instruments'] if i['id']==e.get('instrument_id')),{})
-                writer.writerow(dict(e, event_id=e['id'], market=inst.get('market',''),code=inst.get('code',''),name=inst.get('name',''),tags=json_dumps(e.get('tags', [])),sell_lots=json_dumps(e.get('sell_lots',[])) if e.get('sell_lots') else '',dividend_basis=json_dumps(e['dividend_basis']) if e.get('dividend_basis') else ''))
+                writer.writerow(dict(e, event_id=e['id'], market=inst.get('market',''),code=inst.get('code',''),name=inst.get('name',''),sell_lots=json_dumps(e.get('sell_lots',[])) if e.get('sell_lots') else '',dividend_basis=json_dumps(e['dividend_basis']) if e.get('dividend_basis') else ''))
         return '\ufeff' + buf.getvalue()
 
     def backup_download(self):

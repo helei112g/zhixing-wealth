@@ -49,3 +49,5 @@
 .banner-valuation{margin-top:6px;font-size:12px;overflow-wrap:anywhere}.banner-valuation summary{cursor:pointer}.banner-valuation ul{margin:6px 0;padding-left:18px}.banner-valuation li{margin:3px 0}
 
 .family-overview-footnotes b{width:100%;line-height:1.7}.family-overview-footnotes strong small{width:auto}
+
+.family-intro{justify-content:flex-end}.notification-issues{margin:14px 0;padding:16px;border:1px solid #e6c7c4;border-radius:8px;background:#fff8f7}.notification-issues h3{font-size:13px;margin:0 0 8px}.notification-issues ul{padding:0;list-style:none;margin:0}.notification-issues li{padding:12px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}.notification-issues small{display:block;color:var(--muted);margin-top:5px;line-height:1.7}

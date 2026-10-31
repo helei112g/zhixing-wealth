@@ -4,7 +4,7 @@ import {Empty,ErrorBox,Panel} from './components';
 import {HoldingsRanking} from './holdings_ui';
 import './holding_analysis.css';
 
-const colors:Record<string,string>={'A股':'#4dabf7','港股':'#ff922b','美股':'#b197fc','海外权益':'#f783ac','国内债券':'#69db7c','海外债券':'#38d9a9','大宗商品':'#ffd43b','货币':'#a9e34b','混合 / 其他':'#94a3b8','待确认':'#cbd5e1'};
+const colors:Record<string,string>={'A股':'#91a9bf','港股':'#98b3a7','美股':'#ac9db8','海外权益':'#c0a1a4','国内债券':'#b5b798','海外债券':'#94b3b6','大宗商品':'#c4ad82','货币':'#b2bdaa','混合 / 其他':'#a6aeb7','待确认':'#cbd0d5'};
 function Sunburst({data,selected,onSelect}:Obj){
  const container=useRef<HTMLDivElement>(null),[width,W]=useState(600);
  useEffect(()=>{const node=container.current;if(!node)return;const observer=new ResizeObserver(()=>W(Math.max(210,Math.floor(node.getBoundingClientRect().width))));observer.observe(node);return()=>observer.disconnect();},[]);

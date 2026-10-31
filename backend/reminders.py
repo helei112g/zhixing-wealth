@@ -87,8 +87,8 @@ class ReminderService:
         items += sync_reminders(self.store.jobs())
         notification = self.notifications.status()
         if notification.get('enabled') and notification.get('error'):
-            items.append(dict(id='system:notifications',source='system',kind='notification_failure',title='系统通知需要检查',detail=notification['error'],
-                              date=None,days=None,amount=None,currency=None,severity='attention',action=dict(type='settings',label='前往设置')))
+            items.append(dict(id='system:notifications',source='system',kind='notification_failure',title='系统通知排程需要处理',detail=notification['error'],
+                              date=None,days=None,amount=None,currency=None,severity='attention',action=dict(type='settings',label='处理系统通知')))
         items = sorted({r['id']:r for r in items}.values(),key=lambda r:(r['severity']=='upcoming',r.get('date') or '',r['id']))
         return wire(dict(items=items,count=len(items),today=sum(r.get('days')==0 for r in items),revision=revision,as_of=str(today()),notification=notification))
 

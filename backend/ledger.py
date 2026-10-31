@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from .trading_calendar import no_expected_session
-from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, month_after, ratio, tags, today, wire
+from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, month_after, ratio, classification, today, wire
 
 KINDS = {'DEPOSIT', 'WITHDRAW', 'BUY', 'SELL', 'DIVIDEND', 'REINVEST', 'FX', 'FEE', 'TAX',
          'INTEREST', 'OPENING_CASH', 'OPENING_POSITION', 'OPENING_RECEIVABLE',
@@ -108,14 +108,16 @@ def normalize_event(payload, portfolio, instruments, defaults=None):
             raise DomainError('卖出实收金额必须大于0')
         if kind == 'OPENING_POSITION' and (dec(p['fee']) or dec(p['tax'])):
             raise DomainError('期初公允价值不含本期新费用；历史成本另填')
+    if 'tags' in p:
+        raise DomainError('旧风格/主题标签已移除，请使用独立的持仓分类路径')
     if kind in {'BUY', 'OPENING_POSITION', 'REINVEST'}:
         merged = dict(defaults or {})
-        for key in ('asset_class', 'region', 'tags'):
+        for key in ('asset_class', 'region'):
             if key in p:
                 merged[key] = p[key]
-        p.update(tags(merged))
+        p.update(classification(merged))
     else:
-        for key in ('asset_class', 'region', 'tags'):
+        for key in ('asset_class', 'region'):
             p.pop(key, None)
     if kind not in {'BUY','SELL','REINVEST','FX','OPENING_POSITION'} and dec(p['fee']) != 0:
         raise DomainError('此类流水的手续费请单独记录为费用，不能隐含扣除')
@@ -205,7 +207,7 @@ def normalize_event(payload, portfolio, instruments, defaults=None):
                'amount','quantity','price','gross_amount','net_amount','tax_known','ex_date_known','pay_fx_rate',
                'reinvest_quantity','reinvest_price','reinvest_gross_amount','reinvest_fx_rate','pay_fx_source_date','pay_fx_type','reinvest_fx_source_date','reinvest_fx_type','from_currency','to_currency','from_amount',
                'to_amount','from_fx_rate','to_fx_rate','factor','new_quantity','new_cost','historical_cost',
-               'initial_net_invested','asset_class','region','tags','locked_base_amount','reservation_id','transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined'}
+               'initial_net_invested','asset_class','region','locked_base_amount','reservation_id','transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined'}
     return {k: v for k, v in p.items() if k in allowed and v != ''}
 
 
@@ -409,7 +411,7 @@ class Ledger:
         self.fees += fee * fx
         self.taxes += tax * fx
         p['lots'].append({'event_id': e['id'], 'date': str(d), 'available_on': e.get('confirmation_date') or str(d),
-                          'quantity': qty, **tags(e)})
+                          'quantity': qty, **classification(e, historical=True)})
         self.last_trades[inst] = {'price': ds(price), 'date': str(d), 'source': '已确认成交价（暂估）', 'kind': 'raw', 'fallback': True}
 
     def sell_quantity(self, e, d, qty):
@@ -482,7 +484,7 @@ class Ledger:
                 p['net_known'] = False
             else:
                 p['net_invested'] += dec(e['initial_net_invested'])
-            p['lots'].append({'event_id': event_id, 'date': d, 'available_on': d, 'quantity': qty, **tags(e)})
+            p['lots'].append({'event_id': event_id, 'date': d, 'available_on': d, 'quantity': qty, **classification(e, historical=True)})
             self.last_trades[inst] = {'price': e['price'], 'date': d, 'source': '期初公允价值', 'kind': 'raw', 'fallback': True}
         elif kind == 'OPENING_RECEIVABLE':
             value = dec(e['amount']); self.receive(event_id + ':opening', c, value, inst, '期初应收')
@@ -640,7 +642,7 @@ class Ledger:
                 elif (day(d) - day(quote['date'])).days > 4 and not no_expected_session(i['market'], quote['date'], d):
                     warnings.append(i['name'] + '沿用' + quote['date'] + '价格，可能休市或尚未更新')
             allocation = self.allocations.get(inst_id, {})
-            lots = [dict(lot, **(tags(allocation) if self.budget_mode else {}), value_base=lot['quantity'] * current_price * dec(rate['rate'])
+            lots = [dict(lot, **(classification(allocation, historical=True) if self.budget_mode else {}), value_base=lot['quantity'] * current_price * dec(rate['rate'])
                          if current_price is not None and rate is not None else None)
                     for lot in p['lots'] if lot['quantity'] > 0]
             holdings.append({'instrument': i, 'instrument_id': inst_id, 'quantity': qty, 'unconfirmed_split': unresolved_split,

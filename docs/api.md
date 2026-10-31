@@ -25,7 +25,7 @@
 
 | operation | payload |
 |---|---|
-| item | name、category(cash/fixed/investment/receivable/insurance/debt)、currency(CNY/HKD/USD)、effective_on；household_amount 为实际持有/承担金额（非保险必填非负，保险可null）。编辑时同时追加资料与金额历史。债务可附 started_on、payment_plan；保单可附 insured、coverage_type、coverage_amount、policy_end、payment_plan。类别／币种不可修改 |
+| item | name、category(cash/fixed/investment/receivable/insurance/debt)、currency(CNY/HKD/USD)、effective_on；household_amount 为实际持有/承担金额（非保险必填非负，保险可null）。编辑时同时追加资料与金额历史。债务可附 started_on、payment_plan；保单可附 insured、coverage_type、coverage_amount、policy_end、policy_lifetime、payment_plan。类别／币种不可修改 |
 | valuation | 余额快照追加：item_id、effective_on、household_amount；旧 amount/restricted/interest/fees/source 继续支持。早于项目首笔日期补录时，现金/固定资产/理财/应收款可显式传 extend_start=true，预览后提前统计起始日，不覆盖后续快照或资料；其他类别拒绝提前 |
 | links | portfolio_ids(1–100个不同组合ID)、effective_on(默认今天)；按100%关联，整批事务、任一失败不写入 |
 | unlink | link_ids(1–100个不同关联ID)、effective_on(默认今天)；当天起不计入，保留组合和历史，允许同日解除后重新关联 |
@@ -43,7 +43,7 @@ payment_plan 为对象：mode=none 表示不设置；债务支持 once/fixed/ann
 
 每期按月／年从首次日期推算，短月取月末，后续仍按原日期锚定。等额本息按月利率计算固定本息；等额本金固定本金加剩余本金利息；金额四舍五入到分，末期结清舍入余数。预览 result.payment_preview 包含首期、末期日期、期数与总付款。overview.items[].payment_end 为规则结束日期。规则只生成预计提醒，不写实际交易，不自动减少欠款和现金。配置规则后旧手工同类提醒保留存储但不重复展示。
 
-应收款只参与资产和金额历史，不生成计划；旧 started_on/due_on 保留但不展示。负债余额为0时不再产生还款提醒。保单 policy_end 生成续保提醒；日期过后从列表移出。提醒没有“已处理”工作流，不因为过期清零金额。
+应收款只参与资产和金额历史，不生成计划；旧 started_on/due_on 保留但不展示。负债余额为0时不再产生还款提醒。保单 policy_end 生成续保提醒；policy_lifetime=true表示终身保障且policy_end必须为空，仅取消到期续保，不取消缴费计划；日期过后从列表移出。提醒没有“已处理”工作流，不因为过期清零金额。
 
 收入不是资产类别，不进入资产余额／净资产，不自动入账现金。income.rows 中 recorded=false 为未记录；缺汇率时 total 或分类 groups 对应值为null。外币收入按记录 date 当日或此前最近可得历史汇率换算，records[].fx 显示来源，日期不跨月；金额更正保留版本。不同收入记录相加，同一记录更正不重复累计。
 
@@ -112,10 +112,10 @@ macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当
 新客户端始终显式发送 `page`：
 
 ```text
-GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
+GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&asset_class=权益
 ```
 
-中文和特殊标签须用标准 URL 编码。所有筛选为 AND：
+中文分类参数须用标准 URL 编码。所有筛选为 AND：
 
 | 参数 | 含义 |
 |---|---|
@@ -123,7 +123,6 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 | page_size | 默认20，最大100；UI 提供20/50/100 |
 | instrument_id | 仅本组合某个标的；不能用另一组合的标的范围 |
 | market | ALL、CN、HK、US、FUND、CASH、OTHER |
-| tag | 当前计划中的某个主题标签，精确匹配 |
 | asset_class / region | 当前计划分类；旧国内/海外兼容为A股/海外其他 |
 
 返回：`items`、`total`（筛选后）、`unfiltered_total`（本组合/标的范围内筛选前）、`page`、`page_size`、`page_count`、`filters`、`facets`、`portfolio_id`、`instrument_id`、`revision`。每个 item 有 event、instrument、facts、actual 和 can_view_profit/can_edit/can_cancel。
@@ -137,7 +136,7 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 | 方法与路径 | 必要内容 |
 |---|---|
 | POST `/api/portfolios` / PUT `/api/portfolios/{pid}` | name、planned_amount、start_date；可选 description 为最多10000字的纯文字组合介绍（保留换行）；目标、基准、归档等见 schema |
-| PUT `/api/portfolios/{pid}/instruments/{iid}` | target_pct、asset_class、region、tags；单标的比例0–100；组合资金不足仅提醒，不限制合计≤100 |
+| PUT `/api/portfolios/{pid}/instruments/{iid}` | target_pct、asset_class、region；单标的比例0–100；组合资金不足仅提醒，不限制合计≤100 |
 | POST `/api/events/preview` | 拟写入的完整事件；更正带 id。只读计算，返回 revision、event、现金变化、warnings、duplicate_of、instrument_merge |
 | POST `/api/events` | 与已核对预览相同的输入；expected_revision；服务端再校验 |
 | PUT `/api/events/{id}` | 更正后的完整事件、change_reason、expected_revision；从原记录合并，不丢弃隐藏历史字段 |
@@ -359,6 +358,12 @@ Dashboard full 视图包含 `curve_quality`：`missing_days`、`from/to` 和 `re
 
 持仓分布只分析当前持仓，所有金额为CNY的Decimal字符串，占比为0–1比例，未知为null。`basis=holdings` 分母为全部当前证券市值；`assets` 纳入剩余可投金额和应收及在途系统节点。每个node含id、path、value、weight、holding_ids和children。父节点直接归属且同时有下级时补“本级持仓”，保证下级金额可核对。缺估值/汇率或存在负值、非正总额时eligible=false，保留明细并说明reason。标签未知仍计入分母。
 
-旧 `GET /api/tags` 和旧多选标签统计已移除，返回404且不在OpenAPI中；历史asset_class/region/tags和对应流水筛选保留。
+旧 `GET /api/tags` 和旧多选标签统计已移除，返回404且不在OpenAPI中；asset_class/region和对应流水筛选保留；旧tags由schema9清理。
 
 资产总览 `metrics.total_assets` 另返回 known_value、missing_count、missing_categories、complete。完整金额缺失时value/rate/amount仍为null，UI只显示明确标注的已知资产合计，不将缺失金额补零。
+
+### 分类与通知变更（2026.10.31）
+
+资产类别：权益、债券、大宗商品、其他、未分类；地区：A股、美股、港股、海外其他、未分类。AllocationRequest不再接受tags，流水tag筛选返回422；事件写入拒绝tags。旧CSV的tags列兼容忽略且不入库，导出不含tags列。schema9清除业务行根级旧tags，将混合地区转未分类；独立holding_labels保持不变。
+
+GET /api/notifications返回missing_requests：每项含id、schedule_id、item_id、portfolio_id、name、kind、due_date、at、reason及可选error_domain/error_code；未知系统原因明确标注。POST action支持refresh（重新排程并验证系统队列）、open_settings（打开本机macOS通知设置）、enable/disable/test。原生弹出通知继续隐藏名称与金额；详情只在本机设置页面展示。排程成功不等于用户看见或业务已处理。

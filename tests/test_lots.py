@@ -99,10 +99,10 @@ class LotTests(unittest.TestCase):
     def test_history_buy_does_not_reassign_a_selected_sale(self):
         a=self.buy(date='2024-01-03');sale=self.sell([(a,100)],gross='1200');b=self.buy(date='2024-01-02',gross='500')
         r=self.result();self.assertEqual(r[sale['id']]['parts'][0]['buy_event_id'],a['id']);self.assertEqual(r[sale['id']]['profit'],D('200'));self.assertEqual(r[b['id']]['remaining_quantity'],100)
-    def test_central_tags_are_not_overwritten_by_later_buys(self):
-        a=self.buy(tags=['旧输入']);self.s.attach_instrument(self.p['id'],a['instrument_id'],{'target_pct':'15','asset_class':'权益','region':'国内','tags':['红利']})
-        self.buy(date='2024-01-02',tags=['成长'],asset_class='债券')
-        allocation=self.store.state()['allocations'][0];self.assertEqual(allocation['tags'],['红利']);self.assertEqual(allocation['asset_class'],'权益')
+    def test_central_classification_are_not_overwritten_by_later_buys(self):
+        a=self.buy(asset_class='其他');self.s.attach_instrument(self.p['id'],a['instrument_id'],{'target_pct':'15','asset_class':'权益','region':'国内'})
+        self.buy(date='2024-01-02',asset_class='债券')
+        allocation=self.store.state()['allocations'][0];self.assertEqual(allocation['region'],'A股');self.assertEqual(allocation['asset_class'],'权益')
 
 class XirrTests(unittest.TestCase):
     def test_official_example_and_actual_days(self):

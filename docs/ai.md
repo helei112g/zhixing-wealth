@@ -52,6 +52,8 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 
 金额为精确十进制字符串，null为未知，0为已知零；UI的万/亿不改变API原值。总览默认月比上月末、年比上年末，趋势分析使用 comparison=previous（月比上月末、年比上年末）；只有明确要求同比时才用 comparison=yoy。所有余额是时点量，不能把月末余额相加当总资产。
 
+分红出现 needs_review 时，先读候选的 recorded_event、review_basis、review_changes 和 revision，展示实际金额、日期、税费与锁定汇率。用户明确要求保留实际到账并结束核对时，用 `write POST /api/dividends/NOTICE_ID/review REQUEST.json --confirm-write`，传 portfolio_id、event_id、mode=keep_recorded、原样 review_basis、原 expected_revision 及 reason。无独立服务端预览，展示上述原值与仅保存结论的影响即可；不经 events 接口重存流水。提交后回读候选、reminders 和 dividend_decision 审计；409或超时不自动重试。参考值微调规则见 [API 文档](api.md#分红核对保留实际到账)。通知已读、关闭弹窗及刷新来源都不构成业务核对授权。
+
 ## 验证与维护
 
 红利再投可用 `Client.reinvestment_estimate(portfolio_id, instrument_id, date, gross_amount)`，或 `read /api/portfolios/P/instruments/I/reinvestment-estimate?date=2024-06-03&gross_amount=10` 获取只读估算。UI与AI共用该计算：仅场外基金同日自动单位净值，份额按总价÷净值四舍五入至两位。返回null时不得填0，不用股票收盘价、相邻日或累计净值代替。实际确认单优先；核对后显式填 reinvest_quantity，再预览、按预览revision提交并回读。详见 [接口文档](api.md)。

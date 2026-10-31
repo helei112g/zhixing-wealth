@@ -37,6 +37,22 @@ class WriteRequest(BaseModel):
     expected_revision: int | str | None = Field(None, description='从 bootstrap 或交易预览读取。提交时若账本变化则返回409，不写入；建议所有AI写入提供。')
 
 
+class DividendReviewRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    portfolio_id: str
+    event_id: str = Field(description='候选 recorded_event.id；只核对此原流水，不新增或更改流水')
+    mode: Literal['keep_recorded']
+    review_basis: dict[str, Any] = Field(description='原样传回候选 review_basis，拒绝过时的权益或公告依据')
+    expected_revision: int = Field(ge=0, strict=True, description='必须使用候选 revision；旧版本409，不重试')
+    reason: str = Field(min_length=1, max_length=2000, description='本人核对并保留实际到账记录的说明')
+
+
+class DividendReviewResult(BaseModel):
+    decision: dict[str, Any] = Field(description='含 review_basis、event_id、mode、reason、review_revision 的可审计核对结论')
+    event: dict[str, Any] = Field(description='保持原样的已确认流水，包括金额、日期和锁定汇率')
+    revision: int
+
+
 class PortfolioRequest(WriteRequest):
     name: str
     description: str | None = Field(None, max_length=10000, description='可选组合介绍，纯文字，保留换行；省略或null保留原介绍，空字符串清空')

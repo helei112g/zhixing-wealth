@@ -188,6 +188,32 @@ def main():
     else:raise AssertionError('duplicate split accepted')
     client.write('/api/events/'+sale_saved['id'],dict(reason='合成取消补录',expected_revision=revision()),'DELETE')
     check(client.request(split_path)['facts']['split']['quantity_after']=='480','AI cancellation replays split without rewriting confirmation')
+    check(cap['dividend_review']['mode']=='keep_recorded' and not cap['dividend_review']['event_write'],'AI discovers review without event writes')
+    check('/api/dividends/{notice_id}/review' in client.request(cap['openapi'])['paths'],'AI discovers dividend review contract')
+    holding=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'HK','code':'02800','name':'AI合成分红核对'},quantity='100',gross_amount='1000',fx_rate='.9',expected_revision=revision()),'POST')
+    dividend_source=dict(code='02800',source_ref='synthetic-review',record_date=None,ex_date='2024-06-03',pay_date=None,per_share='1',currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')
+    fixture="from pathlib import Path;import sys,json;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');Service(Store(d)).cache_dividends(sys.argv[2],[json.loads(sys.argv[3])])"
+    def cache_dividend(rate):
+        subprocess.run([sys.executable,'-c',fixture,str(expected),holding['instrument_id'],json.dumps(dict(dividend_source,per_share=rate))],cwd=Path(__file__).resolve().parents[1],check=True)
+    candidates='/api/portfolios/'+p['id']+'/dividends?instrument_id='+holding['instrument_id']
+    cache_dividend('1');candidate=client.request(candidates)[0]
+    confirmed=client.write('/api/dividends/'+candidate['notice']['id']+'/confirm',dict(candidate['suggested_event'],gross_amount='99.9876',net_amount='98.7531',tax='1.2345',tax_known=True,pay_date='2024-06-05',fx_rate='.91',pay_fx_rate='.92',expected_revision=candidate['revision']),'POST')
+    cache_dividend('1.01');candidate=client.request(candidates)[0]
+    check(candidate['status']=='needs_review' and candidate['recorded_event']==confirmed,'AI reference correction exposes original receipt without rewriting it')
+    original=client.request('/api/portfolios/'+p['id']+'/transactions/'+confirmed['id'])['event']
+    body=dict(portfolio_id=p['id'],event_id=confirmed['id'],mode='keep_recorded',review_basis=candidate['review_basis'],expected_revision=candidate['revision'],reason='AI合成实际到账核对')
+    check(revision()==candidate['revision'],'AI read-and-display review has no side effects')
+    reviewed=client.write('/api/dividends/'+candidate['notice']['id']+'/review',body,'POST')
+    check(reviewed['event']==original and client.request('/api/portfolios/'+p['id']+'/transactions/'+confirmed['id'])['event']==original,'AI completes review with exact receipt and FX preserved')
+    check(client.request(candidates)[0]['status']=='confirmed' and not any(r.get('event_id')==confirmed['id'] for r in client.request('/api/reminders')['items']),'AI review clears candidate and shared reminder')
+    check(client.request('/api/revisions/dividend_decision/'+reviewed['decision']['id'])[0]['after_data']['mode']=='keep_recorded','AI reads back review audit')
+    try:client.write('/api/dividends/'+candidate['notice']['id']+'/review',body,'POST')
+    except RuntimeError as error:check('HTTP 409' in str(error),'AI stale review cannot create duplicate event or decision')
+    else:raise AssertionError('stale dividend review accepted')
+    cache_dividend('1.01005')
+    check(client.request(candidates)[0]['status']=='confirmed','AI Yahoo micro refresh leaves review complete')
+    client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-03',instrument_id=holding['instrument_id'],quantity='1',gross_amount='10',fx_rate='.9',expected_revision=revision()),'POST')
+    check(client.request(candidates)[0]['status']=='needs_review','AI real entitlement change reopens review')
     (output/'ai-passed.json').write_text(json.dumps({'checks':len(checks),'passed':checks},ensure_ascii=False,indent=2))
 
 

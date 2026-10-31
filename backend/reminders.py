@@ -12,8 +12,14 @@ def dividend_reminders(store, state):
         if p.get('archived'): continue
         for c in service.dividend_candidates(p['id'], state=state):
             if c['status'] not in ('pending', 'needs_review'): continue
-            facts = {k:c[k] for k in ('notice','status','eligible_quantity','estimated_gross','previous_basis','recorded_event')}
-            facts['notice'] = {k:v for k,v in facts['notice'].items() if k != 'fetched_at'}
+            # Micro reference-rate refreshes update the inbox, not task identity.
+            # cache_dividends retains a fixed source anchor until material change.
+            # A completed review advances review_revision, so a later substantive
+            # correction gets a new dispatch even if its entitlement is unchanged.
+            facts = {k:c[k] for k in ('status','event_id','review_revision')}
+            facts['per_share'] = (c['notice'].get('notification_basis') or c['notice'])['per_share']
+            facts['entitlement'] = {k:c['review_basis'].get(k) for k in
+                                    ('eligible_quantity','record_date','notice_record_date','ex_date','pay_date','currency','split_restore_factor')}
             fingerprint = hashlib.sha256((p['id']+c['notice']['id']+json_dumps(facts)).encode()).hexdigest()
             rows.append(dict(id='dividend:'+p['id']+':'+c['notice']['id'],source='dividend',kind='dividend',
                              title=c['instrument']['name']+' · 分红待核对',detail=p['name'],date=c['notice']['ex_date'],

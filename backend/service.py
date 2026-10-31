@@ -20,6 +20,7 @@ from .version import VERSION, NAME
 from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
 from .event_deletion import deletion_plan
+from .dividend_review import reference_basis, review_changes, CHANGE_LABELS
 from . import market
 from . import dividends
 from .sync_meta import TRIGGERS, trigger_metadata
@@ -600,6 +601,10 @@ class Service:
                           currency=currency(source['currency']),fetched_at=now())
                 for key in ('record_date','pay_date'):
                     item[key]=str(day(source[key])) if source.get(key) else None
+                anchor=(before or {}).get('notification_basis')
+                if not anchor and before:anchor=reference_basis(before,None,before.get('record_date'))
+                current_basis=reference_basis(item,None,item.get('record_date'),anchor)
+                item['notification_basis']=current_basis if review_changes(anchor,current_basis) else anchor
                 db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(notice_id,instrument_id,json_dumps(item)))
                 old={k:v for k,v in (before or {}).items() if k!='fetched_at'}
                 current={k:v for k,v in item.items() if k!='fetched_at'}
@@ -655,7 +660,12 @@ class Service:
             inst=instruments[notice['instrument_id']]
             existing=next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('source_dividend_id')==notice['id']),None)
             manual=next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['kind'] in ('DIVIDEND','REINVEST') and e['date']==notice['ex_date'] and not e.get('source_dividend_id')),None)
+            recorded=existing or manual
+            decision=next((r for r in state['corporate_actions'] if r.get('kind')=='dividend_decision' and r.get('portfolio_id')==portfolio_id and r.get('notice_id')==notice['id']),None)
+            reviewed=bool(recorded and decision and decision.get('event_id')==recorded['id'] and decision.get('event_fingerprint')==event_fingerprint(recorded))
+            baseline=decision.get('review_basis') if reviewed else (recorded or {}).get('dividend_basis')
             cutoff=(day(notice['ex_date'])-timedelta(days=1)).isoformat() if inst['market'] in ('HK','US') else notice.get('record_date')
+            if not cutoff and recorded:cutoff=(baseline or {}).get('record_date') or recorded.get('record_date')
             qty=None
             if cutoff and p['start_date']<=cutoff<=str(today()):
                 if market_data is None: market_data=Market(state)
@@ -668,13 +678,12 @@ class Service:
                 if qty<=0 and not (existing or manual):continue
             relevant=any(e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['date']<=notice['ex_date'] for e in state['events'])
             if qty is None and not relevant:continue
-            decision=next((r for r in state['corporate_actions'] if r.get('kind')=='dividend_decision' and r.get('portfolio_id')==portfolio_id and r.get('notice_id')==notice['id']),None)
             gross=(qty*dec(notice['per_share'])).quantize(Decimal('.01'),rounding=ROUND_HALF_UP) if qty is not None and notice['currency']==inst['currency'] else None
             pending_date=notice['ex_date']>str(today())
-            recorded=existing or manual
-            basis={'eligible_quantity':ds(qty) if qty is not None else None,'per_share':notice['per_share'],'estimated_gross':ds(gross) if gross is not None else None,'record_date':cutoff}
-            baseline=(recorded or {}).get('dividend_basis')
-            changed=bool(recorded and ((baseline and baseline!=basis) or (existing and not baseline) or (manual and gross is not None and dec(manual['gross_amount'])!=gross)))
+            basis=reference_basis(notice,ds(qty) if qty is not None else None,cutoff,baseline)
+            basis['estimated_gross']=ds(gross) if gross is not None else None
+            changes=review_changes(baseline,basis) if recorded and (baseline or existing) else ['missing_basis'] if manual and gross is not None and dec(manual['gross_amount'])!=gross else []
+            changed=bool(changes)
             status='needs_review' if changed else 'confirmed' if existing else 'manual_recorded' if manual else 'ignored' if decision and decision.get('ignored') else 'future' if pending_date else 'pending'
             if inst['currency']!='CNY' and market_data is None: market_data=Market(state)
             rate=market_data.fx_series[inst['currency']].at(notice['ex_date']) if inst['currency']!='CNY' else {'rate':'1','date':notice['ex_date']}
@@ -690,6 +699,8 @@ class Service:
                     'change_reason':'补录历史交易或公告变化后重新核对分红'}}
             result.append({'notice':notice,'instrument':inst,'portfolio_id':portfolio_id,'eligible_quantity':qty,'eligibility_date':cutoff,
                 'estimated_gross':gross,'status':status,'event_id':(existing or manual or {}).get('id'),'suggested_event':suggested,
+                'revision':state['revision'],'review_basis':basis,'review_changes':[CHANGE_LABELS[k] for k in changes],
+                'review_revision':(decision or {}).get('review_revision',0),'review_decision':decision if reviewed else None,
                 'recorded_event':recorded,'previous_basis':baseline,'gross_difference':gross-dec(recorded['gross_amount']) if recorded and gross is not None else None,
                 'note':(('按登记日账本份额估算，税费、实际到账金额和再投确认份额须本人核对。' if notice['currency']==inst['currency'] else '派息币种与标的币种不一致，请先按实际到账核对并折算，未自动估算金额。')+notice.get('coverage_note',''))})
         return wire(sorted(result,key=lambda r:r['notice']['ex_date'],reverse=True))
@@ -717,9 +728,33 @@ class Service:
             db.execute('INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,0)',(event['id'],pid,event['date'],event['sequence'],event['fingerprint'],json_dumps(event)))
             self.store.audit(db,'event',event['id'],before,event,'历史持仓变化后重新核对分红' if before else '本人核对公开分红后确认入账')
             decision_id='decision:'+pid+':'+notice_id
-            decision={'id':decision_id,'kind':'dividend_decision','instrument_id':event['instrument_id'],'portfolio_id':pid,'notice_id':notice_id,'event_id':event['id'],'ignored':False,'updated_at':now()}
+            decision={'id':decision_id,'kind':'dividend_decision','instrument_id':event['instrument_id'],'portfolio_id':pid,'notice_id':notice_id,'event_id':event['id'],'ignored':False,'review_revision':state['revision']+1,'updated_at':now()}
             db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(decision_id,event['instrument_id'],json_dumps(decision)))
         return wire(event)
+
+    def review_dividend(self,notice_id,payload):
+        """Acknowledge the current reference without touching any event column."""
+        revision=payload.get('expected_revision')
+        if type(revision) is not int or revision<0:raise DomainError('分红核对必须提供读取时的 expected_revision')
+        reason=str(payload.get('reason') or '').strip()
+        if not reason:raise DomainError('请填写保留实际到账记录的核对说明')
+        if payload.get('mode')!='keep_recorded':raise DomainError('请选择保留原分红记录')
+        with self.store.transaction(expected_revision=revision) as db:
+            state=self.store.state(db);pid=payload.get('portfolio_id')
+            candidate=next((r for r in self.dividend_candidates(pid,state=state) if r['notice']['id']==notice_id),None)
+            if not candidate or candidate['status']!='needs_review':raise DomainError('该分红没有待核对的原记录，请刷新后核对')
+            event=candidate['recorded_event']
+            if payload.get('event_id')!=event['id']:raise DomainError('原分红流水不匹配，请刷新后核对')
+            if payload.get('review_basis')!=candidate['review_basis']:raise DomainError('持仓或公告已变化，请刷新后重新核对')
+            key='decision:'+pid+':'+notice_id
+            before=next((r for r in state['corporate_actions'] if r['id']==key),None)
+            decision=dict(id=key,kind='dividend_decision',portfolio_id=pid,instrument_id=event['instrument_id'],
+                          notice_id=notice_id,event_id=event['id'],ignored=False,mode='keep_recorded',
+                          review_basis=candidate['review_basis'],event_fingerprint=event_fingerprint(event),
+                          review_revision=revision+1,reason=reason,updated_at=now())
+            db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(key,event['instrument_id'],json_dumps(decision)))
+            self.store.audit(db,'dividend_decision',key,before,decision,reason)
+        return wire(dict(decision=decision,event=event,revision=revision+1))
 
     def ignore_dividend(self,notice_id,payload):
         with self.store.transaction() as db:

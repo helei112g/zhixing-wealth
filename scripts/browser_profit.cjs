@@ -70,6 +70,36 @@ fs.mkdirSync(out,{recursive:true});
   check(await page.locator('.summary-cumulative>strong').evaluate(e=>getComputedStyle(e).color==='rgb(41, 123, 110)'),'negative total profit is green');
   await nav('交易记录');await page.locator('[data-ledger-event="'+div.id+'"]').getByRole('button',{name:'更正',exact:true}).click();
   check(await page.getByRole('dialog').getByLabel(/^净分红收益（自动计算） · HKD/).inputValue()==='9.5678','editing preserves original tax and net precision');
+  // A separate synthetic portfolio verifies the explanations against settled and unpaid cash.
+  await page.setViewportSize({width:1600,height:1000});
+  const capitalPortfolio=await api('/portfolios',{name:'合成资金说明验收',planned_amount:'10000',start_date:'2023-01-01'});
+  const acquisition=await api('/events',{portfolio_id:capitalPortfolio.id,kind:'BUY',date:'2023-01-02',instrument:{market:'CN',code:'600123',name:'合成资金说明标的'},quantity:'100',gross_amount:'1000',fee:'10',fx_rate:'1'});
+  const capital=async()=>api('/portfolios/'+capitalPortfolio.id+'/dashboard?view=summary');
+  const record=event=>api('/events',{portfolio_id:capitalPortfolio.id,instrument_id:acquisition.instrument_id,fx_rate:'1',...event});
+  let values=(await capital()).capital_summary;
+  check(values.cost==='1010'&&values.invested_amount==='1010'&&values.available_amount==='8990','buy increases canonical cumulative cost and net input');
+  await record({kind:'DIVIDEND',date:'2023-03-01',net_amount:'90',tax:'0',pay_date:'2023-03-03'});
+  values=(await capital()).capital_summary;
+  check(values.cost==='1010'&&values.invested_amount==='920'&&values.available_amount==='9080','cash dividend receipt reduces net input without reducing cumulative cost');
+  await record({kind:'SELL',date:'2023-04-01',payment_date:'2023-04-03',sell_lots:[{buy_event_id:acquisition.id,quantity:'50'}],gross_amount:'550',fee:'5'});
+  values=(await capital()).capital_summary;
+  check(values.cost==='1010'&&values.invested_amount==='375'&&values.available_amount==='9625','settled sale replenishes available funds without reducing cumulative cost');
+  await record({kind:'REINVEST',date:'2023-05-01',net_amount:'100',tax:'0',pay_date:'2023-05-01',reinvest_date:'2023-05-01',reinvest_quantity:'10',reinvest_gross_amount:'100'});
+  values=(await capital()).capital_summary;
+  check(values.cost==='1110'&&values.invested_amount==='375'&&values.available_amount==='9625','reinvestment increases cumulative buy cost and preserves cash and net input');
+  const tomorrow=new Date(Date.parse(boot.today+'T12:00:00Z')+86400000).toISOString().slice(0,10);
+  await record({kind:'DIVIDEND',date:boot.today,net_amount:'20',tax:'0',pay_date:tomorrow,pay_fx_rate:'1'});
+  quote(acquisition.instrument_id,'12',boot.today);const pending=await capital();values=pending.capital_summary;
+  check(values.available_amount==='9625'&&values.invested_amount==='375'&&values.profit_breakdown.cash_dividends_net==='110'&&values.profit_breakdown.reinvested_dividends_net==='100','unpaid dividend is recognized income and receivable without cash recovery');
+  await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(capitalPortfolio.id);await nav('组合收益');
+  await page.waitForFunction(expected=>document.querySelector('.summary-cost dd')?.textContent===expected,money(values.cost));
+  check(await page.locator('.summary-facts>div').count()===5&&await page.locator('.summary-cost dd').innerText()===money(values.cost),'overview adds cumulative input from canonical cost');
+  check(await page.locator('.summary-facts>div').evaluateAll(rows=>rows.every(row=>row.querySelector('dd')&&row.querySelector('small')?.textContent.trim())),'each capital metric has a concise explanation below its value');
+  const explanation=await page.locator('.overview-summary').innerText();
+  check(explanation.includes('再投不代表新增个人本金')&&explanation.includes('未到账应收不计入已回收现金')&&explanation.includes('未到账应收及在途'),'explanations distinguish reinvestment principal and unpaid receivables');
+  check(await page.locator('.summary-cumulative').getByText('现金分红净收益',{exact:true}).count()===1&&await page.locator('.summary-cumulative').getByText('红利再投资分红收益',{exact:true}).count()===1,'overview shows separate cash and reinvested dividend income');
+  await page.locator('.overview-summary').screenshot({path:path.join(out,'capital-definitions-desktop.png')});
+  for(const width of [1024,390,320]){await page.setViewportSize({width,height:1000});await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'capital explanations fit '+width);await page.locator('.overview-summary').screenshot({path:path.join(out,'capital-definitions-'+width+'.png')});}
   check(!errors.length,'no browser runtime errors');fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({checks,errors},null,2));
  }catch(e){await page.screenshot({path:path.join(out,'failure.png'),fullPage:true}).catch(()=>{});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

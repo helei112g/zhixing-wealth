@@ -124,3 +124,8 @@
 
 /* Full-width lists share the page flow; only horizontal table scrolling is local. */
 .list-section{min-width:0;margin:0 0 26px}.list-section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}.list-section-head h2{font-size:16px;font-weight:600;margin:0}.list-section-head h2 small{font-size:11px;font-weight:400;color:var(--muted);margin-left:8px}.list-section table{background:var(--panel)}.list-section .table-wrap{border-bottom:1px solid var(--line)}.transaction-list .transaction-pagination{padding-top:16px}.portfolio-introduction{margin:0 0 20px;padding:12px 0;border-bottom:1px solid var(--line)}.portfolio-introduction summary{cursor:pointer;font-size:13px;font-weight:600}.portfolio-introduction summary small{margin-left:8px;font-size:11px;font-weight:400;color:var(--muted)}.portfolio-introduction p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.9;max-width:100ch}.portfolio-introduction .button{margin-bottom:4px}
+
+/* Portfolio metric definitions and canonical cumulative buy cost. */
+.overview-summary .summary-facts{grid-template-columns:repeat(5,minmax(0,1fr))}.overview-summary .summary-facts>div{min-width:0}.overview-summary .summary-facts small{display:block;line-height:1.7;margin-top:6px}.profit-equation>.equation-dividend-total{flex-basis:100%;line-height:1.6}.profit-equation.compact>.equation-dividend-total{margin-top:7px}
+@media(max-width:1150px){.overview-summary .summary-facts{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.overview-summary .summary-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-summary .summary-facts dt{min-height:3em}}

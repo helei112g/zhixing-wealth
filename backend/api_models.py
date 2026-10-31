@@ -255,12 +255,15 @@ class ProfitBreakdown(BaseModel):
     total: str | None
     price_net: str | None = Field(description='CNY价格及汇兑收益，扣除买卖及非分红费用；含已实现/未实现收益')
     dividends_net: str | None = Field(description='净分红，含再投与已确认应收，扣关联补税/费用；不重复计入价格项')
+    cash_dividends_net: str | None = Field(None, description='现金分红记录的净收益，含已确认未到账应收，扣该记录关联补税/费用；未到账不属于已回收现金')
+    reinvested_dividends_net: str | None = Field(None, description='红利再投记录的净分红收益，扣该记录关联补税/费用；不是新增个人本金，不重复增加资产')
     other_income: str = Field(description='利息等其他收入；非零时单独展示')
     market_value: str | None
     sale_proceeds: str | None
     buy_cost: str
     extra_costs: str
     rounding_adjustment: str | None = Field(description='仅用于两位小数显示对账的舍入差，不是新增收益')
+    component_rounding_adjustment: str | None = Field(None, description='价格收益、现金净分红、再投净分红及其他收入分别显示两位小数后的舍入差；保留原合并分红rounding_adjustment')
     complete: bool
     price_basis: str
 

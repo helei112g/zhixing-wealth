@@ -119,6 +119,11 @@ class Client:
         # Never retry a mutation or replace its expected_revision automatically.
         return self.request(path, payload, method)
 
+    def investment_summary(self, portfolio_id):
+        """Read canonical cost/net input and cash/reinvested dividend components; never recalculate."""
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='')
+                            + '/dashboard?view=summary')['capital_summary']
+
     def holding_labels(self, portfolio_id, instrument_id):
         """Read current labels and the original revision; review the diff before PUT."""
         return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'

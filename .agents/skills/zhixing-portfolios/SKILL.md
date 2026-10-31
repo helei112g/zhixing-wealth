@@ -25,6 +25,8 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 
 报告明确净投入、累计买入成本、持仓市值、净分红与收益的区别；资产增减不等于投资收益。精确Decimal值来自API，万/亿仅作展示。投资笔记任务使用项目的`zhixing-notes`技能。
 
+组合指标直接用客户端`investment_summary(P)`读取：累计投入取`cost`（历次买入、再投及期初记账成本），不是净投入或外部新增本金。`profit_breakdown.cash_dividends_net`与`reinvested_dividends_net`按原分红记录类型拆分，关联费税只扣一次，两项相加仍为累计净分红；不改变原收益和资产。含已确认未到账应收时不能称为已回收现金，未知分项不补零。
+
 送转/拆股专项：从 dashboard 或标的详情 todos 读取 confirm_split/verify_split；按公告和实际持仓核对除权日期与新旧份额倍数，走同一 preview → 原 revision 提交 → 回读。10送8转12填 factor=3；总成本不变，现金红利和扣税另行记录。公告同步不授权自动记账，已确认事件不重复添加；复权价格只作走势参考，不替换账本原成交价。
 历史补录／更正还须核对 preview.split_changes 的前后份额及参与批次；按原 SPLIT ID 回读 facts.split。仅除权日前剩余份额参与，已售份额与当日新买入排除；批次随历史重算，不固定在首次确认时。全部售完为 no_position，已确认流水保留但不调整份额；不能把流水保留当作待办未完成。同日重复送转返回422，需更正原记录而非 allow_duplicate。
 确认携带 source_split_id；遇 verify_split，核对 todo.notice 登记日与除权日及倍数，更正 todo.event.id。旧记录误记在登记日会提示核对原记录，不代表允许再次送转；未经用户核对不自动改日期或删除历史。UI与AI都用预览 revision 提交，409重新核对。

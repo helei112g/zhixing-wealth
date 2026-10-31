@@ -71,6 +71,27 @@ def main():
     full=client.request(dashboard);summary=client.request(dashboard+'?view=summary')
     check(summary['capital_summary']==full['capital_summary'] and summary['holdings']==full['holdings'], 'AI summary view shares canonical financial values')
     check('curve' not in summary and 'calendar' not in summary and 'calendar' in full, 'AI summary omits historical projections and full stays compatible')
+    investment=client.investment_summary(p['id'])
+    check(investment==summary['capital_summary'] and investment['cost']=='100','AI cumulative input reads canonical cumulative buy cost')
+    breakdown=investment['profit_breakdown']
+    check(breakdown['cash_dividends_net']=='0' and breakdown['reinvested_dividends_net']=='0','AI discovers separate cash and reinvested dividend income without invented values')
+    check(client.request('/api/capabilities')['investment_summary']['cumulative_input']=='cost','AI discovers cumulative input and dividend component semantics')
+    income_portfolio=client.write('/api/portfolios',dict(name='AI合成分红拆分',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
+    acquisition=client.write('/api/events',dict(portfolio_id=income_portfolio['id'],kind='BUY',date='2024-01-02',
+        instrument={'market':'CN','code':'600323','name':'AI合成分红拆分标的'},quantity='10',gross_amount='100',fx_rate='1',expected_revision=revision()),'POST')
+    split_events=[]
+    for item in [dict(kind='DIVIDEND',date='2024-02-01',net_amount='9',tax='0',pay_date='2024-02-03'),
+                 dict(kind='REINVEST',date='2024-03-01',net_amount='10',tax='0',pay_date='2024-03-03',reinvest_date='2024-03-03',reinvest_quantity='1',reinvest_gross_amount='10')]:
+        payload=dict(item,portfolio_id=income_portfolio['id'],instrument_id=acquisition['instrument_id'],fx_rate='1',expected_revision=revision())
+        client.preview(payload);split_events.append(client.write('/api/events',payload,'POST'))
+    for kind,parent,amount,at in [('TAX',split_events[0],'2','2024-04-01'),('FEE',split_events[1],'3','2024-04-02')]:
+        payload=dict(portfolio_id=income_portfolio['id'],instrument_id=acquisition['instrument_id'],kind=kind,date=at,
+                     related_event_id=parent['id'],amount=amount,fx_rate='1',expected_revision=revision())
+        client.preview(payload);client.write('/api/events',payload,'POST')
+    before_read=revision();investment=client.investment_summary(income_portfolio['id']);parts=investment['profit_breakdown']
+    check(investment['cost']=='110' and investment['invested_amount']=='96','AI cumulative input includes reinvestment without replacing net input')
+    check(parts['cash_dividends_net']=='7' and parts['reinvested_dividends_net']=='7' and parts['dividends_net']=='14','AI reads exact separate dividend income with each related cost deducted once')
+    check(revision()==before_read,'AI metric read has no financial or historical writes')
     labels=client.holding_labels(p['id'],saved['instrument_id'])
     check(labels['labels']['resolved_scope']=='待确认','ETF exposure is not inferred from listing venue')
     label_path='/api/portfolios/'+p['id']+'/instruments/'+saved['instrument_id']+'/labels'

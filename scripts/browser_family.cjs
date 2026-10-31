@@ -46,7 +46,7 @@ overview=await api('/family/overview');check(overview.total_assets==='3340000'&&
 await add('income');await field('收入类型').selectOption('rent');await field('收入月份').fill('2026-09');await field('收入金额').fill('3000');await save();await tab('收入');await page.getByRole('heading',{name:'每月收入 · CNY',exact:true}).waitFor();
 check((await api('/family/income?year=2026')).rows[8].total==='3000','rent is counted in selected month');check((await api('/family/overview')).total_assets==='3340000','income is not double-counted as asset balance');
 check(await page.getByRole('button',{name:'新增收入',exact:true}).count()===0,'income uses only the top add entry');
-await page.getByRole('button',{name:'新增记录',exact:true}).click();await field('收入类型').selectOption('custom');await field('收入名称').fill('合成兼职');await field('收入金额').fill('800');await save();
+await page.getByRole('button',{name:'新增记录',exact:true}).click();await field('收入类型').selectOption('custom');await field('收入名称').fill('合成兼职');await field('收入月份').fill('2026-10');await field('收入金额').fill('800');await save();
 await command('income',{kind:'salary',month:'2026-10',currency:'CNY',amount:'10000'});await command('income',{kind:'rent',month:'2026-10',currency:'CNY',amount:'2000'});await command('income',{kind:'fund',month:'2026-10',currency:'CNY',amount:'1000'});
 await page.reload();await page.getByRole('navigation',{name:'资产分析',exact:true}).getByRole('button',{name:'总览',exact:true}).click();await tab('收入');await page.locator('.income-months').waitFor();
 check(await page.getByRole('heading',{name:'收入记录',exact:true}).count()===0&&await page.getByText('合成兼职',{exact:true}).count()===0,'income records are not permanently expanded');

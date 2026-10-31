@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {X, AlertCircle, ArrowUpRight} from 'lucide-react';
 import {CartesianGrid, Line, LineChart, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis} from 'recharts';
-import {amount, units, money, Obj, percent, tone} from './api';
+import {amount, units, money, Obj, percent, signedMoney, tone} from './api';
 
 export function Panel({title, right, children, className=''}: {title?:React.ReactNode;right?:React.ReactNode;children:React.ReactNode;className?:string}) {
  return <section className={'panel '+className}>{(title||right)&&<header className="panel-head"><h2>{title}</h2>{right}</header>}{children}</section>;
@@ -15,6 +15,10 @@ export function ErrorBox({error}: {error:any}) {return error?<div className="err
 export function Notice({children}: {children:React.ReactNode}) {return <div className="notice">{children}</div>;}
 export function Metric({label,value,note,positive=false}: {label:string;value:any;note?:React.ReactNode;positive?:boolean}) {return <div className="metric"><div>{label}</div><strong className={positive?tone(value):''}>{positive&&value!==null&&Number(value)>0?'+':''}{amount(value)}</strong>{note&&<small>{note}</small>}</div>;}
 export function XirrBasis({performance:a}: {performance:Obj}) {return <details className="xirr-basis" data-idle-cash="excluded"><summary>年化口径：仅实际投入资金，不含未投入现金</summary><p>{a?.xirr_basis?.description||'按实际投入与回收现金流计算 XIRR，未平仓持仓以期末市值计入；按实际天数/365年化。未投入的预算及现金余额不作为投资本金。'}</p></details>;}
+export function ReturnPerformance({performance:a}: {performance?:Obj|null}) {
+ if(!a)return <span className="muted">-</span>;
+ return <><div className="transaction-return-main"><b className={tone(a.return_on_cost)}>累计 {percent(a.return_on_cost,true)}</b><span className="transaction-return-amount">· {signedMoney(a.profit)} CNY</span></div><small className="transaction-return-secondary" title={a.xirr_status}>年化（XIRR） <span className={tone(a.xirr)}>{percent(a.xirr,true)}</span>{' · '+(a.closed?'已平仓':'持有中')}{a.provisional?' · 待核对':''}{a.xirr==null&&a.xirr_status?' · '+a.xirr_status:''}</small></>;
+}
 export function Empty({title,children,action}: {title:string;children?:React.ReactNode;action?:React.ReactNode}) {return <div className="empty"><div className="empty-mark"><ArrowUpRight size={24}/></div><h2>{title}</h2>{children&&<p>{children}</p>}{action}</div>;}
 export function Chips({values}: {values:any[]}) {return <span className="chips">{values.filter(Boolean).map((t,i)=><span key={String(t)+i}>{String(t)}</span>)}</span>;}
 export function Modal({title,subtitle,children,onClose,wide=false,busy=false,className=''}: {title:string;subtitle?:string;children:React.ReactNode;onClose:()=>void;wide?:boolean;busy?:boolean;className?:string}) {

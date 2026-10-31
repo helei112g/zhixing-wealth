@@ -71,3 +71,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 送转股/拆股：读取 capabilities.corporate_actions 与 dashboard/instrument_detail 的 todos。先核对公开公告和实际持仓，使用 `SPLIT` 专项预览，再按原 revision 提交并回读份额、成本和收益。10送8转12填 factor=3，总成本保持不变；现金分红、扣税另行核对。若送转没有出现在 todos 中，先检查 jobs 中 corporate_actions 同步状态并重试，不要用前复权价格掩盖缺失的份额调整。确认后回读独立 SPLIT 流水；原 BUY 数量仍是历史成交数量，不应变成送转后的数量。同步公告不等于确认记账，不得因价格骤降自动造流水或用前复权价格改写历史买入。资产相邻期变化包含新增/移除/份额调整，原样报告 scope_changed/reason，不能称为投资收益率。
 
 删除流水先用客户端 `deletion_preview(event_id)` 或 GET `/api/events/ID/deletion-preview`，逐项核对 `items`（含共享批次），再以原revision、完整event_ids、cascade=true和原因提交DELETE。旧接口默认仅单条/转移对，不会静默扩大范围。过期409或超时先回读，不能自动换revision、重试删除。按返回 `deleted_event_ids` 回读交易详情的 `cancelled=true` 及持仓；审计保留。Dashboard 的 `curve_quality` 解释历史缺段，不能为了补线自动确认送转或将null补零。
+
+### 持仓标签与当前分布
+
+通过capabilities.holding_analysis发现接口。用客户端holding_labels(P,I)读取当前归属和revision，展示scope/direction/detail差异后按原revision PUT labels；409或超时先回读核对，不自动覆盖。无独立标签预览接口，不声称服务端预览已完成。holding_distribution(P,basis)读取完整树与同一后端分母，不能只统计已打标签持仓或自行重复相加父子节点。股票可自动识别市场，基金不按上市地或币种猜投资敞口。旧/api/tags统计已退役；历史交易标签和筛选仍保留。总资产value为null时可说明known_value是已知资产合计，不能冒充完整总额。

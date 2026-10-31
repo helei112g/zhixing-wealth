@@ -5,6 +5,7 @@ import {DatedRateField,useDatedRate} from './fx_ui';
 import {PlanFundingNotice} from './plan_ui';
 import {ReinvestmentQuantityField,useReinvestmentEstimate} from './reinvestment_ui';
 import {SplitEffectView,SplitSummary} from './split_ui';
+import {HoldingLabelFields} from './holding_labels_ui';
 
 type BaseProps={boot:Obj;portfolio?:Obj;onClose:()=>void;onSaved:(value?:any)=>void};
 export function PortfolioForm({boot,portfolio,onClose,onSaved}:BaseProps){
@@ -42,6 +43,7 @@ function SalePicker({portfolioId,instrumentId,date,event,sequence,selection,onCh
 }
 
 export function EventForm({boot,portfolio,onClose,onSaved,event,initialKind='BUY',instrumentId,proposal,prefill,splitNotice}:BaseProps&{event?:Obj;initialKind?:string;instrumentId?:string;proposal?:Obj;prefill?:Obj;splitNotice?:Obj}){
+ const[entryLabels,EntryLabels]=useState<Obj>({scope:'',direction:'',detail:''});
  const selected=boot.instruments.find((i:Obj)=>i.id===(event?.instrument_id||proposal?.instrument?.id||instrumentId));
  const defaults=boot.allocations.find((a:Obj)=>a.portfolio_id===portfolio!.id&&a.instrument_id===selected?.id)||{};
  const[f,F]=useState<Obj>(()=>({...{kind:initialKind,date:'',currency:'CNY',instrument_id:selected?.id||'',quantity:'',gross_amount:'',fee:'0',tax:'0',fx_rate:'',fx_source_date:boot.today,fx_type:'manual',reason:'',asset_class:defaults.asset_class||'未分类',region:defaults.region||'未分类',tags:(defaults.tags||[]).join(','),pay_date:boot.today,pay_fx_rate:'',net_amount:'',tax_known:true,ex_date_known:true,reinvest_quantity:'',reinvest_gross_amount:'',reinvest_date:boot.today,reinvest_fx_rate:'',amount:'',family:FAMILY[selected?.market]||'CN',code:selected?.code||'',name:selected?.name||'',instrument_currency:selected?.currency||'CNY'},...prefill,...proposal?.suggested_event,...event,tax_known:event?.tax_known??proposal?.recorded_event?.tax_known??prefill?.tax_known??true,fx_source_date:event?.fx_source_date||proposal?.suggested_event?.fx_source_date||prefill?.date||boot.today,transaction_costs:event?decimalSum(event.fee,event.tax):'0',reinvest_date:event?.reinvest_date||proposal?.suggested_event?.pay_date||boot.today,tags:(event?.tags||defaults.tags||[]).join(','),reinvest_gross_amount:proposal?.suggested_event?.reinvest_gross_amount||proposal?.suggested_event?.net_amount||event?.reinvest_gross_amount||(event?.reinvest_quantity&&event?.reinvest_price?String(Number(event.reinvest_quantity)*Number(event.reinvest_price)):''),change_reason:''}));
@@ -84,6 +86,7 @@ export function EventForm({boot,portfolio,onClose,onSaved,event,initialKind='BUY
  if(dividend){value.net_amount=dividendNet;value.pay_fx_rate=payRate.rate;value.pay_fx_source_date=payRate.sourceDate;value.pay_fx_type=payRate.type;}
  if(kind==='REINVEST'){value.reinvest_quantity=reinvestEstimate.quantity;value.reinvest_fx_rate=reinvestRate.rate;value.reinvest_fx_source_date=reinvestRate.sourceDate;value.reinvest_fx_type=reinvestRate.type;}
  if(kind==='FX'){value.from_fx_rate=fromRate.rate;value.to_fx_rate=toRate.rate;value.fx_rate=fromRate.rate;value.fx_source_date=fromRate.sourceDate;value.fx_type=fromRate.type;}
+ if(!event&&kind==='BUY'&&!estimateInstrument&&Object.values(entryLabels).some(v=>String(v).trim()))value.holding_labels=entryLabels;
  return value;}
  async function check(e:React.FormEvent){e.preventDefault();if(!ratesReady){E('请等待汇率读取完成，或填写已核对的汇率。');return;}if(!reinvestEstimate.ready){E('请等待份额估算完成，或填写实际确认份额。');return;}if(dividend&&Number(dividendNet)<0){E('需扣税费不能超过分红总金额。');return;}B(true);E('');try{P(await api('/events/preview',payload()));}catch(e:any){E(e.message);}finally{B(false);}}
  async function save(){if(!entryReady||!preview)return;B(true);E('');try{onSaved(await api(proposal?'/dividends/'+proposal.notice.id+'/confirm':'/events'+(event?'/'+event.id:''),{...payload(),expected_revision:preview.revision},event?'PUT':'POST'));}catch(e:any){E(e.message);P(null);}finally{B(false);}}
@@ -118,7 +121,7 @@ export function EventForm({boot,portfolio,onClose,onSaved,event,initialKind='BUY
  {kind==='ADJUSTMENT'&&<><Field label="调整后持仓数量">{input('new_quantity','number',true)}</Field><Field label={'调整后总成本 · '+f.currency}>{input('new_cost','number',true)}</Field></>}
  {!['SPLIT','ADJUSTMENT','FX'].includes(kind)&&<DatedRateField label={dividend?'除息日折算汇率':'交易折算汇率'} currency={cur} rate={tradeRate} onChange={invalidate} wide/>}
  {kind==='FX'&&<><DatedRateField label="付出币种折算汇率" currency={f.from_currency||'CNY'} rate={fromRate} onChange={invalidate}/><DatedRateField label="收到币种折算汇率" currency={f.to_currency||'HKD'} rate={toRate} onChange={invalidate}/></>}
- {inline&&<p className="muted small wide">标签统一在“持仓标的 → 设置计划”中管理，记账沿用当前标签。</p>}
+ {!event&&kind==='BUY'&&!estimateInstrument&&<details className="wide optional-holding-labels"><summary>持仓标签（可选）</summary><HoldingLabelFields value={entryLabels} onChange={(v:Obj)=>{EntryLabels(v);invalidate();}} options={boot.holding_label_options} automatic={preview?.holding_labels?.automatic_scope||'待确认'}/></details>}
  {['FEE','TAX'].includes(kind)&&<Field label="关联原交易或分红（逐笔归属，可选）" wide hint="后补股息税应关联原分红；不关联时仅计组合费用，不摊给后来新买批次。"><select aria-label="关联原交易或分红（逐笔归属，可选）" value={f.related_event_id||''} onChange={e=>set('related_event_id',e.target.value)}><option value="">仅计组合级费用，暂未分摊到批次</option>{(boot.event_refs||[]).filter((r:Obj)=>r.portfolio_id===portfolio!.id&&r.id!==event?.id).map((r:Obj)=><option key={r.id} value={r.id}>{r.date} {kindNames[r.kind]} {boot.instruments.find((i:Obj)=>i.id===r.instrument_id)?.name} · {r.id.slice(0,8)}</option>)}</select></Field>}
  {kind==='OPENING_POSITION'&&<><Field label="历史买入总成本（可选）">{input('historical_cost')}</Field><Field label="可核实期初净投入 · CNY（未知留空）">{input('initial_net_invested')}</Field></>}
  <Field label={event?'当时理由（保留原版本）':'当时的理由 / 备注'} wide><textarea value={f.reason||''} onChange={e=>set('reason',e.target.value)} rows={3}/></Field>

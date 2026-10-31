@@ -195,6 +195,7 @@ class NotesTests(unittest.TestCase):
             db.execute('DROP INDEX fx_daily_unique')
             from backend.family_domain import TABLES
             for table in TABLES: db.execute('DROP TABLE ' + table)
+            db.execute('DROP TABLE holding_labels')
             db.execute('DROP TABLE investment_notes');db.execute("UPDATE meta SET value='1' WHERE key='schema'")
             db.execute('INSERT INTO reviews VALUES (?,?)',('old-event',json.dumps({'note':'旧复盘正文','completed':True})));db.commit()
             before=[tuple(r) for r in db.execute('SELECT * FROM reviews')]

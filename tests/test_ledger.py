@@ -138,8 +138,10 @@ class LedgerTests(unittest.TestCase):
         r=self.snap();h=self.holding(r)
         self.assertEqual(D(h['cost_native']),22500)  # moving average cost
         self.assertEqual([D(l['quantity']) for l in h['lots']],[D(50),D(100)])
-        tag_report=self.s.tag_report(self.p['id'],'tags')
-        values={g['label']:D(g['value']) for g in tag_report['groups']}
+        values={}
+        for lot in h['lots']:
+            for label in lot['tags']:
+                values[label]=values.get(label,D(0))+D(lot['value_base'])
         self.assertEqual(values,{'红利':D(5000),'成长':D(10000),'消费':D(10000)})
 
     def test_same_security_separate_portfolio_records(self):

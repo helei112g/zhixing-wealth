@@ -107,7 +107,7 @@ class Client:
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
         # Only the documented, atomically revision-checked mutations are exposed here.
         core = (method == 'POST' and path in ('/api/portfolios', '/api/events') or
-                method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+)?|events/[^/]+)', path) or
+                method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+(?:/labels)?)?|events/[^/]+)', path) or
                 method == 'DELETE' and re.fullmatch(r'/api/events/[^/]+', path) or
                 method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/(confirm|review)', path))
         notes = (method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes(?:/[^/]+/restore)?', path) or
@@ -118,6 +118,17 @@ class Client:
         self.connect()
         # Never retry a mutation or replace its expected_revision automatically.
         return self.request(path, payload, method)
+
+    def holding_labels(self, portfolio_id, instrument_id):
+        """Read current labels and the original revision; review the diff before PUT."""
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'
+                            + urllib.parse.quote(instrument_id, safe='') + '/labels')
+
+    def holding_distribution(self, portfolio_id, basis='holdings'):
+        if basis not in ('holdings', 'assets'):
+            raise ValueError('basis must be holdings or assets')
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='')
+                            + '/holding-analysis?' + urllib.parse.urlencode({'basis': basis}))
 
     def deletion_preview(self, event_id):
         """Read the complete causal deletion list; submit its original revision and IDs."""

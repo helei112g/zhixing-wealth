@@ -14,6 +14,8 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 - 用`preview REQUEST.json`预览交易；编辑请求包含原事件id，提交PUT时路径使用同一id。保存前核对份额、费用、现金与收益影响，以及用户授权。
 - 保存使用`write POST /api/events REQUEST.json --confirm-write`，更正用PUT。删除先 GET `/api/events/ID/deletion-preview`（或客户端 deletion_preview），核对完整 items 和共享批次，再用DELETE带 reason、cascade=true、原event_ids及原expected_revision提交；不拆分共享流水金额，不删除其他买入父批次。旧单条删除兼容保留，不能跳过预览静默扩大范围。按deleted_event_ids回读cancelled与持仓，409不自动重试。
 - 新建组合用`write POST /api/portfolios`，编辑用`PUT /api/portfolios/ID`，先读取并核对拟变字段和revision。组合/笔记没有独立服务端预览接口时，展示读取值与拟保存差异，不声称已完成服务端预览。
+- 持仓分析使用capabilities.holding_analysis：GET /api/portfolios/P/holding-analysis?basis=holdings（或assets）；仅当前持仓，待确认标签仍计分母，父子金额不能重复相加。股票按市场识别，基金不按上市地或币种推断；旧/api/tags已退役。
+- 当前标签用客户端holding_labels(P,I)读取，展示scope/direction/detail差异，再以原revision PUT /api/portfolios/P/instruments/I/labels并回读。每层单选、可留空，细分标签须先选方向；标签独立于计划与历史流水。没有标签预览接口时展示明确差异，不声称服务端预览；409/超时先回读，不自动换revision。首次BUY可附带holding_labels，随交易预览、同事务保存，不能改写已有标签或将标签塞进历史交易。
 - 投入计划先调用`GET /api/portfolios/P/instruments/I/plan-check?target_pct=...`，再按返回revision提交PUT；缺口仅提醒，不自动加预算或卖出。
 - 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理不代表行情更新成功，应看jobs逐项状态。
 - jobs只返回最近20条，后台默认最多保存20条（含运行中），不清理运行中任务，不当作完整业务审计。价格子项saved/unchanged表示新增变化版本/跳过重复；交易锁定汇率不随同步改变。部署和文件清理须另有授权。

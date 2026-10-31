@@ -82,7 +82,8 @@ macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当
 | GET `/api/portfolios/{pid}/transactions/{event_id}` | 本笔流水 facts、actual、同组合同标的 neighbors、revisions；不含复盘正文 |
 | GET `/api/portfolios/{pid}/sale-lots` | `instrument_id`、`date`；可选 `exclude_event_id`、`sequence`，返回可卖批次 |
 | GET `/api/portfolios/{pid}/dividends` | 可选 `instrument_id`；公告、权益、状态、suggested_event、revision、review_basis、review_changes、review_decision |
-| GET `/api/tags` | `portfolio_id` 可选；`dimension=asset_class/region/tags`；groups、互斥 pie_groups、pie_eligible |
+| GET `/api/portfolios/{pid}/holding-analysis` | `basis=holdings/assets`；当前层级nodes、holdings、total、eligible、reason、revision；每标的仅计一次 |
+| GET `/api/portfolios/{pid}/instruments/{iid}/labels` | 当前标签、自动识别范围、选项、同组合建议和revision |
 | GET `/api/reference-rate` | `currency`、`date`；历史参考汇率，交易确认后锁定 |
 | GET `/api/portfolios/{pid}/instruments/{iid}/reinvestment-estimate` | `date`、`gross_amount`；同日场外基金单位净值估算份额，只读 |
 | GET `/api/jobs` | 同步任务及 syncing 状态；检查 items，不只检查 HTTP200 |
@@ -333,3 +334,25 @@ A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_
 先 GET 预览（无副作用），核对全部清单，再 DELETE 同一ID，例如 `{"reason":"重复录入，已核对关联流水","cascade":true,"event_ids":["BUY_ID","SALE_ID"],"expected_revision":42}`。服务端在同一事务重新推导并核对清单、revision 和剩余账务；清单不一致或账务失败返回422，过期revision返回409，均无写入。预览 `can_delete=false` 时返回具体 `validation_error`，不允许确认。返回兼容字段 `cancelled` 和完整 `deleted_event_ids`；每条记录保留审计，删除记录可按原ID从交易详情读回 `cancelled=true`。省略cascade保留旧单条/转移对删除语义，不自动扩大旧客户端删除范围。
 
 Dashboard full 视图包含 `curve_quality`：`missing_days`、`from/to` 和 `reasons[{message,from,to}]`。仅统计已投入或估值不完整时无法展示的组合曲线点；未投资的空白不当作故障。原因取自对应历史日期（如送转待核对、缺价格/汇率），不借用今天的状态解释历史；缺口后的累计曲线不补零、不跨缺口连接。图旁红色说明有待办时提供提醒中心入口，否则进入全局设置补齐历史数据。持仓分页为完整 dashboard 持仓上的本地分页，默认20，可选10/20/50；汇总和排行榜使用全量数据。排行榜50只以内为单列并随页面向下滚动；桌面超过50只按每列50只顺序拆列，手机保持单列，不截断排名。
+
+## 当前持仓标签与分布
+
+作者：Leo · 2026.10.31
+
+`PUT /api/portfolios/{pid}/instruments/{iid}/labels` 要求 `expected_revision` 为读取结果中的非负整数。完整替换三个可选字段：
+
+```json
+{"scope":"海外债券","direction":"国债","detail":"美元国债","expected_revision":12}
+```
+
+`scope` 留空恢复自动；仅股票按市场识别，基金不按交易地或币种推断，无法确认时显示待确认。`direction` 取GET返回的该范围选项，`detail` 为最多40字的单行标签，须先选方向。同一路径下同名标签自然聚合，无需维护分类树。清空三个字段不修改历史业务记录。
+
+返回 `labels` 含原始scope/direction/detail、resolved_scope、automatic_scope、scope_source与path；`options` 含scopes、directions和仅当前组合的suggestions。422表示作用域/枚举/长度或依赖无效；409表示版本冲突且未写入；保留草稿，重新读取并核对差异后由用户显式保存。网络超时先回读，不能盲目重试。
+
+首次BUY可在交易请求附带 `holding_labels`（scope/direction/detail），预览返回拟保存路径且无副作用；原revision提交与流水同一事务保存到独立标签表，该字段不进入历史事件、指纹或交易CSV。已有标签通过独立接口修改，普通计划保存不改标签。
+
+持仓分布只分析当前持仓，所有金额为CNY的Decimal字符串，占比为0–1比例，未知为null。`basis=holdings` 分母为全部当前证券市值；`assets` 纳入剩余可投金额和应收及在途系统节点。每个node含id、path、value、weight、holding_ids和children。父节点直接归属且同时有下级时补“本级持仓”，保证下级金额可核对。缺估值/汇率或存在负值、非正总额时eligible=false，保留明细并说明reason。标签未知仍计入分母。
+
+旧 `GET /api/tags` 和旧多选标签统计已移除，返回404且不在OpenAPI中；历史asset_class/region/tags和对应流水筛选保留。
+
+资产总览 `metrics.total_assets` 另返回 known_value、missing_count、missing_categories、complete。完整金额缺失时value/rate/amount仍为null，UI只显示明确标注的已知资产合计，不将缺失金额补零。

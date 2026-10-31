@@ -71,6 +71,18 @@ def main():
     full=client.request(dashboard);summary=client.request(dashboard+'?view=summary')
     check(summary['capital_summary']==full['capital_summary'] and summary['holdings']==full['holdings'], 'AI summary view shares canonical financial values')
     check('curve' not in summary and 'calendar' not in summary and 'calendar' in full, 'AI summary omits historical projections and full stays compatible')
+    labels=client.holding_labels(p['id'],saved['instrument_id'])
+    check(labels['labels']['resolved_scope']=='待确认','ETF exposure is not inferred from listing venue')
+    label_path='/api/portfolios/'+p['id']+'/instruments/'+saved['instrument_id']+'/labels'
+    label_payload=dict(scope='海外债券',direction='国债',detail='合成债券标签',expected_revision=labels['revision'])
+    client.write(label_path,label_payload,'PUT')
+    check(client.holding_labels(p['id'],saved['instrument_id'])['labels']['path']==['海外债券','国债','合成债券标签'],'label original revision write and scoped read-back through HTTP')
+    check(client.request(transactions)['items']==rows['items'],'holding labels do not rewrite historical trades')
+    report=client.holding_distribution(p['id'])
+    check(report['nodes'][0]['name']=='海外债券' and report['nodes'][0]['weight']=='1','hierarchical distribution uses one path and the holdings denominator')
+    try: client.write(label_path,label_payload,'PUT')
+    except RuntimeError as error: check('HTTP 409' in str(error),'stale label revision rejected through HTTP')
+    else: raise AssertionError('stale label write succeeded')
     boot=client.connect();original_portfolios=boot['portfolios']
     links,_=command('links',{'portfolio_ids':[p['id'],q['id']]})
     check(all(any(x['id']==link['id'] for x in client.request('/api/family/catalog')['links']) for link in links),'multiple associations read back')

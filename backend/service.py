@@ -19,6 +19,7 @@ from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES, cached_query
 from .version import VERSION, NAME
 from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
+from .holding_analysis import HoldingAnalysis, label_map, resolve_labels, normalize_labels
 from .event_deletion import deletion_plan
 from .dividend_review import reference_basis, review_changes, CHANGE_LABELS
 from . import market
@@ -50,6 +51,7 @@ def event_fingerprint(record):
 class Service:
     def __init__(self, store: Store):
         self.store = store
+        self.holding_analysis = HoldingAnalysis(self)
         self.notes = InvestmentNotes(store)
         self.job_lock = threading.Lock()
         self.syncing = False
@@ -104,6 +106,7 @@ class Service:
             'portfolios': [dict(p, target_annual_pct=p.get('target_annual_pct', '5'), running_days=running_days(p)) for p in state['portfolios']],
             'today': today(), 'version': VERSION, 'data_directory': str(self.store.directory),
             'benchmarks':BENCHMARKS,
+            'holding_label_options': self.holding_analysis.options(state, None),
             'event_refs':[{k:e.get(k) for k in ('id','portfolio_id','instrument_id','kind','date','quantity')} for e in state['events'] if e['kind'] in ('BUY','SELL','DIVIDEND','REINVEST','OPENING_POSITION')],
             'latest_fx': {c: m.fx(c, today()) for c in CURRENCIES},
             'fx_entries': [r for r in state['fx'] if r.get('manual') and r.get('mode') != 'daily'][-60:],
@@ -193,7 +196,7 @@ class Service:
         db.execute('INSERT OR REPLACE INTO instruments VALUES (?,?,?)',(inst['id'],info['identity'],json_dumps(inst)))
         db.execute('INSERT OR REPLACE INTO allocations VALUES (?,?,?)',(allocation['portfolio_id'],inst['id'],json_dumps(allocation)))
         self.store.audit(db,'instrument',inst['id'],info['before_instrument'],inst,'买入时按代码合并标的；名称以最新填写为准')
-        self.store.audit(db,'allocation',allocation['portfolio_id']+':'+inst['id'],info['before_allocation'],allocation,'建立本组合持仓关联；标签统一在计划中管理')
+        self.store.audit(db,'allocation',allocation['portfolio_id']+':'+inst['id'],info['before_allocation'],allocation,'建立本组合持仓关联；保留历史筛选属性')
 
     def save_instrument(self, data):
         scope = data.get('portfolio_id')
@@ -357,8 +360,11 @@ class Service:
                 raise DomainError('后补费税的关联记录将失效，请先更正或取消关联费税')
 
     def preview_event(self, payload, event_id=None):
+        label_input = payload.get('holding_labels')
+        payload = {k: v for k, v in payload.items() if k != 'holding_labels'}
         original = self.store.state();state,payload,inline=self.inline_instrument(original,payload)
         event, before, duplicate, candidate = self.prepared_event(state, payload, event_id)
+        proposed_labels = self.first_buy_labels(state, event, label_input, event_id)
         portfolio = self.portfolio(state, event['portfolio_id'])
         old_ledger = Ledger(original, portfolio); new_ledger = Ledger(candidate, portfolio)
         old = old_ledger.run(include_history=False)
@@ -369,7 +375,7 @@ class Service:
                    if old_splits.get(key) != new_splits.get(key)]
         changes.sort(key=lambda r: ((r['after'] or r['before'])['date'], r['event_id']))
         return wire({'revision': original['revision'], 'event': event, 'duplicate_of': duplicate,'instrument_merge':inline,
-            'split_changes': changes,
+            'split_changes': changes, 'holding_labels': proposed_labels,
             'cash_changes': [{'currency': c, 'before': old['cash'][n]['balance'], 'after': new['cash'][n]['balance'],
                               'change': new['cash'][n]['balance'] - old['cash'][n]['balance']} for n, c in enumerate(CURRENCIES)],
             'before': {k: old[k] for k in ('total_assets', 'capital', 'available_cash', 'pnl')},
@@ -377,16 +383,37 @@ class Service:
             'warnings': new['warnings'], 'recalculate_from': min(event['date'], before['date'] if before else event['date'])})
 
     def save_event(self, payload, event_id=None):
+        label_input = payload.get('holding_labels')
+        payload = {k: v for k, v in payload.items() if k != 'holding_labels'}
+        if label_input is not None and type(payload.get('expected_revision')) is not int:
+            raise DomainError('首次买入附带标签须携带预览时的 expected_revision')
         with self.store.transaction(expected_revision=payload.get('expected_revision')) as db:
             state,payload,inline = self.inline_instrument(self.store.state(db),payload)
             event, before, duplicate, candidate = self.prepared_event(state, payload, event_id)
+            proposed_labels = self.first_buy_labels(state, event, label_input, event_id)
             if duplicate and not payload.get('allow_duplicate'):
                 raise DomainError('发现相同流水；如确为另一笔相同成交，请在确认预览中允许重复')
             if before and not str(payload.get('change_reason') or '').strip(): raise DomainError('更正历史流水请填写更正原因')
             self.persist_inline(db,inline)
+            if proposed_labels is not None:
+                instrument = next(i for i in state['instruments'] if i['id'] == event['instrument_id'])
+                self.holding_analysis.write(db, state, event['portfolio_id'], instrument, proposed_labels)
             db.execute('INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,0)', (event['id'], event['portfolio_id'], event['date'], event['sequence'], event['fingerprint'], json_dumps(event)))
             self.store.audit(db, 'event', event['id'], before, event, payload.get('change_reason', '记账'))
         return wire(event)
+
+    def first_buy_labels(self, state, event, data, event_id):
+        if data is None:
+            return None
+        if not isinstance(data, dict) or event_id or event['kind'] != 'BUY':
+            raise DomainError('仅首次买入可附带标签；已有标的请通过设置标签修改')
+        if any(e['portfolio_id'] == event['portfolio_id'] and e.get('instrument_id') == event['instrument_id']
+               and e['kind'] in ('BUY', 'OPENING_POSITION', 'REINVEST', 'SUBSCRIBE_PENDING') for e in state['events']):
+            raise DomainError('已有本标的投资记录，请通过设置标签修改')
+        if label_map(state, event['portfolio_id']).get(event['instrument_id']):
+            raise DomainError('已有持仓标签，请通过设置标签修改')
+        instrument = next(i for i in state['instruments'] if i['id'] == event['instrument_id'])
+        return resolve_labels(instrument, normalize_labels(data, instrument))
 
     def preview_deletion(self, event_id, state=None):
         state = self.store.state() if state is None else state
@@ -447,7 +474,9 @@ class Service:
         if performance is None:
             performance = instrument_projection(state,portfolio,snap['holdings'],as_of,market=market_data)
             self.store.cache[perf_key] = performance
-        result['holdings']=[dict(h,performance=performance.get(h['instrument_id'])) for h in snap['holdings']]
+        saved_labels = label_map(state, portfolio_id)
+        result['holdings']=[dict(h, performance=performance.get(h['instrument_id']),
+                                 holding_labels=resolve_labels(h['instrument'], saved_labels.get(h['instrument_id']))) for h in snap['holdings']]
         result['capital_summary']=investment_summary(state,portfolio,snap,performance,as_of)
         result['plan_funding']=plan_funding(snap)
         result['running_days']=running_days(portfolio)
@@ -859,51 +888,6 @@ class Service:
                          'todos': current['todos'] if current else [], 'cancelled': bool(raw['deleted']),
                          'neighbors': [{'id': r['event']['id'], 'date': r['trade_date'], 'kind': r['event']['kind']} for r in results] if current else [],
                          'revisions': history})
-
-    def tag_report(self, portfolio_id=None, dimension='asset_class'):
-        if dimension not in ('asset_class', 'region', 'tags'): raise DomainError('标签统计维度无效')
-        state = self.store.state()
-        selected = [p for p in state['portfolios'] if p['id'] == portfolio_id] if portfolio_id else [p for p in state['portfolios'] if not p.get('archived')]
-        if portfolio_id and not selected: raise DomainError('组合不存在')
-        groups = {}; pie_groups = {}; total = ZERO; incomplete = False; untagged = ZERO
-        def add(bucket, key, label, value, detail):
-            if key not in bucket: bucket[key] = {'key': json_dumps(key), 'label': label, 'value': ZERO, 'details': []}
-            if value is not None: bucket[key]['value'] += value
-            bucket[key]['details'].append(detail)
-        for p in selected:
-            snap = self.dashboard(p['id'], view='summary')
-            if snap['total_assets'] is None: incomplete = True
-            else: total += dec(snap['total_assets'])
-            for h in snap['holdings']:
-                for lot in h['lots']:
-                    value = dec(lot['value_base']) if lot['value_base'] is not None else None
-                    labels = lot['tags'] if dimension == 'tags' else [lot.get(dimension) or '未分类']
-                    detail = dict(lot, portfolio_id=p['id'], portfolio_name=p['name'], instrument=h['instrument'])
-                    for label in labels: add(groups, label, label, value, detail)
-                    if not lot['tags'] and value is not None: untagged += value
-                    if dimension == 'tags':
-                        combination = tuple(sorted(set(labels)))
-                        label = ' + '.join('「'+v+'」' for v in combination) if combination else '未打主题标签'
-                        add(pie_groups, ('tags',)+combination, label, value, detail)
-            cash = dec(snap['cash_total']) if snap['cash_total'] is not None else None
-            cash_detail = {'portfolio_id': p['id'], 'portfolio_name': p['name'], 'value_base': cash, 'instrument': None}
-            add(pie_groups, ('cash',), '剩余可投金额', cash, cash_detail)
-            if dimension != 'tags': add(groups, '现金', '现金', cash, cash_detail)
-            for r in snap['receivables']:
-                value = dec(r['value_base']) if r['value_base'] is not None else None
-                detail = dict(r, portfolio_id=p['id'], portfolio_name=p['name'], instrument=None)
-                add(pie_groups, ('receivables',), '应收及在途', value, detail)
-                if dimension != 'tags': add(groups, '应收及在途', '应收及在途', value, detail)
-        if dimension != 'tags': pie_groups = groups
-        for bucket in (groups, pie_groups):
-            for item in bucket.values(): item['weight'] = ratio(item['value'], total) if not incomplete else None
-        slices = sorted(pie_groups.values(), key=lambda g: (-g['value'], g['label']))
-        pie_eligible = not incomplete and total > ZERO and all(g['value'] >= ZERO for g in slices)
-        return wire({'dimension': dimension, 'scope': portfolio_id or 'all', 'total_assets': None if incomplete else total,
-                     'groups': sorted(groups.values(), key=lambda g: (-g['value'], g['label'])), 'incomplete': incomplete,
-                     'pie_groups': slices, 'pie_eligible': pie_eligible,
-                     'pie_basis': '按互斥标签组合划分，各笔持仓只计一次；现金、未打标签及应收一并计入总资产' if dimension == 'tags' else '按总资产构成划分，包含现金及应收',
-                     'overlapping': dimension == 'tags', 'untagged_value': untagged, 'portfolio_count': len(selected)})
 
     def cache_prices(self, instrument_id, rows):
         counts = {'saved': 0, 'unchanged': 0}

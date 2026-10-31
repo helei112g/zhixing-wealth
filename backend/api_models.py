@@ -76,6 +76,7 @@ class SellLot(BaseModel):
 
 
 class EventRequest(WriteRequest):
+    holding_labels: dict[str, str] | None = Field(None, description='首次买入时可选的scope/direction/detail；仅保存为组合同标的当前标签，不写入历史流水；保存时须携带expected_revision')
     factor: Amount | None = Field(None, description='SPLIT 专项核对：送转/拆股后的数量倍数，10送8转12为3；保留总成本，先于除权日买卖执行。现金红利单独核对。')
     source_split_id: str | None = Field(None, max_length=128, description='SPLIT 所核对的公告ID，来自todo；修改日期后仍关联原公告，避免重复确认')
     portfolio_id: str
@@ -115,6 +116,14 @@ class AllocationRequest(WriteRequest):
     asset_class: str = '未分类'
     region: str = Field('未分类', description='A股、美股、港股、海外其他、混合、未分类')
     tags: list[str] | str = Field(default_factory=list, description='推荐字符串数组；兼容旧界面的逗号分隔文本')
+
+
+class HoldingLabelRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: int = Field(ge=0, strict=True)
+    scope: str = Field('', max_length=30, description='留空自动识别；基金不按上市地或币种推断投资范围')
+    direction: str = Field('', max_length=30, description='所选投资范围下的单个配置方向，可留空')
+    detail: str = Field('', max_length=40, description='单个细分标签；须先选择配置方向，可留空')
 
 
 class NoteMutationRequest(BaseModel):
@@ -218,6 +227,7 @@ class EventPreview(BaseModel):
     model_config = ConfigDict(extra='allow')
     revision: int
     event: dict[str, Any]
+    holding_labels: dict[str, Any] | None = Field(None, description='本次首次买入拟保存的当前持仓标签，预览无副作用')
     split_changes: list[SplitChange] = Field(description='本次记账或更正引起的送转效果变化，含后续已确认记录；预览不写入')
 
 

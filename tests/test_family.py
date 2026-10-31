@@ -141,6 +141,7 @@ class FamilyTests(unittest.TestCase):
     def test_schema3_migration_keeps_existing_business_records(self):
         p=self.portfolio();before=self.store.state()['portfolios']
         with self.store.connection() as db:
+            db.execute('DROP TABLE holding_labels')
             for table in reversed(TABLES):db.execute('DROP TABLE '+table)
             db.execute("UPDATE meta SET value='3' WHERE key='schema'");db.execute("UPDATE alembic_version SET version_num='0002_fx_daily'");db.commit()
         self.assertTrue(migrate(self.store.path));self.assertFalse(migrate(self.store.path));self.assertEqual(self.store.state()['portfolios'],before)
@@ -340,6 +341,7 @@ class FamilyTests(unittest.TestCase):
             raw=json.loads(db.execute('SELECT data FROM family_items WHERE id=?',(d['id'],)).fetchone()[0])
             for v in raw['versions']:v.pop('started_on',None);v.pop('due_on',None)
             db.execute('UPDATE family_items SET data=? WHERE id=?',(json.dumps(raw),d['id']))
+            db.execute('DROP TABLE holding_labels')
             db.execute('DROP TABLE family_income')
             db.execute("UPDATE meta SET value='4' WHERE key='schema'");db.execute("UPDATE alembic_version SET version_num='0003_family'");db.commit()
         self.assertTrue(migrate(path));self.assertFalse(migrate(path))

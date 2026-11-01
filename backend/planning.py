@@ -31,7 +31,7 @@ def plan_funding(snapshot, *, instrument_id=None, target_pct=None):
     gap = max(ZERO, required - available) if complete else None
     surplus = max(ZERO, available - required) if complete else None
     return {'currency': 'CNY', 'status': 'unknown' if not complete else 'shortfall' if gap > 0 else 'surplus' if surplus > 0 else 'balanced',
-            'available_amount': available, 'required_amount': required if complete else None,
+            'available_amount': available, 'available_amount_basis':'account_available_cash', 'required_amount': required if complete else None,
             'known_required_amount': required, 'shortfall': gap, 'surplus': surplus,
             'total_target_pct': total_pct, 'unknown_instrument_ids': unknown,
-            'basis': '剩余计划需投入＝各已设置计划标的 max(计划金额−净投入, 0) 之和；已超投不抵扣其他标的需求，未到账回款不计可投金额。'}
+            'basis': '剩余计划需投入＝各已设置计划标的 max(计划金额−净投入, 0) 之和；已超投不抵扣其他标的需求，使用账面可用现金核对实际资金；预算余量另按总预算减净投入计算，未到账回款不计现金。'}

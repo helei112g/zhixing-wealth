@@ -31,3 +31,5 @@ description: 查询或维护知行财富的资产更新、余额快照、负债�
 请求文件放在源码外的本机工作目录，不写入技能或示例；不要输出凭据或完整私人账本。参数细节按需阅读 [接口文档](../../../docs/api.md) 的资产章节。
 
 - 收入年度累计与分类占比使用 `/api/family/income?year=YYYY` 的 `summary`；`total` 未知或为零时不编造占比，`recorded_months` 不等于全年完整记录。字段详见 `docs/api.md`。
+
+归档与恢复：从catalog.archive_entries读取已归档对象ID，按command-schema版本2使用archive/restore。record_id为原item或link ID，payload含target=item|link及effective_on，先预览、原revision提交、回读catalog和overview。归档从当日退出统计并保留历史，不能清零或删除代替；归档关联不改变组合、交易或笔记，恢复关联创建新有效期。归档不是出售收款，需另行核对现金；恢复沿用最近记录余额，应核对当前金额。不得自动归档用户资产。

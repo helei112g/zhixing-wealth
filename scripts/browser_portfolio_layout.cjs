@@ -16,7 +16,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
  try{
   const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   const boot=await api('/bootstrap');csrf=boot.csrf_token;const start=boot.today.slice(0,4)+'-01-01',month=boot.today.slice(0,7);
-  await page.goto(base);await page.getByRole('button',{name:'创建第一个组合',exact:true}).click();
+  await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).click();
   const description='背景：为长期目标积累资金。\n\n策略：分批投入，定期检查计划。\n<b>这是纯文字示例</b>';
   await dialog().getByLabel('组合名称',{exact:true}).fill('合成组合介绍与明细验收');
   await dialog().getByLabel(/^组合介绍/).fill(description);
@@ -94,9 +94,9 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
    await shot('introduction-'+width);
   }
   await page.setViewportSize({width:1600,height:1000});
-  await nav('交易记录');await ready();await page.getByLabel('流水市场筛选').selectOption('US');await ready();
+  await nav('交易记录');await ready();await page.getByLabel('流水交易类型筛选').selectOption('SELL');await ready();
   await page.getByLabel('投资组合',{exact:true}).selectOption(other.id);await page.locator('[data-ledger-event="'+otherBuy.id+'"]').waitFor();await ready();
-  check(await page.getByLabel('流水市场筛选').inputValue()==='ALL','changing portfolio clears the previous market filter');
+  check(await page.getByLabel('流水交易类型筛选').inputValue()==='','changing portfolio clears the previous transaction type filter');
   await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await ready();
   let release,enteredResolve,finishedResolve;const gate=new Promise(r=>release=r),entered=new Promise(r=>enteredResolve=r),finished=new Promise(r=>finishedResolve=r);
   await page.route('**/api/portfolios/'+other.id+'/transactions?*',async route=>{const response=await route.fetch();enteredResolve();await gate;await route.fulfill({response});finishedResolve();});

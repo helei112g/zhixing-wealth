@@ -208,7 +208,7 @@ HTTP 403：同源/会话不匹配，重新建会话，不放宽校验。409：�
 
 分开展示时使用 `component_rounding_adjustment`，解释 `total` 与价格收益、两项净分红及其他收入各自显示两位小数之和的差额。原合并分红的 `rounding_adjustment` 保持兼容，两种舍入差均不是新增收益。
 
-`dashboard.capital_summary.cost` 为“累计投入（累计买入成本）”：历次买入及红利再投的含费税成本，含期初持仓的记账起点成本，不扣卖出或分红，不等于外部累计新增本金。`invested_amount = planned_amount - available_amount` 为净投入；买入减少剩余可投金额，卖出及现金分红到账回补，未到账应收不回补；同额再投为内部资金。金额不在前端重新计算。客户端 `investment_summary(P)` 直接读取同一 summary，能力发现见 `capabilities.investment_summary`。
+`dashboard.capital_summary.cost` 为“累计投入（累计买入成本）”：历次买入及红利再投的含费税成本，含期初持仓的记账起点成本，不扣卖出或分红，不等于外部累计新增本金。`invested_amount` 独立重放实际买入支出（含费税）、其他相关费用，扣除已到账卖出净回款与现金分红；同额再投内部抵消。未到账应收不扣本金；利息单列，换汇本金不算投入，换汇费按锁定汇率计入。`available_amount = planned_amount - invested_amount` 为预算余量，`account_available_cash` 保留账面现金；实盘入金、利息、换汇或期初记账可能使两者不同。缺可核实期初净投入时两项返回null，不从预算余额猜本金。金额不在前端重新计算。客户端 `investment_summary(P)` 直接读取同一 summary，能力发现见 `capabilities.investment_summary`。
 
 分红流水 `facts` 增加 `dividend_gross_native`、`dividend_tax_native`、`dividend_net_native` 和 `dividend_tax_differs`；实际币种用 `facts.currency`。字段后缀只作为API标识，界面应明确写 CNY/HKD/USD。税前税后不一致时显示税额等式；不按市场猜税率。录入 UI 填写税前总额和税费，自动计算净额；新增现金分红／红利再投（含公告确认）的“税额已核对”默认勾选，可取消；编辑或重算已有记录保留原核对状态，打开表单不自动写入。API 可省略 net_amount，由 gross_amount−tax 精确计算，旧净额输入兼容。两者同时传入时校验税前−税额＝净额（税额已核对时）。
 
@@ -270,7 +270,7 @@ HTTP 403：同源/会话不匹配，重新建会话，不放宽校验。409：�
 PUT计划响应和 dashboard.plan_funding 提供相同结构：
 
 - `required_amount`：各计划标的 max(总预算×计划比例−净投入,0) 之和。已超投不抵减其他标的需求；无计划不计需求。
-- `available_amount`：当前可投金额，CNY；未到账回款不算可投。
+- `available_amount`：本计划资金核对的账面可用现金，CNY；不等同于capital_summary的预算余量，未到账回款不算现金。
 - `shortfall` / `surplus`：需求超过余额的差额 / 余额超过需求的余量，均非负。
 - `status`：shortfall / balanced / surplus / unknown。缺净投入或余额时，required_amount、shortfall、surplus 为null，known_required_amount仅为已知部分，不能替代完整合计。
 - `total_target_pct` 为组合比例合计（百分数）；`unknown_instrument_ids` 明确缺失净投入的标的。资金缺口只警示，不拒绝合法计划保存；不会改预算、交易或现金。
@@ -356,7 +356,7 @@ Dashboard full 视图包含 `curve_quality`：`missing_days`、`from/to` 和 `re
 
 首次BUY可在交易请求附带 `holding_labels`（scope/direction/detail），预览返回拟保存路径且无副作用；原revision提交与流水同一事务保存到独立标签表，该字段不进入历史事件、指纹或交易CSV。已有标签通过独立接口修改，普通计划保存不改标签。
 
-持仓分布只分析当前持仓，所有金额为CNY的Decimal字符串，占比为0–1比例，未知为null。`basis=holdings` 分母为全部当前证券市值；`assets` 纳入剩余可投金额和应收及在途系统节点。每个node含id、path、value、weight、holding_ids和children。父节点直接归属且同时有下级时补“本级持仓”，保证下级金额可核对。缺估值/汇率或存在负值、非正总额时eligible=false，保留明细并说明reason。标签未知仍计入分母。
+持仓分布只分析当前持仓，所有金额为CNY的Decimal字符串，占比为0–1比例，未知为null。`basis=holdings` 分母为全部当前证券市值；`assets` 纳入账面现金和应收及在途系统节点。每个node含id、path、value、weight、holding_ids和children。父节点直接归属且同时有下级时补“本级持仓”，保证下级金额可核对。缺估值/汇率或存在负值、非正总额时eligible=false，保留明细并说明reason。标签未知仍计入分母。
 
 旧 `GET /api/tags` 和旧多选标签统计已移除，返回404且不在OpenAPI中；asset_class/region和对应流水筛选保留；旧tags由schema9清理。
 
@@ -401,3 +401,16 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 
 研究能力发现补充 `research.bases`、`valuation_methods`、`detail_fields`、`moving_averages`及`scenario_reference_windows`。标准库客户端的 `research_index(..., method='overall')`显式透传估值方法；`research_part(index_id, part, *, basis='price', window=3, method='overall', analysis_id=None, page=1, page_size=20)`覆盖四种资料投影，part限series／constituents／financials／sources。调用者在跨页读取时传入刚读取的analysis_id，遵守409版本冲突规则。
+
+
+### 当前持仓收益、交易类型与资产归档
+
+`capital_summary.holding_profit` 汇总当前份额的浮动盈亏；`holdings[].holding_profit` 与其 `performance.holding_profit` 使用同一值。`cost_including_fees_base` / `performance.remaining_cost` 为剩余含买入费税成本，按原交易锁定汇率并沿用移动平均成本；卖出同比例移除成本，送转总成本不变。再投增加份额成本，所以无卖出但有再投时仍可能不同于累计收益。行情、企业行动或剩余成本未核实时为null，空仓为0。`performance.realized_sale_profit` 及组合同名字段为卖出净回款（含已确认应收）减售出部分记账成本，不含分红和单独费用；累计收益继续保留其全部原有组成。金额单位CNY，均为Decimal字符串。
+
+`GET /api/portfolios/{P}/transactions?kind=BUY&page=1&page_size=20` 按原事件类型先筛选后分页，返回 `filters.kind`、`facets.kinds`。kind留空为全部，可选值见原流水kind枚举（含SELL、DIVIDEND、REINVEST、SPLIT等）；未知值422。组合与标的隔离、稳定排序、分页revision语义保持；market/asset_class/region参数仅保留API兼容。无参数旧接口仍返回全量数组；使用kind的新调用返回分页对象。
+
+资产命令schema版本2新增archive/restore：两者均要求原 `record_id`、`payload.target=item|link`、`payload.effective_on=YYYY-MM-DD`，可附reason，日期不得晚于今天。预览 `/api/family/preview` 后以原revision提交 `/api/family/commands`，再回读catalog和overview；409或超时先核对，不能自动替换版本或重复提交。catalog的 `archive_entries` 返回id、target、name、category、currency、closed_on、can_restore，组合另含portfolio_id。
+
+archive从生效日退出资产统计，不添加零余额、不删除历史，不等于出售或收款；实际收款另行记现金。item追加关闭版本，restore追加新有效版本并沿用已有余额；恢复日期不能早于归档日期，不能覆盖更晚档案。link只关闭原关联，restore创建新的无重叠关联区间，不清空旧closed_on，也不改组合、交易、锁定汇率或笔记。归档区间不生成付款提醒，过去余额和记录保留；归档期内不能追加估值，归档前的余额更正仍可预览保存。恢复后须核对最近余额。当前总览 `metrics.net_assets` 继续由后端统计。
+
+catalog另提供`value_history`：保留原快照字段并增加按该日档案归属比例计算的`household_total`，包含负债利息与费用，使用Decimal字符串；活动与归档余额历史共同读取，不直接展示底层全额本金。跨汇率的同额原币再投不制造个人本金；到账后尚未再投时先体现现金回收，再投确认时按到账资金口径内部抵消。补充本金须另记普通买入。

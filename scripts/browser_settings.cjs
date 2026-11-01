@@ -17,7 +17,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
   const boot=await api('/bootstrap'),expected=boot.instruments.map(i=>i.id);
   await page.route('**/api/sync',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({json:{queued:false}});});
   await page.route('**/api/jobs',route=>route.fulfill({json:{jobs:[],syncing:false}}));
-  await page.goto(base);await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'全局设置',exact:true}).click();await rows().first().waitFor();
+  await page.goto(new URL('/?page=overview',base).href);await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'全局设置',exact:true}).click();await rows().first().waitFor();
   check(await rows().count()===10&&await pager.getByRole('button',{name:'上一页'}).isDisabled(),'first page has ten rows and no previous page');
   const seen=await ids();
   await pager.getByRole('button',{name:'下一页'}).click();check(await rows().count()===10,'second page has ten rows');seen.push(...await ids());

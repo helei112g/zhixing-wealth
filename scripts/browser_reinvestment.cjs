@@ -25,7 +25,7 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
   const fund=async(code)=>api('/events',{portfolio_id:p.id,kind:'BUY',date:'2024-01-02',instrument:{market:'FUND',code,name:'合成基金'+code},quantity:'100',gross_amount:'100',fx_rate:'1'});
   const a=await fund('000001'),b=await fund('000002'),quote=(date,price)=>({date,price,kind:'raw',source:'合成单位净值'});
   fixture(a.instrument_id,[quote('2024-06-03','1.25'),quote('2024-06-04','1.5')]);fixture(b.instrument_id,[quote('2024-06-03','2.5')]);
-  await page.goto(base);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.getByRole('button',{name:'记录一笔',exact:true}).click();
+  await page.goto(new URL('/?page=overview',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.getByRole('button',{name:'记录一笔',exact:true}).click();
   await field('流水类型').selectOption('DIVIDEND');await field('当前组合内标的').selectOption(a.instrument_id);
   await field('除息日 / 暂定入账日').fill('2024-06-03');await field('到账日期').fill('2024-06-03');await field('分红总金额').fill('12.5');
   await field('流水类型').selectOption('REINVEST');await field('再投净值归属日').fill('2024-06-03');await waitValue('10');

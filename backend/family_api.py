@@ -9,7 +9,7 @@ from .family_notifications import FamilyNotifications
 
 class FamilyCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    operation: Literal['item', 'valuation', 'link', 'links', 'unlink', 'settings', 'schedule', 'reconcile', 'closure', 'income']
+    operation: Literal['item', 'valuation', 'link', 'links', 'unlink', 'settings', 'schedule', 'reconcile', 'closure', 'income', 'archive', 'restore']
     payload: dict[str, Any] = Field(description='操作参数 schema 见 GET /api/family/command-schema；金额保持十进制字符串')
     expected_revision: int = Field(strict=True, ge=0)
     record_id: str | None = None

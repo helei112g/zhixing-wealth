@@ -2,7 +2,7 @@
 
 界面和 Agent 访问同一后端服务。支持直接 HTTP、OpenAPI 和标准库客户端，不要求额外 MCP 服务或插件。部署、恢复、数据搬迁不是记账技能的隐含权限。
 
-组合指标从 `capabilities.investment_summary` 定位，或调用客户端 `investment_summary(P)`。累计投入取 `capital_summary.cost`（累计买入成本，含再投及期初记账成本），不能用净投入替代、不能称为外部新增本金；净投入仍为总预算减剩余可投金额。收益分解中的 `cash_dividends_net` 与 `reinvested_dividends_net` 按原分红记录类型拆分、各扣关联费税一次，相加仍是 `dividends_net`，不能再次叠加到收益或资产。应收可计入收益，到账前不能称为已回收现金；未知分项保留 null。
+组合指标从 `capabilities.investment_summary` 定位，或调用客户端 `investment_summary(P)`。累计投入取 `capital_summary.cost`（累计买入成本，含再投及期初记账成本），不能用净投入替代、不能称为外部新增本金；净投入独立按实际买入支出及相关费用减已到账卖出净回款和现金分红计算；`available_amount=planned_amount-invested_amount`，不能倒推净投入。利息单列，账面现金用`account_available_cash`。收益分解中的 `cash_dividends_net` 与 `reinvested_dividends_net` 按原分红记录类型拆分、各扣关联费税一次，相加仍是 `dividends_net`，不能再次叠加到收益或资产。应收可计入收益，到账前不能称为已回收现金；未知分项保留 null。
 
 首次接手安装或每次升级先读 [安装与升级指南](install.md)。安装后默认进入生成的独立日常工作区，不使用开发账本。首次安装为空，不创建演示记录；查询、能力发现和读取文档不构成记账授权。发布保全与账务更正分开处理，不能用发布脚本更改正式业务数据。
 
@@ -88,3 +88,5 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 
 
 研究客户端支持 `research_index(index_id, basis='price', window=3, method='overall')`，可选价格／全收益、3／5／10年及整体法／中位数／算术平均。`research_part(index_id, part, analysis_id=..., page=..., page_size=...)`读取series、constituents、financials、sources四种投影；分页携带原analysis_id，409后重读，不拼接不同版本。capabilities公开这些选择、完整日线均线期数与新增数据字段。条件试算的PE/PB与3／5／10年参考窗口通过真实HTTP回归，不依赖页面状态。
+
+当前持仓收益读取`holding_profit`，剩余成本读取`holdings[].cost_including_fees_base`，已卖出收益读取`realized_sale_profit`；不要把累计收益冒充当前份额浮盈亏。交易按`kind`先筛选后分页。资产归档与恢复从`family.command_schema`发现archive/restore，必须明确对象和日期、预览、原revision提交、回读；归档不自动产生收款，关联归档不等于组合归档或删除，不能用清零替代。catalog.archive_entries用于查找已归档的精确ID。

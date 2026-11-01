@@ -17,7 +17,7 @@ const base=process.env.PORTFOLIO_TEST_URL,output=process.env.PORTFOLIO_TEST_OUTP
   check(!boot.latest_fx.HKD&&!boot.latest_fx.USD,'fresh install has no currency cache');
   const catalog=await read('/api/family/catalog');
   for(const [key,value] of Object.entries(catalog))if(Array.isArray(value))check(value.length===0,'fresh family '+key+' is empty');
-  await page.goto(base);await page.getByRole('navigation',{name:'全局页面'}).waitFor();
+  await page.goto(new URL('/?page=overview',base).href);await page.getByRole('navigation',{name:'全局页面'}).waitFor();
   await page.getByRole('button',{name:'组合收益',exact:true}).click();
   await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();
   check(await page.getByText('从第一个组合开始',{exact:true}).isVisible(),'empty onboarding has no demo portfolio');

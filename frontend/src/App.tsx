@@ -26,7 +26,7 @@ const familyPages:Record<string,string>={overview:'总览',analysis:'趋势分�
 const familyIcons:Record<string,React.ReactNode>={overview:<Home size={17}/>,analysis:<TrendingUp size={17}/>,insurance:<ShieldCheck size={17}/>,income:<CircleDollarSign size={17}/>};
 
 export default function App(){
- const [boot,Boot]=useState<Obj|null>(null),[pid,Pid]=useState(new URLSearchParams(location.search).get('dividend')||localStorage.getItem('portfolio.selected')||''),[page,Page]=useState(new URLSearchParams(location.search).has('reminders')||new URLSearchParams(location.search).get('family')==='reminders'?'reminders':new URLSearchParams(location.search).has('family')?'family':'overview'),[inst,Inst]=useState(''),[version,V]=useState(0),[modal,M]=useState<Obj|null>(null),[toast,T]=useState(''),[error,E]=useState('');
+ const [boot,Boot]=useState<Obj|null>(null),[pid,Pid]=useState(new URLSearchParams(location.search).get('dividend')||localStorage.getItem('portfolio.selected')||''),[page,Page]=useState(new URLSearchParams(location.search).has('reminders')||new URLSearchParams(location.search).get('family')==='reminders'?'reminders':new URLSearchParams(location.search).has('family')?'family':new URLSearchParams(location.search).has('dividend')||new URLSearchParams(location.search).get('page')==='overview'?'overview':'family'),[inst,Inst]=useState(''),[version,V]=useState(0),[modal,M]=useState<Obj|null>(null),[toast,T]=useState(''),[error,E]=useState('');
  const reloadFlight=useRef<Promise<void>|null>(null);
  const reloadSequence=useRef(0),[bootLoading,BootLoading]=useState(true);
  const [familyLedger,SetFamilyLedger]=useState({filter:'all',selected:''}),[returnToLedger,ReturnToLedger]=useState(false);

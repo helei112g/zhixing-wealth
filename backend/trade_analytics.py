@@ -312,8 +312,10 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
                 else:extra_costs+=fee
             elif k=='INTEREST':
                 value=dec(e['amount'])*fx;other_income+=value;add(e['date'],value)
-            elif k in ('SUBSCRIBE_PENDING','REDEEM_PENDING','OPENING_RECEIVABLE'):
-                # Unresolved pending transactions cannot establish sale proceeds/cost either.
+            elif k=='SUBSCRIBE_PENDING':
+                # A new subscription does not change previously settled sale proceeds.
+                complete=False
+            elif k in ('REDEEM_PENDING','OPENING_RECEIVABLE'):
                 complete=False;proceeds_complete=False
         if h['value_base'] is not None and h['value_base']!=0:flows.append((end,h['value_base']))
         profit=sum((v for _,v in flows),ZERO) if complete else None

@@ -168,6 +168,15 @@ class CapitalSummaryTests(unittest.TestCase):
         a=self.snap()['capital_summary'];self.assertEqual(D(a['holding_profit']),100)
         self.assertIsNone(a['realized_sale_profit'])
 
+    def test_pending_subscription_preserves_previously_settled_sale_profit(self):
+        e=self.buy()
+        self.s.save_event(dict(portfolio_id=self.p['id'],instrument_id=e['instrument_id'],kind='SELL',date='2023-02-01',sell_all=True,gross_amount='1100',fx_rate='1'))
+        self.assertEqual(D(self.snap()['capital_summary']['realized_sale_profit']),100)
+        self.s.save_event(dict(portfolio_id=self.p['id'],instrument_id=e['instrument_id'],kind='SUBSCRIBE_PENDING',date='2023-03-01',amount='100',fx_rate='1'))
+        r=self.snap()
+        self.assertIsNone(r['capital_summary']['profit'])
+        self.assertEqual(D(r['capital_summary']['realized_sale_profit']),100)
+
     def test_unconfirmed_fund_purchase_is_not_a_realized_sale_loss(self):
         self.s.save_event(dict(portfolio_id=self.p['id'],kind='BUY',date='2023-01-02',payment_date='2023-01-01',confirmation_date='2023-01-03',instrument=dict(market='FUND',code='000001'),quantity='100',gross_amount='1000',fx_rate='1'))
         a=self.snap('2023-01-02')['capital_summary'];self.assertEqual(D(a['realized_sale_profit']),0)

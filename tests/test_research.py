@@ -421,3 +421,25 @@ class PriceStorageTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class RegisteredIdentityTests(unittest.TestCase):
+    def test_a500_and_information_pairs_resolve_bidirectionally(self):
+        for code,tr,name in [('000510','000510CNY010','中证A500'),('000993','H00993','全指信息')]:
+            with self.subTest(code=code):
+                price=providers.identity(code);total=providers.identity(tr.lower())
+                self.assertEqual((price['code'],price['return_code'],price['name']),(code,tr,name))
+                self.assertEqual((total['code'],total['return_code']),(code,tr))
+                self.assertEqual(price['input_basis'],'price');self.assertEqual(total['input_basis'],'total_return')
+                self.assertIn(code+'factsheet.pdf',price['method_url'])
+    def test_unknown_variants_are_not_guessed_from_prefix(self):
+        for code in ('H00510','00051','H993','000993FAKE'):
+            with self.subTest(code=code),self.assertRaises(providers.market.ProviderError):providers.identity(code)
+    def test_a500_official_return_code_and_publication_boundary_reach_adapter(self):
+        profile=providers.identity('000510CNY010')
+        raw=[dict(indexCode=profile['return_code'],tradeDate=d,close='100') for d in ['1999-01-01','2020-01-02','2024-09-23','2026-10-30']]
+        with patch.object(providers,'request',return_value=(dict(data=raw),{})) as request:
+            result=providers.prices(profile,'total_return',ASOF)
+        self.assertIn('indexCode=000510CNY010',request.call_args.args[0])
+        self.assertEqual([r['date'] for r in result['rows']],['2024-09-23','2026-10-30'])
+        self.assertIsNotNone(result['theoretical_history_note'])

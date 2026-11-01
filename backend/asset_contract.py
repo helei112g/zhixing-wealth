@@ -19,6 +19,8 @@ PLAN = obj({
 }, ['mode'])
 
 PAYLOADS = {
+    'archive': obj({'target':dict(enum=['item','link']), 'effective_on':DATE, 'reason':REASON}, ['target','effective_on']),
+    'restore': obj({'target':dict(enum=['item','link']), 'effective_on':DATE, 'reason':REASON}, ['target','effective_on']),
     'item': obj({
         'category': dict(enum=['cash', 'fixed', 'investment', 'receivable', 'debt', 'insurance']),
         'currency': dict(enum=['CNY', 'HKD', 'USD']),
@@ -54,17 +56,20 @@ PAYLOADS = {
 def asset_command_contract():
     variants = []
     for operation, payload in PAYLOADS.items():
-        record = dict(type=['string', 'null'], description='仅编辑item/income时使用原记录ID；valuation始终追加快照') if operation in ('item', 'income') else dict(type='null')
+        record = dict(type=['string', 'null'], description='编辑item/income和归档/恢复时使用原记录ID；valuation始终追加快照') if operation in ('item', 'income', 'archive', 'restore') else dict(type='null')
+        if operation in ('archive','restore'):record = dict(ID,description='原item或link ID，必填；恢复组合将返回新关联ID')
         variants.append(obj({'operation': dict(const=operation), 'payload': deepcopy(payload),
                              'expected_revision': dict(type='integer', minimum=0), 'record_id': record},
-                            ['operation', 'payload', 'expected_revision']))
+                            ['operation', 'payload', 'expected_revision'] + (['record_id'] if operation in ('archive','restore') else [])))
     return {
-        'contract_version': 1,
+        'contract_version': 2,
         'schema': {'$schema': 'https://json-schema.org/draft/2020-12/schema', 'title': '资产推荐写入命令', 'oneOf': variants},
         'preview': '/api/family/preview', 'write': '/api/family/commands', 'catalog': '/api/family/catalog',
-        'readback': {'item': '/api/family/catalog', 'valuation': '/api/family/catalog',
+        'readback': {'archive':'/api/family/catalog', 'restore':'/api/family/catalog', 'item': '/api/family/catalog', 'valuation': '/api/family/catalog',
                      'links': '/api/family/overview', 'unlink': '/api/family/overview', 'income': '/api/family/income?year=YYYY'},
         'operations': {
+            'archive':'按生效日期退出统计；项目保留历史版本，组合只关闭关联，不改写组合或交易',
+            'restore':'按日期恢复；沿用最近记录余额，组合新建关联区间，不填补归档期间',
             'item': '新增项目或编辑资料/还款/保费规则；已有项目余额更新优先用valuation',
             'valuation': '追加指定日期完整余额，同日新值生效，历史保留，不覆盖之后日期',
             'links': '多选关联投资组合，当天生效；只读引用，不反向写入组合',
@@ -77,6 +82,7 @@ def asset_command_contract():
             'preview_ids': '预览中的新ID是暂定值；提交后使用响应result的正式ID回读',
             'numbers': '金额为Decimal字符串；null为未知，零为已知0；API不返回万/亿缩写',
             'scope': '推荐schema覆盖当前界面操作；原始兼容字段见/api/guide，不重建退役的开支/逐笔提醒功能',
+            'archive':'归档不是出售或收款，不自动增加现金；恢复后应核对最新金额',
             'item_edit': '编辑保留原category/currency；只变余额用valuation，勿将catalog的versions直接作为payload',
             'payment': '计划只生成提醒，不扣余额；debt支持none/once/fixed/annuity/equal_principal，insurance支持none/once/annual',
             'comparison': '总览月比上月末、年比上年末；history显式comparison=yoy表示同比',

@@ -12,12 +12,13 @@ from backend.ledger import Ledger
 from backend.market import benchmark_quotes, ProviderError
 from backend.service import Service
 from backend.store import Store
+from backend.environment import claim_environment
 from backend.app import create_app
 from fastapi.testclient import TestClient
 
 class BudgetTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.store=Store(Path(self.tmp.name));self.s=Service(self.store)
+        self.tmp=tempfile.TemporaryDirectory();self.store=Store(claim_environment(Path(self.tmp.name),'test'));self.s=Service(self.store)
         self.p=self.s.save_portfolio({'name':'预算测试','planned_amount':'100000','start_date':'2024-01-01'})
     def tearDown(self):self.tmp.cleanup()
     def payload(self,**extra):
@@ -95,13 +96,13 @@ class BudgetTests(unittest.TestCase):
     def test_unused_reinvestment_field_cannot_override_regular_buy_fx(self):
         self.buy(instrument={'market':'HK','code':'700','name':'港股','currency':'HKD'},quantity='10',gross_amount='1000',fee='5',fx_rate='.9',reinvest_fx_rate='.5')
         self.assertEqual(D(self.snap()['cash_total']),D('99095.5'))
-    def test_reinvestment_fx_difference_spent_from_budget_is_own_net_input(self):
+    def test_reinvestment_fx_repricing_is_not_new_personal_principal(self):
         e=self.buy(instrument={'market':'HK','code':'700','name':'港股','currency':'HKD'},quantity='10',gross_amount='1000',fee='0',fx_rate='.9')
         self.s.save_event({'portfolio_id':self.p['id'],'instrument_id':e['instrument_id'],'kind':'REINVEST','date':'2024-01-02',
             'gross_amount':'100','net_amount':'100','pay_date':'2024-01-02','reinvest_quantity':'10','reinvest_gross_amount':'100',
             'fx_rate':'.9','pay_fx_rate':'.9','reinvest_fx_rate':'.92'})
         r=self.snap();self.assertEqual(D(r['cash_total']),99098)
-        self.assertEqual(D(r['holdings'][0]['net_invested_base']),902)
+        self.assertEqual(D(r['holdings'][0]['net_invested_base']),900)
     def test_cash_dividend_reinvestment_does_not_add_budget_or_double_count(self):
         e=self.buy();p={'portfolio_id':self.p['id'],'instrument_id':e['instrument_id'],'kind':'REINVEST','date':'2024-01-02',
             'gross_amount':'10','net_amount':'10','pay_date':'2024-01-02','reinvest_quantity':'3',

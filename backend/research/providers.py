@@ -19,6 +19,8 @@ CATALOG = [
     dict(code='399006', return_code='399606', name='创业板指', provider='cni', kind='宽基', launch='2010-06-01',return_launch='2010-06-01',identity_source='https://www.cnindex.com.cn/zh_information/notices_news/2010/201206/P020191213351661589949.pdf'),
     dict(code='000922', return_code='H00922', name='中证红利', provider='csi', kind='策略', launch='2008-05-26'),
     dict(code='000819', return_code='H00819', name='有色金属', provider='csi', kind='行业', launch='2009-07-03'),
+    dict(code='000510', return_code='000510CNY010', name='中证A500', provider='csi', kind='宽基', launch='2024-09-23'),
+    dict(code='000993', return_code='H00993', name='全指信息', provider='csi', kind='行业', launch='2011-08-02'),
 ]
 SOURCE_LOCK = threading.Lock()
 
@@ -26,7 +28,7 @@ SOURCE_LOCK = threading.Lock()
 def identity(code):
     code = str(code).strip().upper()
     found = next((p for p in CATALOG if code in (p['code'], p['return_code'])), None)
-    if not found: raise market.ProviderError('未找到已核验的官方代码对；不按前缀猜测，请等待身份适配扩展')
+    if not found: raise market.ProviderError('当前尚未支持这个指数的官方代码配对；不按代码前缀猜测')
     p = dict(found, currency='CNY', input_basis='total_return' if code == found['return_code'] else 'price')
     p['method_url'] = (CNI + '/docs/gz_399006.pdf' if p['provider'] == 'cni' else
         'https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/' + p['code'] + 'factsheet.pdf')
@@ -91,7 +93,7 @@ def valuations(profile, asof):
                 rows = []
                 for row in raw:
                     d = str(row.get('date', ''))[:10]
-                    if re.fullmatch(r'\d{4}-\d{2}-\d{2}', d) and d <= asof and row.get(field) is not None:
+                    if re.fullmatch(r'\d{4}-\d{2}-\d{2}', d) and profile['launch'] <= d <= asof and row.get(field) is not None:
                         value = dec(row[field])
                         rows.append(dict(date=d, value=ds(value)))
                 if rows: methods[method] = dict(rows=rows, field=field, source='乐咕乐股', frequency='monthly')

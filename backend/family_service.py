@@ -9,7 +9,8 @@ from datetime import timedelta
 from .common import ConflictError, DomainError, ZERO, day, dec, ds, now, today, month_after, json_dumps, wire
 from .family_domain import (TABLES, CATEGORIES, REASONS, text, money, past, fraction, currency,
                             read_state, at_item, active, event_signatures, snapshot, schedule_projection)
-from .family_ledger import recording_bounds, debt_summary
+from .family_ledger import recording_bounds, debt_summary, balance_history
+from .family_archive import archive_entries, lifecycle
 from .ledger import Market
 from .store import cached_query
 
@@ -45,7 +46,7 @@ class FamilyService:
                 closure['needs_review'] = any(current[k] != previous[k] for k in fields)
                 closure['current_net_assets'] = current['net_assets']
                 closure['net_difference'] = ds(dec(current['net_assets']) - dec(previous['net_assets'])) if current['net_assets'] is not None and previous['net_assets'] is not None else None
-            return dict(family, revision=state['revision'], bounds=recording_bounds(family, str(today())), portfolios=[{k: p.get(k) for k in
+            return dict(family, value_history=balance_history(family), archive_entries=archive_entries(family,state,str(today())), revision=state['revision'], bounds=recording_bounds(family, str(today())), portfolios=[{k: p.get(k) for k in
                         ('id', 'name', 'funding_mode', 'archived', 'start_date')} for p in state['portfolios']])
 
     @cached_query
@@ -185,6 +186,8 @@ class FamilyService:
                 raise DomainError(label + '不存在')
             return obj
         reason = text(data.get('reason'), '修订说明', 300) or '资产资料更新'
+        if operation in ('archive','restore'):
+            return lifecycle(self,db,family,state,operation,data,record_id)
         if operation == 'item':
             check_fields(data, 'name category currency share economic_id platform member effective_on closed_on review_days coverage_type coverage_amount insured beneficiary policy_number policy_end policy_lifetime source amount household_amount restricted household_restricted interest fees reason liability_asset_id started_on due_on payment_plan')
             category = data.get('category')

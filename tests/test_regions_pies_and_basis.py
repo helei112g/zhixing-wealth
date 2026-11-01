@@ -70,7 +70,7 @@ class RegionsPiesAndBasisTests(unittest.TestCase):
         self.assertTrue(r['eligible'])
         self.assertEqual(sum(D(n['value']) for n in r['nodes']),D(r['total']))
         self.assertEqual(sum(D(h['value']) for h in r['holdings']),2000)
-        self.assertEqual({n['name'] for n in r['nodes']},{'待确认','剩余可投金额'})
+        self.assertEqual({n['name'] for n in r['nodes']},{'待确认','账面现金'})
     def test_missing_and_negative_values_do_not_draw_false_pies(self):
         self.s.save_event({'portfolio_id':self.p['id'],'kind':'BUY','date':'2023-01-01','instrument':{'market':'US','code':'AAPL'},'quantity':'1','gross_amount':'100','fx_rate':'7'})
         r=self.s.holding_analysis.report(self.p['id']);self.assertTrue(r['incomplete']);self.assertFalse(r['eligible'])

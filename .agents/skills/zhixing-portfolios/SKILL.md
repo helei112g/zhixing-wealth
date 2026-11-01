@@ -8,7 +8,7 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 阅读 [AI 接入约定](../../../docs/ai.md)。开发源码内`scripts/ai_client.py`默认开发账本，发布包默认正式账本；独立日常工作区使用其`./zhixing`入口替换客户端前缀，不切到开发目录。操作正式账本须有对应用户授权，不启动部署或恢复。
 
 - 读取health、capabilities、bootstrap，使用真实portfolio_id和instrument_id；同一证券在不同组合独立。命中多个组合时先澄清目标，不以页面上次选择代替记账授权。
-- 查询dashboard读取持仓、投入和收益；仅需当前值可传`view=summary`，历史曲线、日历和期间统计用默认`view=full`。两种视图的当前财务值口径相同。流水显式传`page=1&page_size=20`及市场、资产类别、地区筛选（旧tag参数已移除）。翻页保持相同条件并检查revision；变化时重新读取，不混合不同版本。
+- 查询dashboard读取持仓、投入和收益；仅需当前值可传`view=summary`，历史曲线、日历和期间统计用默认`view=full`。两种视图的当前财务值口径相同。流水显式传`page=1&page_size=20`及kind交易类型筛选（市场、资产类别、地区参数仅作旧API兼容）（旧tag参数已移除）。翻页保持相同条件并检查revision；变化时重新读取，不混合不同版本。
 - 日常录入使用BUY、SELL、DIVIDEND、REINVEST；送转/拆股专项待办使用SPLIT。买卖金额、费用、日期及锁定汇率按 [接口文档](../../../docs/api.md) 核对；不同分红日期分别读取reference-rate。不得拿当前汇率覆盖历史锁定值。
 - 红利再投可读 `GET /api/portfolios/P/instruments/I/reinvestment-estimate?date=YYYY-MM-DD&gross_amount=...`：同日场外基金单位净值估算，按两位小数四舍五入。只读、不自动入账；null不补0，缺当日净值或其他市场按实际确认单填。核对后显式传reinvest_quantity，再走交易预览与提交；金额为不含手续费的再投总价，不重复扣税费。已有确认份额优先，不用估算覆盖。
 - 用`preview REQUEST.json`预览交易；编辑请求包含原事件id，提交PUT时路径使用同一id。保存前核对份额、费用、现金与收益影响，以及用户授权。
@@ -33,3 +33,5 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 确认携带 source_split_id；遇 verify_split，核对 todo.notice 登记日与除权日及倍数，更正 todo.event.id。旧记录误记在登记日会提示核对原记录，不代表允许再次送转；未经用户核对不自动改日期或删除历史。UI与AI都用预览 revision 提交，409重新核对。
 
 - 设置计划页面已合并持仓标签，地区不再提供编辑。先读 labels 接口返回的 allocation、labels 与同一 revision，再读 plan-check；展示 target_pct、asset_class、holding_labels 的差异，PUT 原 revision 同事务保存。省略 region 保留历史原值，省略 holding_labels 保留已有路径；不要用未分类代替省略。独立 labels PUT 仍只改标签。冲突核对当前计划和路径，保留草稿，不能自动换版本覆盖。
+
+净投入使用`capital_summary.invested_amount`（实际买入支出与相关费用减已到账卖出净回款和现金分红）；`available_amount=planned_amount-invested_amount`。再投内部抵消，利息单列；`account_available_cash`是账面现金，不保证等于预算余量，期初本金未知时不猜。当前份额盈亏读`holding_profit`，剩余含费税成本按原交易汇率和移动平均成本；`realized_sale_profit`为已卖出部分收益（含已确认应收），分红另读净分红字段。未卖出但发生再投时当前盈亏可能不同于累计收益。

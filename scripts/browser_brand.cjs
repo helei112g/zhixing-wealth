@@ -7,7 +7,7 @@ try{for(const [environment,label] of [['test','测试环境'],['dev','开发环�
 const page=await browser.newPage();const health=await (await page.request.get(base+'/api/health')).json();assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
 // Only display metadata is varied; every scenario still uses the guarded synthetic backend.
 await page.route('**/api/bootstrap',async route=>{const response=await route.fetch();const data=await response.json();await route.fulfill({response,json:{...data,environment,environment_label:label}});});
-await page.goto(base);await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();
+await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();
 await page.waitForFunction(title=>document.title===title,environment==='production'?'知行财富':'知行财富 · '+label);
 const logo=page.locator('.sidebar .brand-logo');assert.equal(await logo.count(),1);assert.ok(await logo.evaluate(e=>e.complete&&e.naturalWidth>0));
 for(const [name,width,height] of [['desktop',1440,1000],['mobile',390,844]]){

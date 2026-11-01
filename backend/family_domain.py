@@ -213,12 +213,15 @@ def schedule_projection(family, date, horizon=35):
         if meta['category']=='debt' and value and value['amount'] is not None and dec(value['amount'])+dec(value['interest'])+dec(value['fees'])==0: continue
         plan = meta.get('payment_plan')
         generated = installments(plan, item['id'], meta['name'], meta['currency'], date, end)
-        rows.extend(r for r in generated if active(meta,r['due_date']))
+        def active_on(due):
+            dated = at_item(item,due)
+            return bool(dated and active(dated,due))
+        rows.extend(r for r in generated if active_on(r['due_date']))
         for row in family['schedules']:
             if row['item_id'] != item['id'] or row['status'] != 'pending' or not date <= row['due_date'] <= end: continue
             if row['kind'] in ('receivable','debt_end'): continue
             if plan and plan.get('mode') != 'none' and row['kind'] in ('debt','premium'): continue
-            if not active(meta,row['due_date']): continue
+            if not active_on(row['due_date']): continue
             rows.append(dict(row, name=meta['name'], currency=meta['currency'], share=meta['share'],
                              household_amount=dec(row['amount'])*dec(meta['share']),
                              days=(day(row['due_date'])-day(date)).days))

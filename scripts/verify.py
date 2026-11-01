@@ -17,7 +17,7 @@ sys.path.insert(0,str(ROOT))
 from backend.environment import LedgerProcessLock, claim_environment, workspace_for
 from backend.deployment_guard import require_empty
 
-SCENARIOS = ('empty','research','acceptance','pagination','profit','holdings','holding_analysis','refinements','portfolio_layout','entry','reinvestment','dividend_review','notes','plan_forward','brand','family','settings','interface_refinements')
+SCENARIOS = ('empty','research','acceptance','pagination','profit','holdings','holding_analysis','refinements','portfolio_layout','entry','reinvestment','dividend_review','notes','plan_forward','brand','family','settings','interface_refinements','cashflow_archive')
 
 
 def run(command, **kwargs):
@@ -73,7 +73,7 @@ def main():
                     if name == 'research': run([sys.executable,'scripts/verify_research_ai.py'],env=env)
                     if name == 'empty':
                         (case_output/'empty-install.json').write_text(json.dumps(require_empty(data),indent=2))
-                    if name in ('family', 'holding_analysis', 'reinvestment', 'dividend_review', 'refinements'): run([sys.executable,'scripts/verify_ai.py'],env=env)
+                    if name in ('family', 'holding_analysis', 'reinvestment', 'dividend_review', 'refinements', 'cashflow_archive'): run([sys.executable,'scripts/verify_ai.py'],env=env)
                 finally:
                     process.terminate()
                     try:process.wait(timeout=15)

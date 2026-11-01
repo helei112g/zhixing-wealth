@@ -274,7 +274,7 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
     events=[e for e in state['events'] if e['portfolio_id']==portfolio['id'] and e['date']<=end]
     for h in holdings:
         iid=h['instrument_id'];flows=[];cost=ZERO;dividends_net=ZERO;complete=h['value_base'] is not None;pending=False
-        proceeds=ZERO;other_income=ZERO;extra_costs=ZERO;dividends_complete=True
+        proceeds=ZERO;other_income=ZERO;extra_costs=ZERO;dividends_complete=True;proceeds_complete=True
         dividend_parts={'DIVIDEND':ZERO,'REINVEST':ZERO}
         dividend_parts_complete={'DIVIDEND':True,'REINVEST':True}
         for e in events:
@@ -283,12 +283,12 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
             def add(at,amount):
                 if at<=end:flows.append((at,amount))
             def receipt(at,amount,locked):
-                nonlocal complete,pending
+                nonlocal complete,pending,proceeds_complete
                 if at>end:
                     pending=True;r=market.fx(e['currency'],end)
                     if r:
                         value=amount*dec(r['rate']);add(end,value);return value
-                    complete=False;return ZERO
+                    complete=False;proceeds_complete=False;return ZERO
                 value=amount*locked;add(at,value);return value
             if k in ('BUY','OPENING_POSITION'):
                 paid=(dec(e['gross_amount'])+dec(e['fee'])+dec(e['tax']))*fx
@@ -312,9 +312,11 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
                 else:extra_costs+=fee
             elif k=='INTEREST':
                 value=dec(e['amount'])*fx;other_income+=value;add(e['date'],value)
-            elif k in ('SUBSCRIBE_PENDING','REDEEM_PENDING','OPENING_RECEIVABLE'):
-                # Unresolved pending transactions cannot establish investment cash flows.
+            elif k=='SUBSCRIBE_PENDING':
+                # A new subscription does not change previously settled sale proceeds.
                 complete=False
+            elif k in ('REDEEM_PENDING','OPENING_RECEIVABLE'):
+                complete=False;proceeds_complete=False
         if h['value_base'] is not None and h['value_base']!=0:flows.append((end,h['value_base']))
         profit=sum((v for _,v in flows),ZERO) if complete else None
         annual=xirr(flows) if complete else {'rate':None,'status':'有未确认流水或缺少估值，暂不年化'}
@@ -326,7 +328,10 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
             cash_dividends_net=dividend_parts['DIVIDEND'] if dividend_parts_complete['DIVIDEND'] else None,
             reinvested_dividends_net=dividend_parts['REINVEST'] if dividend_parts_complete['REINVEST'] else None,
             market_value=h['value_base'],sale_proceeds=proceeds if complete else None,buy_cost=cost,extra_costs=extra_costs)
-        result[iid]={'profit':profit,'return_on_cost':ratio(profit,cost) if profit is not None else None,'cost':cost,'profit_breakdown':breakdown,
+        # Settled sale performance does not depend on today's remaining-position valuation.
+        sold_cost=h.get('sold_cost_base')
+        realized_sale_profit = proceeds - dec(sold_cost) if proceeds_complete and sold_cost is not None else None
+        result[iid]={'realized_sale_profit':realized_sale_profit,'holding_profit':h.get('holding_profit'),'remaining_cost':h.get('cost_including_fees_base'),'profit':profit,'return_on_cost':ratio(profit,cost) if profit is not None else None,'cost':cost,'profit_breakdown':breakdown,
             'dividends_net':dividends_net,'xirr':annual['rate'],'xirr_status':annual['status'],'xirr_basis':XIRR_BASIS,'provisional':provisional,
             'pending_settlement':pending,'closed':h['quantity']==0,'as_of':end,'cash_flows':[{'date':d,'amount':v} for d,v in sorted(flows)]}
     return result
@@ -359,8 +364,10 @@ def investment_summary(state, portfolio, snapshot, performances, as_of):
     if any(e['portfolio_id'] == portfolio['id'] and e['kind'] == 'OPENING_POSITION' and e['date'] <= str(as_of) for e in state['events']):
         annual['status'] += '；含期初份额，仅计算记账以来'
     planned = dec(snapshot['capital']) if snapshot.get('funding_mode') == 'budget' else dec(portfolio['planned_amount'])
-    available = snapshot['available_cash']
-    invested = planned - dec(available) if available is not None else None
+    invested = snapshot.get('invested_cash_flow')
+    available = planned - dec(invested) if invested is not None else None
+    open_holdings = [h for h in snapshot['holdings'] if dec(h['quantity']) > 0 or h.get('unconfirmed_split')]
+    holding_profit = sum((dec(h['holding_profit']) for h in open_holdings),ZERO) if all(h.get('holding_profit') is not None for h in open_holdings) else None
     def combined(key):
         values=[r['profit_breakdown'][key] for r in rows]
         return sum((dec(v) for v in values),ZERO) if all(v is not None for v in values) else None
@@ -372,7 +379,10 @@ def investment_summary(state, portfolio, snapshot, performances, as_of):
     return {
         'planned_amount': planned, 'invested_amount': invested,
         'invested_weight': ratio(invested, planned) if invested is not None else None,
-        'available_amount': available, 'market_value': snapshot['securities_total'],
+        'available_amount': available, 'account_available_cash': snapshot['available_cash'], 'available_amount_basis':'planned_amount - invested_amount',
+        'invested_amount_basis':'paid purchases and related fees less received sale proceeds and cash dividends; native reinvestment funding cancels; interest is separate',
+        'holding_profit':holding_profit, 'realized_sale_profit':sum((dec(r['realized_sale_profit']) for r in rows),ZERO) if all(r.get('realized_sale_profit') is not None for r in rows) else None,
+        'dividends_net':combined('dividends_net'), 'holding_profit_basis':'market value less remaining book cost including purchase fees and taxes; excludes sold positions and distributions', 'market_value': snapshot['securities_total'],
         'profit': profit, 'return_on_cost': ratio(profit, cost) if profit is not None else None,
         'cost': cost, 'profit_breakdown':breakdown, 'xirr': annual['rate'], 'xirr_status': annual['status'], 'xirr_basis': XIRR_BASIS,
         'provisional': any(r['provisional'] for r in rows),

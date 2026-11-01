@@ -10,7 +10,7 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
  async function add(code){await page.getByRole('button',{name:'添加指数',exact:true}).first().click();const dialog=page.getByRole('dialog',{name:'添加指数',exact:true});await dialog.getByLabel('指数代码',{exact:true}).fill(code);await dialog.getByRole('button',{name:'识别指数',exact:true}).click();await dialog.getByRole('button',{name:'确认添加并更新',exact:true}).click();await dialog.waitFor({state:'hidden'});}
  try{
  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);csrf=(await api('/bootstrap')).csrf_token;
- await page.goto(base);await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();await nav('指数资料库','研究工具');await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
+ await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();await nav('指数资料库','研究工具');await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
  check((await api('/bootstrap')).portfolios.length===0,'research can open in a zero-portfolio ledger');check(await page.locator('.research-page input[type=search]').count()===0,'no search field');
  await add('399606');await page.getByRole('button',{name:'返回指数资料库',exact:true}).waitFor();await page.waitForFunction(()=>document.querySelector('.research-metrics .drawdown-window time')?.textContent==='2024-07-01',null,{timeout:20000});
  check(await page.locator('.research-basis button[aria-pressed=true]').innerText()==='全收益指数 399606','total-return input retains its basis');

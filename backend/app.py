@@ -181,7 +181,10 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',
                                        'field': 'capital_summary', 'cumulative_input': 'cost',
                                        'cumulative_input_basis': '历次买入及红利再投含费税成本累计；不扣卖出与分红，再投非新增个人本金',
-                                       'net_input': 'planned_amount - available_amount',
+                                       'net_input':'invested_amount', 'net_input_basis':'实际买入支出及相关费用－已到账卖出净回款－已到账现金分红；红利再投内部抵消，利息单列',
+                                       'remaining_budget':'planned_amount - invested_amount', 'account_cash':'account_available_cash',
+                                       'current_holding_profit':'holding_profit', 'current_holding_profit_basis':'剩余份额市值－剩余含买入费税的记账成本（锁定交易汇率）；移动平均成本；不含已卖出和分红',
+                                       'realized_sales':'realized_sale_profit',
                                        'dividend_components': ['profit_breakdown.cash_dividends_net','profit_breakdown.reinvested_dividends_net'],
                                        'dividend_total': 'profit_breakdown.dividends_net',
                                        'unpaid_dividends': '已确认应收计入分红收益，到账前不属于已回收现金'},
@@ -192,7 +195,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                      'cardinality': 'one path per portfolio instrument; no duplicated values'},
                 'family': {'label': '资产分析', 'read': '/api/family/overview',
                            'catalog': '/api/family/catalog', 'command_schema': '/api/family/command-schema',
-                           'recommended_operations': ['item','valuation','links','unlink','income'],
+                           'recommended_operations': ['item','valuation','links','unlink','income','archive','restore'],
                            'comparison': {'summary_default': 'month', 'summary_baseline': 'previous_period_end', 'history_curve': 'yoy'},
                            'skills': ['zhixing-assets','zhixing-portfolios','zhixing-notes'], 'history': '/api/family/history',
                            'preview': '/api/family/preview', 'write': '/api/family/commands',
@@ -202,7 +205,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},
                 'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system']},
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,
-                               'filters': ['instrument_id', 'market', 'asset_class', 'region'],
+                               'filters': ['instrument_id', 'kind', 'market', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},
                 'dashboard': {'endpoint': '/api/portfolios/{portfolio_id}/dashboard', 'default_view': 'full',
                               'views': {'full': 'summary plus historical curves, calendar and periods',
@@ -371,16 +374,16 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
              summary='读取本组合流水；显式page返回筛选分页对象，无参兼容全量数组')
     def transactions(request: Request, portfolio_id: str, instrument_id: str | None = None,
                      page: int | None = Query(None, ge=1), page_size: int = Query(20, ge=1, le=100),
-                     market: str = 'ALL', asset_class: str = '', region: str = ''):
+                     market: str = 'ALL', asset_class: str = '', region: str = '', kind: str = ''):
         if 'tag' in request.query_params:
             raise DomainError('旧主题标签筛选已移除，请使用资产类别或地区筛选')
         if 'scope' in request.query_params:
             raise DomainError('交易复盘筛选已移除，请删除 scope 参数')
         # Unparameterized legacy reads remain compatible. All new clients use the paginated envelope.
-        if page is None and (market, asset_class, region) == ('ALL', '', ''):
+        if page is None and (market, asset_class, region, kind) == ('ALL', '', '', ''):
             return reply(service.transaction_rows(portfolio_id, instrument_id))
         return reply(service.transaction_page(portfolio_id, instrument_id, page=page or 1, page_size=page_size,
-                     market=market, asset_class=asset_class, region=region))
+                     market=market, asset_class=asset_class, region=region, kind=kind))
 
     @app.get('/api/portfolios/{portfolio_id}/transactions/{event_id}', response_model=TransactionDetail, response_model_exclude_unset=True, summary='本组合流水详情、真实收益、同标的买卖导航和修订记录')
     def transaction_detail(portfolio_id: str, event_id: str):

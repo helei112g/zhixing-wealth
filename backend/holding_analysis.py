@@ -138,7 +138,7 @@ class HoldingAnalysis:
         if basis == 'assets':
             receivables = snap['receivables']
             receivable = None if any(r['value_base'] is None for r in receivables) else sum((dec(r['value_base']) for r in receivables), ZERO)
-            for key, name, value in (('cash', '剩余可投金额', snap['cash_total']), ('receivables', '应收及在途', receivable)):
+            for key, name, value in (('cash', '账面现金', snap['cash_total']), ('receivables', '应收及在途', receivable)):
                 value = dec(value) if value is not None else None
                 if value != ZERO:
                     nodes.append(dict(id='system:' + key, name=name, path=[name], value=value, known_value=value or ZERO,
@@ -170,4 +170,4 @@ class HoldingAnalysis:
         return wire(dict(portfolio_id=portfolio_id, revision=state['revision'], date=snap['date'], basis=basis, currency='CNY',
                          total=total, nodes=nodes, holdings=holdings, eligible=eligible, incomplete=incomplete,
                          estimated=snap.get('estimated', False), reason=reason,
-                         denominator='全部当前持仓市值（包含待确认标签）' if basis == 'holdings' else '组合总资产（持仓、剩余可投金额、应收及在途）'))
+                         denominator='全部当前持仓市值（包含待确认标签）' if basis == 'holdings' else '组合总资产（持仓、账面现金、应收及在途）'))

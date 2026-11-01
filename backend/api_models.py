@@ -344,13 +344,14 @@ class ForwardPerformance(BaseModel):
 
 
 class PlanFunding(BaseModel):
+    available_amount_basis: Literal['account_available_cash']
     currency: Literal['CNY']
     status: Literal['shortfall', 'balanced', 'surplus', 'unknown']
     available_amount: str | None
     required_amount: str | None = Field(description='各已设置计划标的 max(计划金额-净投入,0) 之和；无法完整核算时为null')
     known_required_amount: str
-    shortfall: str | None = Field(description='max(剩余计划需投入-剩余可投金额,0)，CNY；仅提醒，不阻止保存')
-    surplus: str | None = Field(description='max(剩余可投金额-剩余计划需投入,0)，CNY')
+    shortfall: str | None = Field(description='max(剩余计划需投入-账面可用现金,0)，CNY；仅提醒，不阻止保存')
+    surplus: str | None = Field(description='max(账面可用现金-剩余计划需投入,0)，CNY')
     total_target_pct: str
     unknown_instrument_ids: list[str]
     basis: str

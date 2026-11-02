@@ -158,7 +158,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.get('/api/reminders')
     def reminders(): return reminder_service.read()
 
-    @app.get('/api/notifications')
+    @app.get('/api/notifications', description='系统最多登记最近一条通知；同一时刻合并。selected_count为本条包含的提醒数，deferred_count为等待后续排程数，不计入missing_count。后续排程需本机服务运行，排程不等于已送达。')
     def notification_status(): return household_notifications.status()
 
     @app.post('/api/notifications')
@@ -216,7 +216,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'skills': ['zhixing-assets','zhixing-portfolios','zhixing-notes'], 'history': '/api/family/history',
                            'preview': '/api/family/preview', 'write': '/api/family/commands',
                            'expected_revision_required': True, 'portfolio_link': 'read-only; excludes unused budget',
-                           'notifications': '/api/notifications', 'schema': SCHEMA,
+                           'notifications': '/api/notifications',
+                           'notification_scheduling': {'mode': 'single_next', 'max_pending': 1,
+                                                       'same_time': 'combined', 'continuation_requires_service': True}, 'schema': SCHEMA,
                            'income': '/api/family/income', 'income_summary': {'field': 'summary', 'groups': ['salary','rent','fund','custom'], 'shares': '0–1; null when total is unknown or nonpositive'}, 'history_default_comparison': 'previous', 'summary': '/api/family/summary', 'recurring_payments': True,
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},
                 'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system']},

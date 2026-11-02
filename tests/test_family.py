@@ -164,7 +164,8 @@ class FamilyTests(unittest.TestCase):
         n=FamilyNotifications(self.store,self.family,'test');n.prepared=True;n._save(n.preferences,{'enabled':True})
         self.item('insurance','0',policy_end='2026-11-10')
         with patch.object(n,'_helper',return_value={'authorization':'authorized','pending_ids':[]}):r=n.reconcile(True)
-        self.assertEqual(r['missing_count'],3);self.assertTrue(r['error']);self.assertIsNone(r['coverage_until'])
+        self.assertEqual(r['missing_count'],1);self.assertEqual(r['deferred_count'],2)
+        self.assertTrue(r['error']);self.assertIsNone(r['coverage_until'])
     def test_family_api_requires_csrf_revision_and_preserves_nulls(self):
         with TestClient(create_app(self.store.directory,testing=True,auto_sync=False)) as c:
             boot=c.get('/api/bootstrap').json();payload=dict(operation='settings',expected_revision=boot['revision'],payload=dict(effective_on='2026-01-01',living_expense=None,debt_plan_complete=False,policy_plan_complete=False))

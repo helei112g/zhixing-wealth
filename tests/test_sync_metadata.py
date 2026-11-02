@@ -51,8 +51,44 @@ class SyncMetadataTests(unittest.TestCase):
             schema=c.get('/api/openapi.json').json();self.assertIn('SyncRequest',schema['components']['schemas'])
     def test_startup_is_recorded_by_server(self):
         app=create_app(Path(self.tmp.name)/'startup',testing=True,auto_sync=True)
-        with patch.object(app.state.service,'start_sync') as sync:
-            with TestClient(app):sync.assert_called_once_with(trigger='startup')
+        app.state.service.save_portfolio({'name':'合成启动计划','planned_amount':'100','start_date':'2024-01-01'})
+        with patch.object(app.state.research.updates,'start'),patch.object(app.state.service,'start_sync') as sync:
+            with TestClient(app):
+                jobs=app.state.research.jobs()
+                self.assertEqual({j['trigger'] for j in jobs},{'startup'})
+                self.assertEqual({scope for j in jobs for scope in j['scopes']},{'quotes','fx'})
+                sync.assert_not_called()  # The durable planner, rather than startup, owns execution.
+
+
+    def test_post_write_planner_respects_disabled_and_manual_scopes(self):
+        app=create_app(Path(self.tmp.name)/'post-write',testing=True,auto_sync=True)
+        research=app.state.research
+        def policy(quotes,fx):
+            settings=research.settings()
+            for p in settings['policies']:
+                p['enabled']=p['scope']=='quotes' and quotes=='daily' or p['scope']=='fx' and fx=='daily'
+                p['cadence']=quotes if p['scope']=='quotes' else fx if p['scope']=='fx' else 'manual'
+            research.save_settings(dict(policies=settings['policies'],expected_settings_revision=settings['settings_revision']))
+        policy('manual','manual')
+        with patch.object(research.updates,'start'),patch.object(app.state.service,'start_sync') as legacy:
+            with TestClient(app) as c:
+                headers={'x-csrf-token':c.get('/api/bootstrap').json()['csrf_token']}
+                p=c.post('/api/portfolios',headers=headers,json={'name':'合成写后补齐','planned_amount':'10000','start_date':'2026-01-01'}).json()
+                def buy(code):
+                    r=c.post('/api/events',headers=headers,json={'portfolio_id':p['id'],'kind':'BUY','date':'2026-01-02','instrument':{'market':'CN','code':code,'name':'合成标的'},'quantity':'10','gross_amount':'100','fx_rate':'1'})
+                    self.assertEqual(r.status_code,200);return r.json()
+                buy('600001');self.assertEqual(research.jobs(),[])
+                policy('daily','manual');event=buy('600002');job=research.jobs()[0]
+                self.assertEqual(job['trigger'],'event_create');self.assertEqual(job['resources'],[dict(scope='quotes',instrument_id=event['instrument_id'],full=True)])
+                policy('manual','daily');buy('600003');job=research.jobs()[0]
+                self.assertEqual(job['scopes'],['fx']);self.assertEqual(job['resources'],[dict(scope='fx',currency=ccy,full=True) for ccy in ('HKD','USD')])
+                legacy.assert_not_called()
+                # The durable resource keeps history scope and original cause when handed to legacy execution.
+                resource=job['resources'][0]
+                # Use this app's store, rather than the separate setUp store.
+                with patch.object(app.state.service,'start_sync',return_value={'job_id':'forwarded'}) as execute,patch.object(app.state.service.store,'jobs',return_value=[{'id':'forwarded','items':[]} ]):
+                    research.updates.current_trigger='event_create';research.updates._legacy(resource)
+                    execute.assert_called_once_with(None,trigger='event_create',scopes=['fx'],fx_currencies=['HKD'],full=True)
 
 
 if __name__=='__main__':unittest.main()

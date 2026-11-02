@@ -8,6 +8,7 @@ import secrets
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
@@ -18,8 +19,9 @@ from .common import ConflictError, DomainError, now, today, wire
 from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
-from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview
-from .api_models import InstrumentDetail
+from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
+from .api_models import HoldingLabelRequest
+from .api_models import InstrumentDetail, DashboardResponse
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -49,6 +51,10 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def writes_blocked():
         return read_only or (guard_path is not None and guard_path.exists())
 
+    from .research.service import ResearchService
+    from .research.api import router as research_router
+    research = ResearchService(store, service, lambda: not writes_blocked())
+
     @asynccontextmanager
     async def lifespan(app):
         if writes_blocked():
@@ -57,14 +63,16 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
             yield
             return
         store.recover_jobs()
-        if auto_sync: service.start_sync(trigger='startup')
+        research.recover(resume=auto_sync)
+        if auto_sync: research.tick(trigger='startup')
         async def clock():
-            last = today().isoformat() if now()[11:16] >= '23:30' else ''
             while True:
                 await asyncio.sleep(45)
-                current = now()
-                if not writes_blocked() and current[:10] != last and current[11:16] >= '23:30':
-                    service.start_sync(trigger='schedule'); last = current[:10]
+                if not writes_blocked():
+                    try:await asyncio.to_thread(research.tick)
+                    except Exception:
+                        import logging
+                        logging.getLogger(__name__).exception('公共数据调度检查失败，下一轮重试')
         async def notification_clock():
             while True:
                 if not writes_blocked():
@@ -74,6 +82,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         task = asyncio.create_task(clock()) if auto_sync else None
         try: yield
         finally:
+            await asyncio.to_thread(research.shutdown)
             notification_task.cancel()
             try: await notification_task
             except asyncio.CancelledError: pass
@@ -86,7 +95,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                   docs_url=None, redoc_url=None, openapi_url='/api/openapi.json',
                   description='本机单用户投资账本。AI 客户端与界面共用服务。先 GET /api/bootstrap 获取会话与 revision；写入带 Cookie 和 X-CSRF-Token。金额为十进制字符串，收益率为比例，未知为 null。核心写入可携带 expected_revision 进行原子并发校验。详见 /api/guide。')
     app.state.service = service; app.state.store = store; app.state.instance = instance
+    app.state.research = research
     app.include_router(household_router)
+    app.include_router(research_router(research))
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'] + (['testserver'] if testing else []))
 
     @app.middleware('http')
@@ -156,13 +167,52 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.get('/api/capabilities')
     def capabilities():
         return {'api_version': VERSION, 'openapi': '/api/openapi.json', 'guide': '/api/guide',
+                'skills': ['zhixing-assets', 'zhixing-portfolios', 'zhixing-notes', 'zhixing-research'],
                 'authentication': {'bootstrap': '/api/bootstrap', 'cookie': session_cookie, 'header': 'X-CSRF-Token'},
                 'concurrency': {'field': 'expected_revision', 'conflict_status': 409,
-                                'operations': ['portfolios', 'allocations', 'events', 'investment_notes', 'dividend_confirm', 'family']},
+                                'domains': {'ledger': {'field': 'expected_revision', 'read': '/api/bootstrap'},
+                                            'research': {'field': 'expected_research_revision', 'read': '/api/research/revision'},
+                                            'settings': {'field': 'expected_settings_revision', 'read': '/api/settings/data-updates'}},
+                                'operations': ['portfolios', 'allocations', 'holding_labels', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
+                'portfolios': {'create': '/api/portfolios', 'edit': '/api/portfolios/{portfolio_id}',
+                               'description': {'max_length': 10000, 'format': 'plain text; preserve newlines',
+                                               'omitted_or_null': 'preserve', 'empty_string': 'clear'},
+                               'preview': 'review the current values and proposed changes; no dedicated preview endpoint'},
+                'research': {'resolve':'/api/research/indices/resolve','indices':'/api/research/indices','detail':'/api/research/indices/{id}',
+                             'parts':['series','constituents','financials','sources'],'scenarios':'/api/research/indices/{id}/scenarios',
+                             'projection': '/api/research/indices/{id}/{part}',
+                             'scenario': {'method': 'POST', 'read_only': True, 'cli': 'scenario INDEX_ID REQUEST.json',
+                                          'required_context': ['analysis_id', 'accept_fixed_basket_assumption'],
+                                          'basis': 'same-date price series and overall valuation; no total-return mapping'},
+                             'revision_field':'expected_research_revision','request_id_required':True,'scope':'A-share verified registry; no name or prefix guessing',
+                             'windows':[3,5,10],'bases':['price','total_return'],'valuation_methods':['overall','median','arithmetic'],
+                             'detail_fields':['changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources'],
+                             'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-library-2','missing':'null with status; UI -'},
+                'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
+                                 'job': '/api/data-updates/jobs/{job_id}', 'request_id_required': True,
+                                 'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials'],
+                                 'retry':'unknown outcome: read back and preserve original request_id/payload; confirmed failed resource: submit a new request_id with the exact failed item.resource',
+                                 'execution':'while app runs only; restart resumes durable work unless --no-sync or read-only'},
+                'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',
+                                       'field': 'capital_summary', 'cumulative_input': 'cost',
+                                       'cumulative_input_basis': '历次买入及红利再投含费税成本累计；不扣卖出与分红，再投非新增个人本金',
+                                       'net_input':'invested_amount', 'net_input_basis':'实际买入支出及相关费用－已到账卖出净回款－已到账现金分红；红利再投内部抵消，利息单列',
+                                       'remaining_budget':'planned_amount - invested_amount', 'account_cash':'account_available_cash',
+                                       'current_holding_profit':'holding_profit', 'current_holding_profit_basis':'剩余份额市值－剩余含买入费税的记账成本（锁定交易汇率）；移动平均成本；不含已卖出和分红',
+                                       'realized_sales':'realized_sale_profit',
+                                       'dividend_components': ['profit_breakdown.cash_dividends_net','profit_breakdown.reinvested_dividends_net'],
+                                       'dividend_total': 'profit_breakdown.dividends_net',
+                                       'unpaid_dividends': '已确认应收计入分红收益，到账前不属于已回收现金'},
+                'holding_analysis': {'read': '/api/portfolios/{portfolio_id}/holding-analysis?basis=holdings',
+                                     'bases': ['holdings', 'assets'], 'current_only': True,
+                                     'labels': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels',
+                                     'expected_revision_required': True, 'levels': ['scope', 'direction', 'detail'],
+                                     'cardinality': 'one path per portfolio instrument; no duplicated values'},
                 'family': {'label': '资产分析', 'read': '/api/family/overview',
                            'catalog': '/api/family/catalog', 'command_schema': '/api/family/command-schema',
-                           'recommended_operations': ['item','valuation','links','unlink','income'],
-                           'comparison': {'summary_default': 'month', 'summary_baseline': 'previous_period_end', 'history_curve': 'yoy'},
+                           'recommended_operations': ['item','valuation','links','unlink','income','archive','restore'],
+                           'comparison': {'summary_default': 'month', 'summary_baseline': 'previous_period_end', 'history_curve': 'previous',
+                                          'history_options': ['previous', 'year_start', 'yoy']},
                            'skills': ['zhixing-assets','zhixing-portfolios','zhixing-notes'], 'history': '/api/family/history',
                            'preview': '/api/family/preview', 'write': '/api/family/commands',
                            'expected_revision_required': True, 'portfolio_link': 'read-only; excludes unused budget',
@@ -171,7 +221,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},
                 'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system']},
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,
-                               'filters': ['instrument_id', 'market', 'tag', 'asset_class', 'region'],
+                               'filters': ['instrument_id', 'kind', 'market', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},
                 'dashboard': {'endpoint': '/api/portfolios/{portfolio_id}/dashboard', 'default_view': 'full',
                               'views': {'full': 'summary plus historical curves, calendar and periods',
@@ -211,11 +261,21 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'reinvestment_estimate': {'endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/reinvestment-estimate',
                                          'query': ['date', 'gross_amount'], 'market': 'FUND', 'exact_date': True,
                                          'quantity_decimals': 2, 'rounding': 'ROUND_HALF_UP', 'read_only': True},
+                'dividend_review': {'read': '/api/portfolios/{portfolio_id}/dividends',
+                                    'write': '/api/dividends/{notice_id}/review', 'method': 'POST', 'mode': 'keep_recorded',
+                                    'expected_revision_required': True, 'event_write': False,
+                                    'receipt_binding': 'scoped decision.event_id; date corrections review the original event',
+                                    'basis_lifetime': 'last explicit notice confirm/review; receipt edits never revert it',
+                                    'unknown_entitlement': 'a known quantity becoming null requires review',
+                                    'audit': '/api/revisions/dividend_decision/{decision_id}',
+                                    'yahoo_reference_tolerance': {'relative': '0.0001', 'per_share_absolute': '0.0001',
+                                                                 'both_required': True, 'anchor': 'last reviewed basis'},
+                                    'entitlement_tolerance': 'none; quantity, dates, currency and split factors compare exactly'},
                 'storage': {'schema': SCHEMA, 'prices': 'skip identical latest automatic quote; preserve changed versions',
                             'jobs_visible': 5, 'jobs_total_retained': 20, 'jobs_finished_retained': 20, 'jobs_running_retained': True,
                             'automatic_backup_dates_retained': 30},
-                'write_workflow': 'read → preview → confirm intent → write with expected_revision → read back',
-                'idempotency': 'No automatic mutation retry. Reuse expected_revision: an already committed write makes it stale.'}
+                'write_workflow': 'read → preview or display exact changes → confirm intent → write with original domain revision/request_id → read back',
+                'idempotency': 'No automatic mutation retry. Ledger/settings commits make their original revision stale. Research creation and data updates replay the same request_id and payload; a changed payload conflicts.'}
 
     @app.get('/api/reference-rate')
     def reference_rate(currency: str, date: str):
@@ -230,14 +290,14 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def create_portfolio(payload: PortfolioRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_portfolio(payload)
-        if auto_sync and value.get('benchmark_id'):service.start_sync(value['benchmark_id'],full=True,trigger='portfolio_create')
+        if auto_sync and value.get('benchmark_id'):research.updates.after_write(value['benchmark_id'],trigger='portfolio_create')
         return reply(value)
 
     @app.put('/api/portfolios/{portfolio_id}')
     def edit_portfolio(portfolio_id: str, payload: PortfolioRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_portfolio(payload, portfolio_id)
-        if auto_sync and value.get('benchmark_id'):service.start_sync(value['benchmark_id'],full=True,trigger='portfolio_edit')
+        if auto_sync and value.get('benchmark_id'):research.updates.after_write(value['benchmark_id'],trigger='portfolio_edit')
         return reply(value)
 
     @app.post('/api/instruments')
@@ -248,12 +308,25 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         payload = payload.model_dump(exclude_unset=True)
         return reply(service.attach_instrument(portfolio_id, instrument_id, payload))
 
+    @app.get('/api/portfolios/{portfolio_id}/holding-analysis', summary='当前持仓层级分布；不含历史标签回看')
+    def holding_analysis(portfolio_id: str, basis: Literal['holdings', 'assets'] = 'holdings'):
+        return reply(service.holding_analysis.report(portfolio_id, basis))
+
+    @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels', summary='当前组合同标的标签、可选方向及原revision')
+    def holding_labels(portfolio_id: str, instrument_id: str):
+        return reply(service.holding_analysis.read(portfolio_id, instrument_id))
+
+    @app.put('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels', summary='原revision保存当前持仓标签；不修改计划与流水')
+    def save_holding_labels(portfolio_id: str, instrument_id: str, payload: HoldingLabelRequest):
+        return reply(service.holding_analysis.put(portfolio_id, instrument_id, payload.model_dump()))
+
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/plan-check', response_model=PlanCheck)
     def plan_check(portfolio_id: str, instrument_id: str, target_pct: str):
         return reply(service.check_plan(portfolio_id, instrument_id, target_pct))
 
-    @app.get('/api/portfolios/{portfolio_id}/dashboard')
-    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None, grain: str = 'month', view: str = 'full'):
+    @app.get('/api/portfolios/{portfolio_id}/dashboard', response_model=DashboardResponse, response_model_exclude_unset=True)
+    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None,
+                  grain: Literal['day', 'week', 'month', 'year'] = 'month', view: Literal['full', 'summary'] = 'full'):
         return reply(service.dashboard(portfolio_id, start=start, end=end, grain=grain, view=view))
 
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}', response_model=InstrumentDetail,
@@ -294,14 +367,14 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def event(payload: EventRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_event(payload)
-        if auto_sync and value.get('instrument_id'):service.start_sync(value['instrument_id'],full=True,trigger='event_create')
+        if auto_sync and value.get('instrument_id'):research.updates.after_write(value['instrument_id'],trigger='event_create')
         return reply(value)
 
     @app.put('/api/events/{event_id}')
     def edit_event(event_id: str, payload: EventRequest):
         payload = payload.model_dump(exclude_unset=True)
         value=service.save_event(payload,event_id)
-        if auto_sync and value.get('instrument_id'):service.start_sync(value['instrument_id'],full=True,trigger='event_edit')
+        if auto_sync and value.get('instrument_id'):research.updates.after_write(value['instrument_id'],trigger='event_edit')
         return reply(value)
 
     @app.get('/api/events/{event_id}/deletion-preview', response_model=EventDeletionPreview, summary='只读预览关联删除清单及账务校验结果')
@@ -324,14 +397,16 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
              summary='读取本组合流水；显式page返回筛选分页对象，无参兼容全量数组')
     def transactions(request: Request, portfolio_id: str, instrument_id: str | None = None,
                      page: int | None = Query(None, ge=1), page_size: int = Query(20, ge=1, le=100),
-                     market: str = 'ALL', tag: str = '', asset_class: str = '', region: str = ''):
+                     market: str = 'ALL', asset_class: str = '', region: str = '', kind: str = ''):
+        if 'tag' in request.query_params:
+            raise DomainError('旧主题标签筛选已移除，请使用资产类别或地区筛选')
         if 'scope' in request.query_params:
             raise DomainError('交易复盘筛选已移除，请删除 scope 参数')
         # Unparameterized legacy reads remain compatible. All new clients use the paginated envelope.
-        if page is None and (market, tag, asset_class, region) == ('ALL', '', '', ''):
+        if page is None and (market, asset_class, region, kind) == ('ALL', '', '', ''):
             return reply(service.transaction_rows(portfolio_id, instrument_id))
         return reply(service.transaction_page(portfolio_id, instrument_id, page=page or 1, page_size=page_size,
-                     market=market, tag=tag, asset_class=asset_class, region=region))
+                     market=market, asset_class=asset_class, region=region, kind=kind))
 
     @app.get('/api/portfolios/{portfolio_id}/transactions/{event_id}', response_model=TransactionDetail, response_model_exclude_unset=True, summary='本组合流水详情、真实收益、同标的买卖导航和修订记录')
     def transaction_detail(portfolio_id: str, event_id: str):
@@ -355,12 +430,15 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.post('/api/dividends/{notice_id}/confirm')
     def confirm_dividend(notice_id:str,payload:dict):return reply(service.confirm_dividend(notice_id,payload))
 
+    @app.post('/api/dividends/{notice_id}/review', response_model=DividendReviewResult,
+              responses={409:{'description':'读取后账本已变化；不写入'},422:{'description':'候选、原流水或核对依据不匹配；不写入'}})
+    def review_dividend(notice_id:str,payload:DividendReviewRequest):
+        result=service.review_dividend(notice_id,payload.model_dump())
+        household_notifications.invalidate()
+        return result
+
     @app.post('/api/dividends/{notice_id}/ignore')
     def ignore_dividend(notice_id:str,payload:dict):return reply(service.ignore_dividend(notice_id,payload))
-
-    @app.get('/api/tags')
-    def tag_report(portfolio_id: str | None = None, dimension: str = 'asset_class'):
-        return reply(service.tag_report(portfolio_id, dimension))
 
     @app.post('/api/fx')
     def fx(payload: dict): return reply(service.save_fx(payload))
@@ -383,7 +461,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.post('/api/csv/import')
     def csv_import(payload: dict):
         value=service.csv_import(payload.get('text', ''), payload.get('category', 'events'), payload.get('portfolio_id'), payload.get('instrument_id'))
-        if auto_sync and value['imported'] and payload.get('category','events')=='events':service.start_sync(full=True,trigger='import')
+        if auto_sync and value['imported'] and payload.get('category','events')=='events':research.updates.after_write(trigger='import')
         return reply(value)
 
     @app.get('/api/portfolios/{portfolio_id}/export.csv')
@@ -401,7 +479,11 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         if payload.get('confirm') != 'RESTORE': raise DomainError('恢复备份需要明确确认')
         try: content = base64.b64decode(payload.get('content', ''), validate=True)
         except ValueError: raise DomainError('备份文件编码无效') from None
-        value = service.restore(content)
+        with research.worker_lock, store.lock:
+            if research.updating(): raise DomainError('研究数据仍在更新，请结束后恢复备份')
+            value = service.restore(content)
+            research.cache.clear()
+            research.secret=secrets.token_bytes(32)
         household_notifications.invalidate()
         value['notifications'] = household_notifications.reconcile(True)
         return reply(value)

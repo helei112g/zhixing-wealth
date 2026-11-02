@@ -111,6 +111,7 @@ def main():
         worker(args.source.resolve(), args.data.resolve()); return
     if not args.reference or not args.output: parser.error('--reference and --output are required')
     if not (args.reference/'backend/service.py').is_file(): parser.error('reference must be an existing source tree')
+    if args.output.exists(): parser.error('refuse to overwrite an existing output file')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(ROOT))
     with tempfile.TemporaryDirectory(prefix='synthetic-read-benchmark-', dir=args.output.parent) as temporary:

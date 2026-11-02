@@ -9,8 +9,8 @@ from sqlalchemy.engine import URL
 
 from .common import DomainError
 
-SCHEMA = 7
-HEAD = '0006_storage'
+SCHEMA = 10
+HEAD = '0009_index_research'
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -49,7 +49,7 @@ def migrate(path):
                 raise DomainError('日频汇率唯一约束缺失，拒绝启动')
             from .family_domain import TABLES
             names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if not set(TABLES).issubset(names):
+            if not (set(TABLES) | {'holding_labels'}).issubset(names):
                 raise DomainError('家庭资料数据表缺失，拒绝启动')
         return False
     engine = create_engine(URL.create('sqlite+pysqlite', database=str(path)))

@@ -45,7 +45,7 @@ class ExtendedMarketsTests(unittest.TestCase):
         created=[self.buy('HK','700'),self.buy('US','VOO'),self.buy('CN','515080'),self.buy('CN','159307'),self.buy('US','AAPL')]
         before=[h['instrument']['code'] for h in self.snap()['holdings']]
         self.assertEqual(before,['159307','515080','00700','AAPL','VOO'])
-        self.s.attach_instrument(self.p['id'],created[3]['instrument_id'],{'target_pct':'20','tags':['成长']})
+        self.s.attach_instrument(self.p['id'],created[3]['instrument_id'],{'target_pct':'20'})
         self.assertEqual(before,[h['instrument']['code'] for h in self.snap()['holdings']])
     def test_instrument_annual_return_uses_actual_flows_and_terminal_value(self):
         a=self.buy();self.prices(a,11)

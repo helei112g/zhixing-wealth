@@ -20,6 +20,7 @@ export function HoldingStatus({closed,unbought=false,title}:{closed?:boolean;unb
  return <span className={'holding-status '+(unbought?'unbought':closed?'closed':'open')} title={title}>{unbought?'尚未买入':closed?'已清仓':'持有中'}</span>;
 }
 export function ReturnPerformance({performance:a}:{performance?:Obj|null}){
+ if(!a)return <span className="muted">-</span>;
  return <><div className="transaction-return-main"><b className={tone(a?.return_on_cost)}>累计 {percent(a?.return_on_cost,true)}</b><span className="return-separator">·</span><strong className={'transaction-return-amount '+tone(a?.profit)}>{signedMoney(a?.profit)} CNY</strong></div><small className="transaction-return-secondary" title={a?.xirr_status}>年化（XIRR） <span className={tone(a?.xirr)}>{percent(a?.xirr,true)}</span>{a?.provisional?' · 待核对':''}{a&&a.xirr==null&&a.xirr_status?' · '+a.xirr_status:''}</small></>;
 }
 export function Empty({title,children,action}: {title:string;children?:React.ReactNode;action?:React.ReactNode}) {return <div className="empty"><div className="empty-mark"><ArrowUpRight size={24}/></div><h2>{title}</h2>{children&&<p>{children}</p>}{action}</div>;}

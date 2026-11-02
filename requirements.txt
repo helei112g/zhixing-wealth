@@ -3,3 +3,6 @@ uvicorn>=0.30,<1
 httpx>=0.27,<1
 certifi>=2024.8.30
 alembic>=1.17,<2
+requests>=2.32,<3
+openpyxl>=3.1,<4
+xlrd>=2,<3

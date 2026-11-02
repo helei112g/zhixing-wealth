@@ -39,7 +39,7 @@ def seed(directory):
             'instrument':{'market':market,'code':code,'name':name},'quantity':str(quantity),
             'gross_amount':str(round(quantity*price,2)),'fee':'5','fx_rate':str(fx),'reason':'合成展示交易，不是真实投资记录'})
         iid=event['instrument_id'];instruments.append(iid)
-        service.attach_instrument(p['id'],iid,{'target_pct':target,'asset_class':category,'region':region,'tags':['长期配置' if n!=3 else '稳健配置']})
+        service.attach_instrument(p['id'],iid,{'target_pct':target,'asset_class':category,'region':region})
         rows=[];length=max(1,(end-start).days)
         for offset in range(length+1):
             growth=[.125,.078,-.025,.032][n]*offset/length + math.sin(offset/16+n)*(.012 if n!=3 else .001)

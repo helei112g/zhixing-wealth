@@ -96,7 +96,7 @@ class Client:
     def preview(self, payload, path='/api/events/preview'):
         """Return the full preview, including split_changes after historical backfills."""
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
-        if path not in ('/api/events/preview', '/api/family/preview'):
+        if path not in ('/api/events/preview', '/api/family/preview', '/api/research/indices/resolve'):
             raise ValueError('Use a documented preview endpoint')
         if path == '/api/family/preview' and (type(payload.get('expected_revision')) is not int or payload['expected_revision'] < 0):
             raise ValueError('Asset preview requires the revision from catalog')
@@ -107,17 +107,62 @@ class Client:
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
         # Only the documented, atomically revision-checked mutations are exposed here.
         core = (method == 'POST' and path in ('/api/portfolios', '/api/events') or
-                method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+)?|events/[^/]+)', path) or
+                method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+(?:/labels)?)?|events/[^/]+)', path) or
                 method == 'DELETE' and re.fullmatch(r'/api/events/[^/]+', path) or
-                method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/confirm', path))
+                method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/(confirm|review)', path))
         notes = (method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes(?:/[^/]+/restore)?', path) or
                  method in ('PUT', 'DELETE') and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes/[^/]+', path))
         assets = method == 'POST' and path == '/api/family/commands'
-        if not (core or notes or assets) or type(payload.get('expected_revision')) is not int or payload['expected_revision'] < 0:
-            raise ValueError('Use a documented core mutation and include expected_revision from the reviewed read/preview')
+        revision_field='expected_revision'
+        research=method=='POST' and path=='/api/research/indices'
+        settings=method=='PUT' and path=='/api/settings/data-updates'
+        update=method=='POST' and path=='/api/data-updates/run'
+        if research:revision_field='expected_research_revision'
+        if settings:revision_field='expected_settings_revision'
+        if not (core or notes or assets or research or settings or update):raise ValueError('Use a documented mutation')
+        if not update and (type(payload.get(revision_field)) is not int or payload[revision_field]<0):
+            raise ValueError('Include the original '+revision_field+' from the reviewed read/preview')
+        if (research or update) and not isinstance(payload.get('request_id'),str):raise ValueError('Include the original request_id')
         self.connect()
         # Never retry a mutation or replace its expected_revision automatically.
         return self.request(path, payload, method)
+
+    def resolve_index(self,code):
+        return self.preview({'code':code},'/api/research/indices/resolve')
+
+    def research_index(self,index_id,basis='price',window=3,method='overall'):
+        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))
+
+    def research_part(self,index_id,part,*,basis='price',window=3,method='overall',analysis_id=None,page=1,page_size=20):
+        if part not in ('series','constituents','financials','sources'):raise ValueError('Unknown research part')
+        params=dict(basis=basis,window=window,method=method,page=page,page_size=page_size)
+        if analysis_id is not None:params['analysis_id']=analysis_id
+        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/'+part+'?'+urllib.parse.urlencode(params))
+
+    def update_settings(self):
+        return self.request('/api/settings/data-updates')
+
+    def research_scenario(self,index_id,payload):
+        """Read-only calculation against the caller's original analysis version."""
+        if not isinstance(payload,dict):raise ValueError('Scenario must be a JSON object')
+        self.connect()
+        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/scenarios',payload)
+
+    def investment_summary(self, portfolio_id):
+        """Read canonical cost/net input and cash/reinvested dividend components; never recalculate."""
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='')
+                            + '/dashboard?view=summary')['capital_summary']
+
+    def holding_labels(self, portfolio_id, instrument_id):
+        """Read current labels and the original revision; review the diff before PUT."""
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'
+                            + urllib.parse.quote(instrument_id, safe='') + '/labels')
+
+    def holding_distribution(self, portfolio_id, basis='holdings'):
+        if basis not in ('holdings', 'assets'):
+            raise ValueError('basis must be holdings or assets')
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='')
+                            + '/holding-analysis?' + urllib.parse.urlencode({'basis': basis}))
 
     def deletion_preview(self, event_id):
         """Read the complete causal deletion list; submit its original revision and IDs."""
@@ -149,7 +194,9 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('target', help='Describe the selected target without connecting or changing data')
     read = commands.add_parser('read'); read.add_argument('path')
-    preview = commands.add_parser('preview'); preview.add_argument('file', type=Path); preview.add_argument('--path', choices=['/api/events/preview','/api/family/preview'], default='/api/events/preview')
+    preview = commands.add_parser('preview'); preview.add_argument('file', type=Path); preview.add_argument('--path', choices=['/api/events/preview','/api/family/preview','/api/research/indices/resolve'], default='/api/events/preview')
+    scenario = commands.add_parser('scenario', help='Read-only index calculation; requires the reviewed analysis_id and assumptions')
+    scenario.add_argument('index_id'); scenario.add_argument('file', type=Path)
     write = commands.add_parser('write'); write.add_argument('method', choices=['POST', 'PUT', 'DELETE'])
     write.add_argument('path'); write.add_argument('file', type=Path)
     write.add_argument('--confirm-write', action='store_true', help='The human has authorized this exact mutation')
@@ -162,6 +209,7 @@ def main():
     else:
         payload = json.loads(args.file.read_text())
         if args.command == 'preview': value = client.preview(payload, args.path)
+        elif args.command == 'scenario': value = client.research_scenario(args.index_id, payload)
         else:
             if not args.confirm_write: parser.error('write requires --confirm-write; inspect the preview and user authorization first')
             value = client.write(args.path, payload, args.method)

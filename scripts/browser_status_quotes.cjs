@@ -8,7 +8,7 @@ const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'ht
  const errors=[];page.on('pageerror',e=>errors.push(e.message));let csrf='',checks=0;
  const check=(value,label)=>{assert.ok(value,label);console.log('PASS',++checks,label);};
  const api=async(url,data,method=data===undefined?'GET':'POST')=>{const r=await page.request.fetch(base+'/api'+url,{method,data,headers:{origin:base,'x-csrf-token':csrf}});assert.ok(r.ok(),url+' '+r.status());return r.json();};
- const nav=async name=>{await page.getByRole('navigation',{name:'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
+ const nav=async name=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});if(page.viewportSize().width<=760)await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().right<=0);};
  const row=name=>page.locator('.holding-row').filter({hasText:name});
  const shot=async name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true});
  try{
@@ -28,7 +28,7 @@ const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'ht
   const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',
    "import json,sys;from pathlib import Path;from datetime import date,timedelta;from backend.service import Service;from backend.store import Store;from backend.environment import claim_environment;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');s=Service(Store(d));at=date.fromisoformat(p['today']);monday=at-timedelta(days=at.weekday());latest=at-timedelta(days=max(0,at.weekday()-4));previous=latest-timedelta(days=3 if latest.weekday()==0 else 1);anchor=monday-timedelta(days=3);[(s.cache_prices(i,[{'date':str(anchor),'price':'10','source':'合成净值'},{'date':str(previous),'price':'10','source':'合成净值'},{'date':str(latest),'price':v,'source':'合成净值'}])) for i,v in p['instruments']]"],
    {cwd:root,encoding:'utf8',input:JSON.stringify({directory:h.data_directory,today:boot.today,instruments:[[a.instrument_id,'12'],[b.instrument_id,'9'],[closed.instrument_id,'11']]})});assert.equal(fixture.status,0,fixture.stderr);
-  await page.goto(base);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);
+  await page.goto(base);await nav('组合收益');await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);
   for(const width of [1600,390,320]){
    await page.setViewportSize({width,height:1000});await nav('持仓标的');await row('合成稳健基金').waitFor();
    check(await row('合成稳健基金').locator('.holding-identity .holding-status').innerText()==='持有中','holding badge in identity '+width);
@@ -49,7 +49,7 @@ const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'ht
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'instrument metrics fit '+width);await page.locator('.instrument-summary').screenshot({path:path.join(out,'instrument-'+width+'.png')});
    await nav('交易记录');await page.locator('[data-ledger-event="'+b.id+'"]').waitFor();
    check(await page.locator('[data-ledger-event="'+b.id+'"] .holding-status').innerText()==='已清仓'&&await page.locator('[data-ledger-event="'+reopen.id+'"] .holding-status').innerText()==='持有中','old and new lots keep independent states '+width);await shot('transactions-'+width);
-   await nav('持仓标的');await row('合成成长基金').getByRole('button',{name:'设置计划',exact:true}).click();const dialog=page.getByRole('dialog'),target=dialog.getByLabel('计划占总预算比例 · %',{exact:true});
+   await nav('持仓标的');await row('合成成长基金').getByRole('button',{name:'设置计划',exact:true}).click();const dialog=page.getByRole('dialog'),target=dialog.getByLabel('计划占总预算比例',{exact:true});
    for(const [pct,label,rate,amount] of [['20','尚可分配','10.00%','1,000.00 CNY'],['30','总预算已分配完成','0.00%','0.00 CNY'],['40','超出总预算','10.00%','1,000.00 CNY']]){
     await target.fill(pct);await dialog.locator('.plan-allocation').getByText(label,{exact:true}).waitFor();
     const text=await dialog.locator('.plan-allocation').innerText();check(text.includes(rate)&&text.includes(amount),'plan allocation '+pct+' percent '+width);

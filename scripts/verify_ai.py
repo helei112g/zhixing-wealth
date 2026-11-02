@@ -32,17 +32,26 @@ def main():
         check(saved['revision']==body['expected_revision']+1,operation+' uses reviewed revision')
         return saved['result'],body
     cap=client.request('/api/capabilities')
+    check(set(cap['skills'])=={'zhixing-assets','zhixing-portfolios','zhixing-notes','zhixing-research'},'all four project skills are discoverable')
+    check(cap['family']['comparison']['history_curve']=='previous','AI history default agrees with UI and endpoint')
     schema=client.request(cap['family']['command_schema'])
-    check(set(schema['operations'])=={'item','valuation','links','unlink','income'},'recommended asset commands discoverable')
+    check(set(schema['operations'])=={'item','valuation','links','unlink','income','archive','restore'},'recommended asset commands discoverable')
     check('/api/family/command-schema' in client.request(cap['openapi'])['paths'],'OpenAPI discovers asset contract')
     check('csrf_token' not in client.connect(),'client does not expose bootstrap credential')
     asset,old=command('item',dict(category='cash',currency='CNY',name='AI合成快照验收',effective_on='2024-01-01',household_amount='123456.78'))
     catalog=client.request('/api/family/catalog')
+    check('value_history' in catalog and 'archive_entries' in catalog,'AI discovers dated lifecycle and household balance history')
     check(any(r['id']==asset['id'] for r in catalog['items']),'saved asset ID is readable')
     try: client.write('/api/family/commands',old,'POST')
     except RuntimeError as error: check('HTTP 409' in str(error),'stale revision rejected')
     else: raise AssertionError('stale write accepted')
     check(client.request('/api/family/catalog')==catalog,'stale write leaves ledger unchanged')
+    original_values=client.request('/api/family/catalog')['values']
+    command('archive',dict(target='item',effective_on='2024-01-15'),asset['id'])
+    check(any(r['id']==asset['id'] for r in client.request('/api/family/catalog')['archive_entries']),'AI reads archived identity after original-revision write')
+    command('restore',dict(target='item',effective_on='2024-02-01'),asset['id'])
+    check(not any(r['id']==asset['id'] for r in client.request('/api/family/overview?date=2024-01-20')['items']),'AI restore preserves archive gap')
+    check(client.request('/api/family/catalog')['values']==original_values,'AI lifecycle never clears or replaces balances')
     command('valuation',dict(item_id=asset['id'],effective_on='2024-03-01',household_amount='200000'))
     command('valuation',dict(item_id=asset['id'],effective_on='2024-02-01',household_amount='150000'))
     values=[r for r in client.request('/api/family/catalog')['values'] if r['item_id']==asset['id']]
@@ -58,7 +67,7 @@ def main():
     check(history['rows'][0]['comparison_date']=='2024-01-31', 'history previous compares prior month end through HTTP')
     check(len([r for r in records if r['id']==income['id']])==1 and next(r for r in records if r['id']==income['id'])['amount']=='120','income correction replaces current amount, not duplicate record')
     check(client.request('/api/family/overview')['total_assets']==before,'income does not double-count cash')
-    p=client.write('/api/portfolios',dict(name='AI合成组合验收',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
+    p=client.write('/api/portfolios',dict(name='AI合成组合验收',description='合成组合介绍\n保留策略与背景',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
     q=client.write('/api/portfolios',dict(name='AI合成隔离组合',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
     event=dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'CN','code':'510300','name':'AI合成标的'},quantity='10',gross_amount='100',fx_rate='1',expected_revision=revision())
     client.preview(event)
@@ -69,8 +78,46 @@ def main():
     check(any(r['event']['id']==saved['id'] for r in rows['items']),'trade ID and portfolio read back')
     dashboard='/api/portfolios/'+p['id']+'/dashboard'
     full=client.request(dashboard);summary=client.request(dashboard+'?view=summary')
+    check(summary['portfolio']['description']=='合成组合介绍\n保留策略与背景','AI-created introduction reads back with original line breaks')
     check(summary['capital_summary']==full['capital_summary'] and summary['holdings']==full['holdings'], 'AI summary view shares canonical financial values')
     check('curve' not in summary and 'calendar' not in summary and 'calendar' in full, 'AI summary omits historical projections and full stays compatible')
+    investment=client.investment_summary(p['id'])
+    check(investment==summary['capital_summary'] and investment['cost']=='100','AI cumulative input reads canonical cumulative buy cost')
+    breakdown=investment['profit_breakdown']
+    check(breakdown['cash_dividends_net']=='0' and breakdown['reinvested_dividends_net']=='0','AI discovers separate cash and reinvested dividend income without invented values')
+    check(client.request('/api/capabilities')['investment_summary']['cumulative_input']=='cost','AI discovers cumulative input and dividend component semantics')
+    income_portfolio=client.write('/api/portfolios',dict(name='AI合成分红拆分',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
+    acquisition=client.write('/api/events',dict(portfolio_id=income_portfolio['id'],kind='BUY',date='2024-01-02',
+        instrument={'market':'CN','code':'600323','name':'AI合成分红拆分标的'},quantity='10',gross_amount='100',fx_rate='1',expected_revision=revision()),'POST')
+    split_events=[]
+    for item in [dict(kind='DIVIDEND',date='2024-02-01',net_amount='9',tax='0',pay_date='2024-02-03'),
+                 dict(kind='REINVEST',date='2024-03-01',net_amount='10',tax='0',pay_date='2024-03-03',reinvest_date='2024-03-03',reinvest_quantity='1',reinvest_gross_amount='10')]:
+        payload=dict(item,portfolio_id=income_portfolio['id'],instrument_id=acquisition['instrument_id'],fx_rate='1',expected_revision=revision())
+        client.preview(payload);split_events.append(client.write('/api/events',payload,'POST'))
+    for kind,parent,amount,at in [('TAX',split_events[0],'2','2024-04-01'),('FEE',split_events[1],'3','2024-04-02')]:
+        payload=dict(portfolio_id=income_portfolio['id'],instrument_id=acquisition['instrument_id'],kind=kind,date=at,
+                     related_event_id=parent['id'],amount=amount,fx_rate='1',expected_revision=revision())
+        client.preview(payload);client.write('/api/events',payload,'POST')
+    before_read=revision();investment=client.investment_summary(income_portfolio['id']);parts=investment['profit_breakdown']
+    check(all(k in investment for k in ('holding_profit','realized_sale_profit','account_available_cash')),'AI discovers separate holding/sold profits and account cash')
+    typed=client.request('/api/portfolios/'+income_portfolio['id']+'/transactions?kind=REINVEST&page=1&page_size=20')
+    check(typed['total']==1 and typed['items'][0]['event']['kind']=='REINVEST','AI filters transaction type through HTTP')
+    check(investment['cost']=='110' and investment['invested_amount']=='96','AI cumulative input includes reinvestment without replacing net input')
+    check(parts['cash_dividends_net']=='7' and parts['reinvested_dividends_net']=='7' and parts['dividends_net']=='14','AI reads exact separate dividend income with each related cost deducted once')
+    check(revision()==before_read,'AI metric read has no financial or historical writes')
+    labels=client.holding_labels(p['id'],saved['instrument_id'])
+    check(labels['labels']['resolved_scope']=='待确认','ETF exposure is not inferred from listing venue')
+    label_path='/api/portfolios/'+p['id']+'/instruments/'+saved['instrument_id']+'/labels'
+    label_payload=dict(scope='海外债券',direction='国债',detail='合成债券标签',expected_revision=labels['revision'])
+    client.write(label_path,label_payload,'PUT')
+    check(client.holding_labels(p['id'],saved['instrument_id'])['labels']['path']==['海外债券','国债','合成债券标签'],'label original revision write and scoped read-back through HTTP')
+    check(client.request(transactions)['items']==rows['items'],'holding labels do not rewrite historical trades')
+    report=client.holding_distribution(p['id'])
+    check(report['nodes'][0]['name']=='海外债券' and report['nodes'][0]['weight']=='1','hierarchical distribution uses one path and the holdings denominator')
+    try: client.write(label_path,label_payload,'PUT')
+    except RuntimeError as error: check('HTTP 409' in str(error),'stale label revision rejected through HTTP')
+    else: raise AssertionError('stale label write succeeded')
+
     detail=client.instrument_detail(p['id'],saved['instrument_id'])
     check('market_changes' in detail and cap['instrument_market_changes']['field']=='market_changes','AI discovers and reads shared quote changes')
     before_revision=revision();plan=client.plan_check(p['id'],saved['instrument_id'],'25')
@@ -192,6 +239,32 @@ def main():
     else:raise AssertionError('duplicate split accepted')
     client.write('/api/events/'+sale_saved['id'],dict(reason='合成取消补录',expected_revision=revision()),'DELETE')
     check(client.request(split_path)['facts']['split']['quantity_after']=='480','AI cancellation replays split without rewriting confirmation')
+    check(cap['dividend_review']['mode']=='keep_recorded' and not cap['dividend_review']['event_write'],'AI discovers review without event writes')
+    check('/api/dividends/{notice_id}/review' in client.request(cap['openapi'])['paths'],'AI discovers dividend review contract')
+    holding=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'HK','code':'02800','name':'AI合成分红核对'},quantity='100',gross_amount='1000',fx_rate='.9',expected_revision=revision()),'POST')
+    dividend_source=dict(code='02800',source_ref='synthetic-review',record_date=None,ex_date='2024-06-03',pay_date=None,per_share='1',currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')
+    fixture="from pathlib import Path;import sys,json;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');Service(Store(d)).cache_dividends(sys.argv[2],[json.loads(sys.argv[3])])"
+    def cache_dividend(rate):
+        subprocess.run([sys.executable,'-c',fixture,str(expected),holding['instrument_id'],json.dumps(dict(dividend_source,per_share=rate))],cwd=Path(__file__).resolve().parents[1],check=True)
+    candidates='/api/portfolios/'+p['id']+'/dividends?instrument_id='+holding['instrument_id']
+    cache_dividend('1');candidate=client.request(candidates)[0]
+    confirmed=client.write('/api/dividends/'+candidate['notice']['id']+'/confirm',dict(candidate['suggested_event'],gross_amount='99.9876',net_amount='98.7531',tax='1.2345',tax_known=True,pay_date='2024-06-05',fx_rate='.91',pay_fx_rate='.92',expected_revision=candidate['revision']),'POST')
+    cache_dividend('1.01');candidate=client.request(candidates)[0]
+    check(candidate['status']=='needs_review' and candidate['recorded_event']==confirmed,'AI reference correction exposes original receipt without rewriting it')
+    original=client.request('/api/portfolios/'+p['id']+'/transactions/'+confirmed['id'])['event']
+    body=dict(portfolio_id=p['id'],event_id=confirmed['id'],mode='keep_recorded',review_basis=candidate['review_basis'],expected_revision=candidate['revision'],reason='AI合成实际到账核对')
+    check(revision()==candidate['revision'],'AI read-and-display review has no side effects')
+    reviewed=client.write('/api/dividends/'+candidate['notice']['id']+'/review',body,'POST')
+    check(reviewed['event']==original and client.request('/api/portfolios/'+p['id']+'/transactions/'+confirmed['id'])['event']==original,'AI completes review with exact receipt and FX preserved')
+    check(client.request(candidates)[0]['status']=='confirmed' and not any(r.get('event_id')==confirmed['id'] for r in client.request('/api/reminders')['items']),'AI review clears candidate and shared reminder')
+    check(client.request('/api/revisions/dividend_decision/'+reviewed['decision']['id'])[0]['after_data']['mode']=='keep_recorded','AI reads back review audit')
+    try:client.write('/api/dividends/'+candidate['notice']['id']+'/review',body,'POST')
+    except RuntimeError as error:check('HTTP 409' in str(error),'AI stale review cannot create duplicate event or decision')
+    else:raise AssertionError('stale dividend review accepted')
+    cache_dividend('1.01005')
+    check(client.request(candidates)[0]['status']=='confirmed','AI Yahoo micro refresh leaves review complete')
+    client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-03',instrument_id=holding['instrument_id'],quantity='1',gross_amount='10',fx_rate='.9',expected_revision=revision()),'POST')
+    check(client.request(candidates)[0]['status']=='needs_review','AI real entitlement change reopens review')
     (output/'ai-passed.json').write_text(json.dumps({'checks':len(checks),'passed':checks},ensure_ascii=False,indent=2))
 
 

@@ -17,7 +17,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
   const boot=await api('/bootstrap'),expected=boot.instruments.map(i=>i.id);
   await page.route('**/api/sync',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({json:{queued:false}});});
   await page.route('**/api/jobs',route=>route.fulfill({json:{jobs:[],syncing:false}}));
-  await page.goto(base);await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'全局设置',exact:true}).click();await rows().first().waitFor();
+  await page.goto(new URL('/?page=overview',base).href);await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'全局设置',exact:true}).click();await rows().first().waitFor();
   check(await rows().count()===10&&await pager.getByRole('button',{name:'上一页'}).isDisabled(),'first page has ten rows and no previous page');
   const seen=await ids();
   await pager.getByRole('button',{name:'下一页'}).click();check(await rows().count()===10,'second page has ten rows');seen.push(...await ids());
@@ -38,7 +38,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
   check((await pager.innerText()).includes('第 1 / 1 页'),'shorter refresh clamps page');
   for(const width of [390,320]){await page.setViewportSize({width,height:844});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'settings fits '+width);await page.screenshot({path:path.join(output,'settings-'+width+'.png'),fullPage:true});}
   visible=0;await page.getByRole('button',{name:'同步全部历史',exact:true}).click();await pager.waitFor({state:'hidden'});
-  check(await rows().count()===0&&await page.getByText('录入交易后将自动拉取行情。',{exact:true}).isVisible(),'empty list shows guidance without pager');
+  check(await rows().count()===0&&await page.getByText('录入交易后，按已启用的全局策略补齐行情。',{exact:true}).isVisible(),'empty list shows guidance without pager');
   check(!errors.length,'no browser runtime errors');fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({checks,errors},null,2));
  }catch(e){await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

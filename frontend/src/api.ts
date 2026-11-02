@@ -32,7 +32,7 @@ export const marketNames:Record<string,string>={CN:'A股',HK:'港股',US:'美股
 
 export const recordMarketKey=(event:Obj,instrument?:Obj)=>['DEPOSIT','OPENING_CASH','WITHDRAW','FX'].includes(event.kind)?'CASH':marketKey(instrument);
 
-export const regionOptions=['A股','美股','港股','海外其他','混合','未分类'];
+export const regionOptions=['A股','美股','港股','海外其他','未分类'];
 export const regionValue=(v?:string)=>v==='国内'?'A股':v==='海外'?'海外其他':v||'未分类';
 
 // Old job logs remain intact, but must not recommend the retired price-import path.

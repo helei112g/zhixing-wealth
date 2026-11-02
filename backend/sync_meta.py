@@ -1,6 +1,6 @@
 """Stable machine-readable causes for local market refresh jobs."""
 TRIGGERS = {
-    'startup': '启动补更', 'schedule': '每日23:30定时更新',
+    'startup': '启动补更', 'schedule': '定时更新',
     'manual_update': '手动更新数据', 'manual_instrument': '手动更新标的',
     'manual_full': '手动同步全部历史', 'retry': '失败后重试',
     'event_create': '新增流水后同步', 'event_edit': '更正流水后同步',

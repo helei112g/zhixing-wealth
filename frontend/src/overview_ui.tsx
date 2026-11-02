@@ -1,21 +1,21 @@
 import {money,Obj,percent,signedMoney,tone} from './api';
 import {Button,Panel,XirrBasis} from './components';
+import {CurrentHoldingProfit,SummaryReturns} from './performance_summary';
 import {ProfitEquation} from './profit_ui';
 import {PlanFundingNotice} from './plan_ui';
 
 export function PortfolioIntroduction({portfolio,onEdit}:Obj){return <details className="portfolio-introduction"><summary>组合介绍 <small>{portfolio.description?'查看背景与策略':'暂未填写'}</small></summary>{portfolio.description?<p>{portfolio.description}</p>:<p className="muted">写下组合的背景、目标与投资策略，便于随时回顾。</p>}<Button small onClick={onEdit}>编辑组合介绍</Button></details>;}
 
 export function OverviewSummary({dash,capital=false}:Obj){
- const a=dash.capital_summary||{},annual=dash.annual_performance;
+ const a=dash.capital_summary||{},annual=dash.annual_performance,cashLabel=a.available_amount===a.account_available_cash?'剩余可投金额':'账面可用现金';
  return <Panel className={'overview-summary'+(capital?' capital-summary':'')} title="组合表现">
  <div className="summary-main">
- <div className="summary-assets"><div className="summary-label">总资产 · CNY</div><strong>{money(dash.total_assets)}</strong><small>持仓市值 + 剩余可投金额{dash.receivables?.length>0?' + 未到账应收及在途':''}</small></div>
- <div className="summary-market"><div className="summary-label">持仓市值 · CNY</div><strong>{money(a.market_value)}</strong><small>当前实际持有证券的价值</small></div>
+ <div className="summary-assets"><div className="summary-label">总资产 · CNY</div><strong>{money(dash.total_assets)}</strong><small>持仓市值 + {cashLabel}{dash.receivables?.length>0?' + 未到账应收及在途':''}</small></div>
+ <div className="summary-market"><div className="summary-label">持仓市值 · CNY</div><strong>{money(a.market_value)}</strong><CurrentHoldingProfit performance={a}/></div>
  <div className="summary-cumulative"><div className="summary-label">累计收益 · CNY</div><strong className={'summary-profit '+tone(a.profit)}>{signedMoney(a.profit)}</strong><ProfitEquation value={a.profit_breakdown} compact/></div>
- <div className="summary-return"><div className="summary-label">累计收益率</div><strong className={tone(a.return_on_cost)}>{percent(a.return_on_cost,true)}</strong><small>累计收益 ÷ 累计买入成本</small><small>仅实际投入资金，不含未投入现金</small></div>
- <div className="summary-annual"><div className="summary-label">年化收益率（XIRR）</div><strong className={tone(a.xirr)}>{percent(a.xirr,true)}</strong><div className="summary-goal"><span>目标 <b>{percent(annual?.target)}</b></span><span className={tone(annual?.gap)}>相差 {annual?.gap==null?'—':(Number(annual.gap)>0?'+':'')+money(Number(annual.gap)*100)+' 个百分点'}</span></div><small>仅实际投入资金 · {a.xirr_status}{a.provisional?' · 含待核对数据':''}</small></div>
+ <SummaryReturns performance={a} annual={annual}/>
  </div>
- <dl className="summary-facts"><div><dt>总预算 · CNY</dt><dd>{money(a.planned_amount)}</dd></div><div><dt>净投入 · CNY</dt><dd>{money(a.invested_amount)}</dd></div><div><dt>已投入仓位</dt><dd>{percent(a.invested_weight)}</dd><small>净投入 ÷ 总预算</small></div><div><dt>剩余可投金额 · CNY</dt><dd>{money(a.available_amount)}</dd><PlanFundingNotice value={dash.plan_funding} compact/></div></dl>
+ <dl className="summary-facts"><div><dt>总预算 · CNY</dt><dd>{money(a.planned_amount)}</dd><small>计划投入额度</small></div><div className="summary-cost"><dt>累计投入（累计买入成本） · CNY</dt><dd>{money(a.cost)}</dd><small>历次买入与再投的含费税成本</small></div><div><dt>净投入 · CNY</dt><dd>{money(a.invested_amount)}</dd><small>实际支出 − 已到账卖出回款 − 现金分红</small><small>红利再投不增加外部本金</small></div><div><dt>已投入仓位</dt><dd>{percent(a.invested_weight)}</dd><small>净投入 ÷ 总预算</small></div><div><dt>剩余可投金额 · CNY</dt><dd>{money(a.available_amount)}</dd><small>总预算 − 净投入</small><small>未到账回款不扣减净投入</small>{a.available_amount!==a.account_available_cash&&<small>账面可用现金 {money(a.account_available_cash)} CNY</small>}{['shortfall','unknown'].includes(dash.plan_funding?.status)&&<PlanFundingNotice value={dash.plan_funding} compact/>}</div></dl>
  <XirrBasis performance={a}/></Panel>;
 }
 

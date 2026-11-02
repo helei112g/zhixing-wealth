@@ -37,6 +37,22 @@ class WriteRequest(BaseModel):
     expected_revision: int | str | None = Field(None, description='从 bootstrap 或交易预览读取。提交时若账本变化则返回409，不写入；建议所有AI写入提供。')
 
 
+class DividendReviewRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    portfolio_id: str
+    event_id: str = Field(description='候选 recorded_event.id；必须仍是本标的的DIVIDEND/REINVEST，只核对此原流水，不新增或更改流水')
+    mode: Literal['keep_recorded']
+    review_basis: dict[str, Any] = Field(description='原样传回候选 review_basis，拒绝过时的权益或公告依据')
+    expected_revision: int = Field(ge=0, strict=True, description='必须使用候选 revision；旧版本409，不重试')
+    reason: str = Field(min_length=1, max_length=2000, description='本人核对并保留实际到账记录的说明')
+
+
+class DividendReviewResult(BaseModel):
+    decision: dict[str, Any] = Field(description='含 review_basis、event_id、mode、reason、review_revision 的可审计核对结论')
+    event: dict[str, Any] = Field(description='保持原样的已确认流水，包括金额、日期和锁定汇率')
+    revision: int
+
+
 class PortfolioRequest(WriteRequest):
     name: str
     description: str | None = Field(None, max_length=10000, description='可选组合介绍，纯文字，保留换行；省略或null保留原介绍，空字符串清空')
@@ -60,6 +76,7 @@ class SellLot(BaseModel):
 
 
 class EventRequest(WriteRequest):
+    holding_labels: dict[str, str] | None = Field(None, description='首次买入时可选的scope/direction/detail；仅保存为组合同标的当前标签，不写入历史流水；保存时须携带expected_revision')
     factor: Amount | None = Field(None, description='SPLIT 专项核对：送转/拆股后的数量倍数，10送8转12为3；保留总成本，先于除权日买卖执行。现金红利单独核对。')
     source_split_id: str | None = Field(None, max_length=128, description='SPLIT 所核对的公告ID，来自todo；修改日期后仍关联原公告，避免重复确认')
     portfolio_id: str
@@ -95,10 +112,19 @@ class EventRequest(WriteRequest):
 
 
 class AllocationRequest(WriteRequest):
+    model_config = ConfigDict(extra='forbid')
     target_pct: Amount = Field('0', description='单标的计划占总预算百分数，0至100；组合计划资金缺口仅提醒，允许保存')
-    asset_class: str = '未分类'
-    region: str = Field('未分类', description='A股、美股、港股、海外其他、混合、未分类')
-    tags: list[str] | str = Field(default_factory=list, description='推荐字符串数组；兼容旧界面的逗号分隔文本')
+    asset_class: Literal['权益', '债券', '大宗商品', '其他', '未分类'] = '未分类'
+    region: str = Field('未分类', description='省略时保留当前地区；兼容旧客户端显式值')
+    holding_labels: dict[str, str] | None = Field(None, description='可选三级持仓标签，与计划同一事务保存；省略保留原标签')
+
+
+class HoldingLabelRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: int = Field(ge=0, strict=True)
+    scope: str = Field('', max_length=30, description='留空自动识别；基金不按上市地或币种推断投资范围')
+    direction: str = Field('', max_length=30, description='所选投资范围下的单个配置方向，可留空')
+    detail: str = Field('', max_length=40, description='单个细分标签；须先选择配置方向，可留空')
 
 
 class NoteMutationRequest(BaseModel):
@@ -202,6 +228,7 @@ class EventPreview(BaseModel):
     model_config = ConfigDict(extra='allow')
     revision: int
     event: dict[str, Any]
+    holding_labels: dict[str, Any] | None = Field(None, description='本次首次买入拟保存的当前持仓标签，预览无副作用')
     split_changes: list[SplitChange] = Field(description='本次记账或更正引起的送转效果变化，含后续已确认记录；预览不写入')
 
 
@@ -229,12 +256,15 @@ class ProfitBreakdown(BaseModel):
     total: str | None
     price_net: str | None = Field(description='CNY价格及汇兑收益，扣除买卖及非分红费用；含已实现/未实现收益')
     dividends_net: str | None = Field(description='净分红，含再投与已确认应收，扣关联补税/费用；不重复计入价格项')
+    cash_dividends_net: str | None = Field(None, description='现金分红记录的净收益，含已确认未到账应收，扣该记录关联补税/费用；未到账不属于已回收现金')
+    reinvested_dividends_net: str | None = Field(None, description='红利再投记录的净分红收益，扣该记录关联补税/费用；不是新增个人本金，不重复增加资产')
     other_income: str = Field(description='利息等其他收入；非零时单独展示')
     market_value: str | None
     sale_proceeds: str | None
     buy_cost: str
     extra_costs: str
     rounding_adjustment: str | None = Field(description='仅用于两位小数显示对账的舍入差，不是新增收益')
+    component_rounding_adjustment: str | None = Field(None, description='价格收益、现金净分红、再投净分红及其他收入分别显示两位小数后的舍入差；保留原合并分红rounding_adjustment')
     complete: bool
     price_basis: str
 
@@ -342,13 +372,14 @@ class InstrumentDetail(BaseModel):
 
 
 class PlanFunding(BaseModel):
+    available_amount_basis: Literal['account_available_cash']
     currency: Literal['CNY']
     status: Literal['shortfall', 'balanced', 'surplus', 'unknown']
     available_amount: str | None
     required_amount: str | None = Field(description='各已设置计划标的 max(计划金额-净投入,0) 之和；无法完整核算时为null')
     known_required_amount: str
-    shortfall: str | None = Field(description='max(剩余计划需投入-剩余可投金额,0)，CNY；仅提醒，不阻止保存')
-    surplus: str | None = Field(description='max(剩余可投金额-剩余计划需投入,0)，CNY')
+    shortfall: str | None = Field(description='max(剩余计划需投入-账面可用现金,0)，CNY；仅提醒，不阻止保存')
+    surplus: str | None = Field(description='max(账面可用现金-剩余计划需投入,0)，CNY')
     total_target_pct: str
     total_target_amount: str = Field(description='总预算乘所有标的计划比例之和，CNY')
     unallocated_target_pct: str = Field(description='100减组合计划比例合计；百分数，负数表示超配')
@@ -372,7 +403,37 @@ class AllocationResult(BaseModel):
     target_pct: str
     asset_class: str
     region: str
-    tags: list[str]
+    plan_funding: PlanFunding
+
+
+class CapitalSummary(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    planned_amount: str = Field(description='总预算，CNY')
+    cost: str = Field(description='累计买入及再投含费税成本；不减卖出或分红，不等于新增个人本金')
+    invested_amount: str | None = Field(description='净投入：实际买入支出及相关费用减已到账卖出净回款和现金分红；再投内部抵消，利息单列')
+    available_amount: str | None = Field(description='剩余预算＝planned_amount−invested_amount；不是账面现金')
+    account_available_cash: str | None = Field(description='账面可用现金，CNY；plan_funding以此检查执行计划的现金缺口')
+    holding_profit: str | None = Field(description='当前份额市值减剩余含费税记账成本；不含已卖出收益和分红')
+    realized_sale_profit: str | None = Field(description='已卖出净回款（含已确认应收）减售出部分记账成本，CNY')
+    profit: str | None
+    return_on_cost: str | None = Field(description='累计收益÷累计买入成本；比例字符串，null表示未知')
+    xirr: str | None = Field(description='实际投资现金流XIRR；比例字符串，排除未投入现金')
+    profit_breakdown: ProfitBreakdown
+
+
+class HoldingSnapshot(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    instrument_id: str
+    quantity: str
+    holding_profit: str | None
+    cost_including_fees_base: str | None = Field(description='剩余含费税成本，CNY；按原交易锁定汇率及移动平均成本')
+    performance: Performance | None
+
+
+class DashboardResponse(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    capital_summary: CapitalSummary
+    holdings: list[HoldingSnapshot]
     plan_funding: PlanFunding
 
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "知行财富 · 指数研究"
+  short_description: "核对指数资料、三窗口估值回撤与公共数据更新"
+  default_prompt: "通过知行财富本机 API 核对指数身份、数据日期与来源；写入前核对授权和原版本，提交后回读。"

@@ -2,11 +2,13 @@
 
 界面和 Agent 访问同一后端服务。支持直接 HTTP、OpenAPI 和标准库客户端，不要求额外 MCP 服务或插件。部署、恢复、数据搬迁不是记账技能的隐含权限。
 
+组合指标从 `capabilities.investment_summary` 定位，或调用客户端 `investment_summary(P)`。累计投入取 `capital_summary.cost`（累计买入成本，含再投及期初记账成本），不能用净投入替代、不能称为外部新增本金；净投入独立按实际买入支出及相关费用减已到账卖出净回款和现金分红计算；`available_amount=planned_amount-invested_amount`，不能倒推净投入。利息单列，账面现金用`account_available_cash`。收益分解中的 `cash_dividends_net` 与 `reinvested_dividends_net` 按原分红记录类型拆分、各扣关联费税一次，相加仍是 `dividends_net`，不能再次叠加到收益或资产。应收可计入收益，到账前不能称为已回收现金；未知分项保留 null。
+
 首次接手安装或每次升级先读 [安装与升级指南](install.md)。安装后默认进入生成的独立日常工作区，不使用开发账本。首次安装为空，不创建演示记录；查询、能力发现和读取文档不构成记账授权。发布保全与账务更正分开处理，不能用发布脚本更改正式业务数据。
 
 ## 发现技能与能力
 
-项目自带三个技能：[资产管理](../.agents/skills/zhixing-assets/SKILL.md)、[组合记账](../.agents/skills/zhixing-portfolios/SKILL.md)、[投资笔记](../.agents/skills/zhixing-notes/SKILL.md)。在 Codex 中打开本项目目录，或以本项目为工作目录运行，即可发现 `.agents/skills`，无需全局安装；也可用 `$zhixing-assets` 等名称显式调用。
+项目自带四个技能：[资产管理](../.agents/skills/zhixing-assets/SKILL.md)、[组合记账](../.agents/skills/zhixing-portfolios/SKILL.md)、[投资笔记](../.agents/skills/zhixing-notes/SKILL.md)、[指数研究](../.agents/skills/zhixing-research/SKILL.md)。完整名称也可从 `capabilities.skills` 读取。在 Codex 中打开本项目目录，或以本项目为工作目录运行，即可发现 `.agents/skills`，无需全局安装；也可用 `$zhixing-assets` 等名称显式调用。
 
 Codex 查找当前目录和向上的技能目录，不递归搜索任意子项目。若从父工作区启动，请先将本项目设为工作目录；未出现时重启会话。其他 Agent 是否自动发现取决于其技能规范，不能保证都兼容。见 [Codex 官方技能文档](https://learn.chatgpt.com/docs/build-skills)。技能文件校验通过与当前会话已加载技能是不同事实。
 
@@ -27,10 +29,10 @@ Codex 查找当前目录和向上的技能目录，不递归搜索任意子项�
 1. 读取原记录、作用域及 revision；同名结果不猜ID。
 2. 资产和交易使用服务端 preview。组合资料、笔记没有独立 preview 时展示原值和拟保存差异，不能声称服务端已预览。
 3. 核对用户对目标、金额、日期和操作的授权。已有明确授权无需重复确认；新范围或覆盖需要核对。
-4. 使用预览/读取的原 expected_revision 提交；不能以重新连接时的新 revision 替换。`--confirm-write` 只是调用者声明授权，不能替代人的授权。
+4. 使用预览/读取的原版本号提交：账本用 expected_revision，研究建档用 expected_research_revision，更新设置用 expected_settings_revision。不能混用，不能以重新连接时的新版本替换。`--confirm-write` 只是调用者声明授权，不能替代人的授权。
 5. 按保存响应的正式 ID 回读并核对。新记录预览 ID 是暂定值，不能直接拿来查提交结果。
 
-409表示未写入，应重新读取、比较变化并重新核对；不自动换版本覆盖。网络超时结果未知，先回读核实，禁止盲目重试。接口没有通用幂等键。不自动设置 allow_duplicate。
+409表示未写入，应重新读取、比较变化并重新核对；不自动换版本覆盖。网络超时结果未知，先回读核实，禁止盲目重试。账本接口没有通用幂等键，不自动设置 allow_duplicate。研究建档和公共数据更新支持 request_id：同一 ID 与原负载只返回已受理结果，不会重新执行；负载改变返回409。结果未知时保留原 ID，先按正式 ID/job_id 回读。已确认失败后另发一次精确重试，使用新 request_id 并保留失败项原 resource；客户端不会自动重试。
 
 ## 资产快照示例
 
@@ -52,6 +54,38 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 
 金额为精确十进制字符串，null为未知，0为已知零；UI的万/亿不改变API原值。总览默认月比上月末、年比上年末，趋势分析使用 comparison=previous（月比上月末、年比上年末）；只有明确要求同比时才用 comparison=yoy。所有余额是时点量，不能把月末余额相加当总资产。
 
+分红出现 needs_review 时，先读候选的 recorded_event、review_basis、review_changes 和 revision，展示实际金额、日期、税费与锁定汇率。用户明确要求保留实际到账并结束核对时，用 `write POST /api/dividends/NOTICE_ID/review REQUEST.json --confirm-write`，传 portfolio_id、event_id、mode=keep_recorded、原样 review_basis、原 expected_revision 及 reason。无独立服务端预览，展示上述原值与仅保存结论的影响即可；不经 events 接口重存流水。手工分红完成核对后按 decision.event_id 保持关联；更正日期后仍核对同一流水，不新增分红。只更正备注或税费不回退最近已接受的权益基准；已知权益变为未知仍需核对，null不补0。提交后回读候选、reminders 和 dividend_decision 审计；409或超时不自动重试。参考值微调规则见 [API 文档](api.md#分红核对保留实际到账)。通知已读、关闭弹窗及刷新来源都不构成业务核对授权。
+
+## 近期功能与 AI 入口
+
+以下入口与页面共用后端；只读命令统一使用 `read PATH`。`write` 仍须有明确授权及 `--confirm-write`，不能因为功能可发现就推定允许写入。
+
+| 功能 | 读取／核对 | 保存或客户端入口 |
+|---|---|---|
+| 组合介绍 | bootstrap 的 portfolios[].description | POST/PUT portfolios；省略或null保留，空字符串清空，最多10000字 |
+| 持仓收益、净投入与分红拆分 | dashboard?view=summary 的 capital_summary、holdings | investment_summary(P)；金额/null及计算口径由后端给出 |
+| 持有／清仓状态与交易类型 | holdings[].quantity、performance.cost；交易 actual.closed、filters.kind、facets.kinds | 标的无份额且累计成本为0是尚未买入；交易状态指单笔批次，不代替当前标的状态 |
+| 最近交易日／本周行情 | instrument_detail(P,I).market_changes | 只读；输出实际取价日期、序列与缺失原因，行情不等于个人收益 |
+| 投入计划与剩余分配额 | plan_check(P,I,target_pct)，同时读取 labels 的原revision | 两次读取revision一致后PUT计划，可同事务保存holding_labels；计划超配与现金缺口分别说明，均为非阻塞提醒 |
+| 持仓分类与分布 | holding_labels(P,I)、holding_distribution(P,basis) | 独立labels PUT或计划PUT；只影响当前组合同标的，不改历史流水 |
+| 保留实际分红并完成核对 | dividends候选、recorded_event、review_basis | POST dividends/ID/review；原revision、原依据及原因，回读原流水与审计 |
+| 按日期归档／恢复资产 | family/catalog、command-schema及preview | family/commands 的archive/restore；不删除历史、不自动产生收款 |
+| 指数建档与资料分页 | resolve_index、research_index、research_part | preview识别后write建档；跨页固定analysis_id |
+| 指数条件试算 | 当前analysis_id及用户指定假设 | `scenario INDEX_ID REQUEST.json`；只读，无需写入确认开关 |
+| 公共数据更新 | update_settings、data-updates/jobs及单个job_id | write保存策略或提交更新；区分settings版本与request_id |
+
+研究试算请求文件示例（合成假设，替换刚读取的真实analysis_id）：
+
+```json
+{"analysis_id":"ANALYSIS_ID_FROM_DETAIL","basis":"price","metric":"pe","target_multiple":"12","change_ratio":"0.1","reference_window":5,"accept_fixed_basket_assumption":true}
+```
+
+```sh
+python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.json
+```
+
+它只计算条件关系，不新增指数、不触发采集、不改账本。analysis_id过期返回409；全收益或数据不足不能强行试算，条件结果不代表预测。已安装的日常工作区仍用 `./zhixing` 替换命令前缀。
+
 ## 验证与维护
 
 红利再投可用 `Client.reinvestment_estimate(portfolio_id, instrument_id, date, gross_amount)`，或 `read /api/portfolios/P/instruments/I/reinvestment-estimate?date=2024-06-03&gross_amount=10` 获取只读估算。UI与AI共用该计算：仅场外基金同日自动单位净值，份额按总价÷净值四舍五入至两位。返回null时不得填0，不用股票收盘价、相邻日或累计净值代替。实际确认单优先；核对后显式填 reinvest_quantity，再预览、按预览revision提交并回读。详见 [接口文档](api.md)。
@@ -69,5 +103,22 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 送转股/拆股：读取 capabilities.corporate_actions 与 dashboard/instrument_detail 的 todos。先核对公开公告和实际持仓，使用 `SPLIT` 专项预览，再按原 revision 提交并回读份额、成本和收益。10送8转12填 factor=3，总成本保持不变；现金分红、扣税另行核对。若送转没有出现在 todos 中，先检查 jobs 中 corporate_actions 同步状态并重试，不要用前复权价格掩盖缺失的份额调整。确认后回读独立 SPLIT 流水；原 BUY 数量仍是历史成交数量，不应变成送转后的数量。同步公告不等于确认记账，不得因价格骤降自动造流水或用前复权价格改写历史买入。资产相邻期变化包含新增/移除/份额调整，原样报告 scope_changed/reason，不能称为投资收益率。
 
 删除流水先用客户端 `deletion_preview(event_id)` 或 GET `/api/events/ID/deletion-preview`，逐项核对 `items`（含共享批次），再以原revision、完整event_ids、cascade=true和原因提交DELETE。旧接口默认仅单条/转移对，不会静默扩大范围。过期409或超时先回读，不能自动换revision、重试删除。按返回 `deleted_event_ids` 回读交易详情的 `cancelled=true` 及持仓；审计保留。Dashboard 的 `curve_quality` 解释历史缺段，不能为了补线自动确认送转或将null补零。
+
+### 持仓标签与当前分布
+
+通过capabilities.holding_analysis发现接口。用客户端holding_labels(P,I)读取当前归属和revision，展示scope/direction/detail差异后按原revision PUT labels；409或超时先回读核对，不自动覆盖。无独立标签预览接口，不声称服务端预览已完成。holding_distribution(P,basis)读取完整树与同一后端分母，不能只统计已打标签持仓或自行重复相加父子节点。股票可自动识别市场，基金不按上市地或币种猜投资敞口。旧/api/tags统计已退役；旧风格/主题tags已清除，保留资产类别和地区筛选；计划写入不传tags，地区不再接受混合。总资产value为null时可说明known_value是已知资产合计，不能冒充完整总额。
+
+## 指数研究
+
+通过 [zhixing-research](../.agents/skills/zhixing-research/SKILL.md) 与 [研究合同](research.md) 操作。客户端新增resolve_index、research_index、update_settings、research_scenario；CLI preview支持 `/api/research/indices/resolve`，scenario支持只读条件试算，write支持建档、更新策略及显式更新任务。研究建档用expected_research_revision，设置用expected_settings_revision，计划/标签继续用expected_revision，不能混用。
+
+建档与更新需稳定request_id，未知结果保留原ID先回读，不盲目重试。研究GET不联网抓取；analysis_id变更后重新读取全部分页。接口null不补零，区分来源日期、财报期、权重日与当前重述版本。应用不运行时不承诺更新。
+
+指数增强返回changes的真实基准日期；不要把缺少年初基准的表现改称年度涨跌幅。companies按全体权重排序并携带报告期财务，零值与null分开。current_years是当前篮子回溯，historical_years才使用各年有效名单，不能互相替代。scenario可传reference_window（3/5/10），曲线和历史参考点都用同一次API响应；P10–P90区间不代表主观研究结论或未来到达概率。
+
+
+研究客户端支持 `research_index(index_id, basis='price', window=3, method='overall')`，可选价格／全收益、3／5／10年及整体法／中位数／算术平均。`research_part(index_id, part, analysis_id=..., page=..., page_size=...)`读取series、constituents、financials、sources四种投影；分页携带原analysis_id，409后重读，不拼接不同版本。capabilities公开这些选择、完整日线均线期数与新增数据字段。条件试算的PE/PB与3／5／10年参考窗口通过真实HTTP回归，不依赖页面状态。
+
+当前持仓收益读取`holding_profit`，剩余成本读取`holdings[].cost_including_fees_base`，已卖出收益读取`realized_sale_profit`；不要把累计收益冒充当前份额浮盈亏。交易按`kind`先筛选后分页。资产归档与恢复从`family.command_schema`发现archive/restore，必须明确对象和日期、预览、原revision提交、回读；归档不自动产生收款，关联归档不等于组合归档或删除，不能用清零替代。catalog.archive_entries用于查找已归档的精确ID。
 
 标的近期行情可用客户端 `instrument_detail(P,I)` 读取 `market_changes`，返回最近交易日及本自然周涨跌幅、取价日期、同一序列口径与缺失原因；不把它当作个人收益。计划试算用 `plan_check(P,I,target_pct)`：同时核对 `total_target_pct`、`unallocated_target_pct/amount`（负值为超配）及独立的 `shortfall`。尚可分配预算不等于可用现金；读取与预览不写入，保存仍使用原revision。

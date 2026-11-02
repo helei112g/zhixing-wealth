@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from .trading_calendar import no_expected_session
-from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, month_after, ratio, tags, today, wire
+from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, month_after, ratio, classification, today, wire
 
 KINDS = {'DEPOSIT', 'WITHDRAW', 'BUY', 'SELL', 'DIVIDEND', 'REINVEST', 'FX', 'FEE', 'TAX',
          'INTEREST', 'OPENING_CASH', 'OPENING_POSITION', 'OPENING_RECEIVABLE',
@@ -108,14 +108,16 @@ def normalize_event(payload, portfolio, instruments, defaults=None):
             raise DomainError('卖出实收金额必须大于0')
         if kind == 'OPENING_POSITION' and (dec(p['fee']) or dec(p['tax'])):
             raise DomainError('期初公允价值不含本期新费用；历史成本另填')
+    if 'tags' in p:
+        raise DomainError('旧风格/主题标签已移除，请使用独立的持仓分类路径')
     if kind in {'BUY', 'OPENING_POSITION', 'REINVEST'}:
         merged = dict(defaults or {})
-        for key in ('asset_class', 'region', 'tags'):
+        for key in ('asset_class', 'region'):
             if key in p:
                 merged[key] = p[key]
-        p.update(tags(merged))
+        p.update(classification(merged))
     else:
-        for key in ('asset_class', 'region', 'tags'):
+        for key in ('asset_class', 'region'):
             p.pop(key, None)
     if kind not in {'BUY','SELL','REINVEST','FX','OPENING_POSITION'} and dec(p['fee']) != 0:
         raise DomainError('此类流水的手续费请单独记录为费用，不能隐含扣除')
@@ -205,7 +207,7 @@ def normalize_event(payload, portfolio, instruments, defaults=None):
                'amount','quantity','price','gross_amount','net_amount','tax_known','ex_date_known','pay_fx_rate',
                'reinvest_quantity','reinvest_price','reinvest_gross_amount','reinvest_fx_rate','pay_fx_source_date','pay_fx_type','reinvest_fx_source_date','reinvest_fx_type','from_currency','to_currency','from_amount',
                'to_amount','from_fx_rate','to_fx_rate','factor','new_quantity','new_cost','historical_cost',
-               'initial_net_invested','asset_class','region','tags','locked_base_amount','reservation_id','transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined'}
+               'initial_net_invested','asset_class','region','locked_base_amount','reservation_id','transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined'}
     return {k: v for k, v in p.items() if k in allowed and v != ''}
 
 
@@ -334,6 +336,9 @@ class Ledger:
         self.taxes = ZERO
         self.realized_price = ZERO
         self.investment_cost = ZERO
+        self.invested_cash_flow = ZERO
+        self.invested_cash_flow_known = True
+        self._track_investment_cash = False
         self.notes = []
         self.last_trades = {}
         self.native_components = {k: {c: ZERO for c in CURRENCIES}
@@ -342,7 +347,7 @@ class Ledger:
     def position(self, instrument_id):
         if instrument_id not in self.positions:
             self.positions[instrument_id] = {'quantity': ZERO, 'cost_native': ZERO, 'cost_base': ZERO,
-                'cost_fee_native': ZERO, 'net_invested': ZERO, 'net_known': True, 'lots': [], 'realized_price': ZERO,
+                'cost_fee_native': ZERO, 'cost_fee_base': ZERO, 'cost_basis_known': True, 'sale_cost_known':True, 'sold_cost_base':ZERO, 'net_invested': ZERO, 'net_known': True, 'lots': [], 'realized_price': ZERO,
                 'reference_cost_native': ZERO, 'reference_cost_known': True}
         return self.positions[instrument_id]
 
@@ -361,6 +366,8 @@ class Ledger:
             hint = '请核对成交总价、费税或调整组合预算' if self.budget_mode else '请先记录真实入金或换汇'
             raise DomainError(f"{d} {e.get('kind','预算调整')}：{c}可投入余额不足（可用{ds(available)}，需要{ds(value)}）；{hint}")
         self.cash[c] -= value
+        if self._track_investment_cash:
+            self.invested_cash_flow += value if self.budget_mode else value * dec(fx_override if fx_override is not None else e['fx_rate'])
         if abs(self.cash[c]) < Decimal('0.000000000001'):
             self.cash[c] = ZERO
 
@@ -370,6 +377,7 @@ class Ledger:
 
     def credit(self, c, value, fx=ONE):
         self.cash['CNY' if self.budget_mode else c] += value * fx if self.budget_mode else value
+        if self._track_investment_cash:self.invested_cash_flow -= value * fx
 
     def settle(self, key, fx=ONE):
         item = self.receivables.pop(key, None)
@@ -398,18 +406,19 @@ class Ledger:
         p['reference_cost_native'] += gross
         p['cost_base'] += gross * fx
         p['cost_fee_native'] += fee + tax
+        p['cost_fee_base'] += (fee + tax) * fx
         if reinvest:
             # Linked reinvestment is funded by its dividend, not new personal capital.
             funding_fx = dec(e['pay_fx_rate'])
-            if early:
-                p['net_invested'] -= net * funding_fx
-            p['net_invested'] += net * (fx if self.budget_mode and not early else funding_fx)
+            if not early:
+                p['net_invested'] += net * funding_fx
+                self.invested_cash_flow += net * funding_fx
         elif not prepaid:
             p['net_invested'] += net * fx
         self.fees += fee * fx
         self.taxes += tax * fx
         p['lots'].append({'event_id': e['id'], 'date': str(d), 'available_on': e.get('confirmation_date') or str(d),
-                          'quantity': qty, **tags(e)})
+                          'quantity': qty, **classification(e, historical=True)})
         self.last_trades[inst] = {'price': ds(price), 'date': str(d), 'source': '已确认成交价（暂估）', 'kind': 'raw', 'fallback': True}
 
     def sell_quantity(self, e, d, qty):
@@ -433,21 +442,27 @@ class Ledger:
                 if lot['available_on']>str(d):continue
                 used=min(left,lot['quantity']);targets[lot['event_id']]=used;left-=used
                 if left<=0:break
+        if not p['cost_basis_known']:p['sale_cost_known'] = False
         fraction = qty / p['quantity']
         removed_cost = p['cost_native'] * fraction
+        p['sold_cost_base'] += (p['cost_base'] + p['cost_fee_base']) * fraction
         p['cost_native'] -= removed_cost
         p['reference_cost_native'] *= ONE - fraction
         p['cost_base'] *= ONE - fraction
         p['cost_fee_native'] *= ONE - fraction
+        p['cost_fee_base'] *= ONE - fraction
         p['quantity'] -= qty
         if p['quantity'] == ZERO: p['reference_cost_known'] = True
         for lot in p['lots']:lot['quantity']-=targets.get(lot['event_id'],ZERO)
         if abs(p['quantity']) < Decimal('0.000000000001'):
-            p.update(quantity=ZERO, cost_native=ZERO, cost_base=ZERO, cost_fee_native=ZERO)
+            p.update(quantity=ZERO, cost_native=ZERO, cost_base=ZERO, cost_fee_native=ZERO, cost_fee_base=ZERO, cost_basis_known=True)
         return removed_cost
 
     def apply(self, op):
         d, sequence, order, event_id, kind, e = op
+        # Track settled investment payments independently of budget/account balances.
+        # Capital transfers and internal FX principal conversions are not new investment.
+        self._track_investment_cash = kind not in ('BUDGET_OPEN','BUDGET_CHANGE','DEPOSIT','OPENING_CASH','WITHDRAW','FX','OPENING_POSITION','OPENING_RECEIVABLE','INTEREST','REINVEST_BUY','REINVEST_EARLY')
         before_components = {'price': self.realized_price, 'dividends': self.dividends,
                              'fees': self.fees, 'taxes': self.taxes, 'other': self.other_income}
         c, fx, inst = e['currency'], dec(e['fx_rate']), e.get('instrument_id')
@@ -480,11 +495,15 @@ class Ledger:
             else: self.capital += base; self.opening_capital += base
             if e.get('initial_net_invested') is None:
                 p['net_known'] = False
+                self.invested_cash_flow_known = False
             else:
                 p['net_invested'] += dec(e['initial_net_invested'])
-            p['lots'].append({'event_id': event_id, 'date': d, 'available_on': d, 'quantity': qty, **tags(e)})
+                self.invested_cash_flow += dec(e['initial_net_invested'])
+            p['lots'].append({'event_id': event_id, 'date': d, 'available_on': d, 'quantity': qty, **classification(e, historical=True)})
             self.last_trades[inst] = {'price': e['price'], 'date': d, 'source': '期初公允价值', 'kind': 'raw', 'fallback': True}
         elif kind == 'OPENING_RECEIVABLE':
+            self.invested_cash_flow_known = False
+            if p is not None:p['net_known'] = False
             value = dec(e['amount']); self.receive(event_id + ':opening', c, value, inst, '期初应收')
             if self.budget_mode: self.spend(c,value,e,d)
             else: self.capital += value * fx; self.opening_capital += value * fx
@@ -520,10 +539,12 @@ class Ledger:
             source, target = e['from_currency'], e['to_currency']
             if self.budget_mode:
                 difference=dec(e['to_amount'])*dec(e['to_fx_rate'])-(dec(e['from_amount'])+fee)*dec(e['from_fx_rate'])
+                self.invested_cash_flow += fee * dec(e['from_fx_rate'])
                 if difference<0: self.spend('CNY',-difference,e,d)
                 else: self.credit('CNY',difference)
             else:
                 self.spend(source, dec(e['from_amount']) + fee, e, d); self.cash[target] += dec(e['to_amount'])
+                self.invested_cash_flow += fee * dec(e['from_fx_rate'])
             self.fees += fee * dec(e['from_fx_rate'])
         elif kind in {'FEE', 'TAX'}:
             value = dec(e['amount']); self.spend(c, value, e, d)
@@ -561,6 +582,7 @@ class Ledger:
                 self.last_trades[inst] = dict(prev, price=ds(dec(prev['price']) / factor), date=d,
                                               source='拆分后成交价暂估', fallback=True)
         elif kind == 'ADJUSTMENT':
+            p['cost_basis_known'] = False
             new_qty = dec(e['new_quantity']); old_qty = p['quantity']
             if old_qty == 0 and new_qty > 0:
                 raise DomainError('空持仓不能用企业行动凭空建仓；请使用期初持仓或买入')
@@ -575,6 +597,7 @@ class Ledger:
             self.native_components[key][c] += (after_components[key] - before_components[key]) / operation_fx
 
     def has_unconfirmed_split(self, instrument_id, as_of):
+        unresolved = False
         for action in self.data['corporate_actions']:
             if action.get('kind')!='split_notice' or action['instrument_id']!=instrument_id or action['date']>str(as_of):continue
             if split_notice_confirmed(split_notice_records(self.events,action),action):continue
@@ -586,8 +609,8 @@ class Ledger:
                     if op[0]>=action['date']:break
                     prior.apply(op)
                 self._split_entitlements[key]=prior.position(instrument_id)['quantity']>0
-            if self._split_entitlements[key]:return True
-        return False
+            if self._split_entitlements[key]:unresolved = True
+        return unresolved
 
     def snapshot(self, d):
         warnings = list(self.notes)
@@ -622,6 +645,8 @@ class Ledger:
             if fallback and (quote is None or fallback['date'] > quote['date']): quote = fallback
             current_price = dec(quote['price']) if quote else None
             unresolved_split=self.has_unconfirmed_split(inst_id,d)
+            pending_dates=[at for (iid,at),held in self._split_entitlements.items() if iid==inst_id and held and at<=str(d)]
+            uncertain_sale=unresolved_split and any(e.get('instrument_id')==inst_id and e['kind'] in ('SELL','REDEEM_PENDING') and min(pending_dates)<=e['date']<=str(d) for e in self.events)
             if unresolved_split:
                 current_price=None;missing.append(i['name']+'有待确认送转/拆股，请核对份额')
             rate = self.market.fx(i['currency'], d)
@@ -640,7 +665,7 @@ class Ledger:
                 elif (day(d) - day(quote['date'])).days > 4 and not no_expected_session(i['market'], quote['date'], d):
                     warnings.append(i['name'] + '沿用' + quote['date'] + '价格，可能休市或尚未更新')
             allocation = self.allocations.get(inst_id, {})
-            lots = [dict(lot, **(tags(allocation) if self.budget_mode else {}), value_base=lot['quantity'] * current_price * dec(rate['rate'])
+            lots = [dict(lot, **(classification(allocation, historical=True) if self.budget_mode else {}), value_base=lot['quantity'] * current_price * dec(rate['rate'])
                          if current_price is not None and rate is not None else None)
                     for lot in p['lots'] if lot['quantity'] > 0]
             holdings.append({'instrument': i, 'instrument_id': inst_id, 'quantity': qty, 'unconfirmed_split': unresolved_split,
@@ -648,6 +673,10 @@ class Ledger:
                 'price': current_price, 'quote': quote, 'fx': rate, 'value_base': value,
                 'cost_native': p['cost_native'], 'cost_base': p['cost_base'],
                 'cost_including_fees_native': p['cost_native'] + p['cost_fee_native'],
+                'cost_including_fees_base': p['cost_base'] + p['cost_fee_base'] if p['cost_basis_known'] and not unresolved_split else None,
+                'sale_cost_known':p['sale_cost_known'],
+                'sold_cost_base':p['sold_cost_base'] if p['sale_cost_known'] and not uncertain_sale else None,
+                'holding_profit': None if unresolved_split else ZERO if qty == 0 else value - p['cost_base'] - p['cost_fee_base'] if value is not None and p['cost_basis_known'] else None,
                 'reference_cost_native': p['reference_cost_native'] if p['reference_cost_known'] else None,
                 'reference_gain_native': qty * current_price - p['reference_cost_native'] if p['reference_cost_known'] and current_price is not None else None,
                 'average_cost': ratio(p['cost_native'] + p['cost_fee_native'], qty),
@@ -689,6 +718,7 @@ class Ledger:
                 'pnl': pnl, 'components': {'price': price_pnl, 'dividends': self.dividends,
                     'fx': fx_pnl, 'fees': self.fees, 'taxes': self.taxes, 'other': self.other_income},
                 'holdings': holdings, 'cash': currencies, 'receivables': receivables,
+                'invested_cash_flow': self.invested_cash_flow if self.invested_cash_flow_known else None,
                 'warnings': list(dict.fromkeys(warnings + missing)), 'incomplete': incomplete,
                 'estimated': bool(warnings), '_native_components': native_components,
                 'attribution_basis': '各交易币种每日价差、分红、费税按当日估值汇率折算；其余折算变动为汇率影响，交易原始折算额保持锁定'}

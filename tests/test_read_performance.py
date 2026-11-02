@@ -215,5 +215,14 @@ class ReadPerformanceTests(unittest.TestCase):
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertNotEqual(summary['portfolio']['planned_amount'], client.get(url + '?view=summary').json()['portfolio']['planned_amount'])
 
+    def test_revision_poll_reports_midnight_without_a_business_write(self):
+        client = TestClient(create_app(self.directory, testing=True, auto_sync=False))
+        with patch('backend.family_api.today', return_value=date(2026, 1, 2)):
+            before = client.get('/api/family/revision').json()
+        with patch('backend.family_api.today', return_value=date(2026, 1, 3)):
+            after = client.get('/api/family/revision').json()
+        self.assertEqual(before['revision'], after['revision'])
+        self.assertEqual((before['today'], after['today']), ('2026-01-02', '2026-01-03'))
+
 
 if __name__ == '__main__': unittest.main()

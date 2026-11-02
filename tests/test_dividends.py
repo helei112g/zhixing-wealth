@@ -65,7 +65,7 @@ class DividendFlowTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.store=Store(Path(self.tmp.name));self.s=Service(self.store)
         self.p=self.s.save_portfolio({'name':'分红测试','planned_amount':'100000','start_date':'2024-01-01'})
-        self.buy=self.s.save_event({'portfolio_id':self.p['id'],'kind':'BUY','date':'2024-01-02','instrument':{'market':'CN','code':'159307','name':'红利ETF'},'quantity':'2000','gross_amount':'2000','fx_rate':'1','tags':['红利']})
+        self.buy=self.s.save_event({'portfolio_id':self.p['id'],'kind':'BUY','date':'2024-01-02','instrument':{'market':'CN','code':'159307','name':'红利ETF'},'quantity':'2000','gross_amount':'2000','fx_rate':'1'})
         self.i=self.buy['instrument_id']
     def tearDown(self):self.tmp.cleanup()
     def notice(self,**kw):
@@ -93,7 +93,7 @@ class DividendFlowTests(unittest.TestCase):
         edited=self.s.save_event({**event,'net_amount':'20','tax':'2','change_reason':'实际税费修正'},event['id'])
         self.assertEqual(edited['source_dividend_id'],row['notice']['id']);self.assertEqual(D(self.snap()['available_cash']),98020)
     def test_reinvestment_does_not_create_new_principal_or_budget_cash(self):
-        row=self.notice();event=self.confirm(row,kind='REINVEST',reinvest_date='2024-01-15',reinvest_quantity='20',reinvest_gross_amount='22',tags=['红利'])
+        row=self.notice();event=self.confirm(row,kind='REINVEST',reinvest_date='2024-01-15',reinvest_quantity='20',reinvest_gross_amount='22')
         r=self.snap();self.assertEqual(D(r['available_cash']),98000);self.assertEqual(D(r['holdings'][0]['quantity']),2020)
         self.assertEqual(D(r['capital']),100000);self.assertEqual(event['source_dividend_id'],row['notice']['id'])
     def test_confirmation_failure_rolls_back_everything(self):

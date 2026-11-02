@@ -45,7 +45,7 @@ final class NotificationAgent: NSObject, NSApplicationDelegate, UNUserNotificati
                 }.map { $0.request.identifier })
             }
             let existing = Set(pending.map { $0.identifier }); let group = DispatchGroup()
-            let lock = NSLock(); var failures: [String] = []
+            let lock = NSLock(); var failures: [String] = []; var requestErrors: [[String: Any]] = []
             for row in requests {
                 guard let id = row["id"] as? String, !existing.contains(id), let stamp = row["at"] as? String,
                       let date = ISO8601DateFormatter().date(from: stamp) else { continue }
@@ -55,20 +55,24 @@ final class NotificationAgent: NSObject, NSApplicationDelegate, UNUserNotificati
                 var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date); components.timeZone = calendar.timeZone
                 group.enter()
                 self.center.add(UNNotificationRequest(identifier: id, content: content, trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false))) { error in
-                    if let error = error { lock.lock(); failures.append(error.localizedDescription); lock.unlock() }; group.leave()
+                    if let error = error {
+                        let detail = error as NSError
+                        lock.lock(); failures.append(error.localizedDescription)
+                        requestErrors.append(["id": id, "domain": detail.domain, "code": detail.code, "message": detail.localizedDescription]); lock.unlock()
+                    }; group.leave()
                 }
             }
-            group.notify(queue: .main) { self.status(failures) }
+            group.notify(queue: .main) { self.status(failures, requestErrors: requestErrors) }
         }
     }
 
-    func status(_ failures: [String] = []) {
+    func status(_ failures: [String] = [], requestErrors: [[String: Any]] = []) {
         center.getNotificationSettings { settings in
             self.center.getPendingNotificationRequests { pending in
                 self.center.getDeliveredNotifications { delivered in
                 let names: [UNAuthorizationStatus: String] = [.notDetermined: "not_requested", .denied: "denied", .authorized: "authorized", .provisional: "provisional"]
                 self.finish(["authorization": names[settings.authorizationStatus] ?? "unknown", "alerts": settings.alertSetting.rawValue,
-                             "pending_ids": pending.map { $0.identifier }, "delivered_ids": delivered.map { $0.request.identifier }, "failures": failures])
+                             "pending_ids": pending.map { $0.identifier }, "delivered_ids": delivered.map { $0.request.identifier }, "failures": failures, "request_errors": requestErrors])
                 }
             }
         }

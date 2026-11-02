@@ -13,13 +13,15 @@ import zipfile
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
-from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, now, ratio, tags, canonical_region, today, wire
+from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, now, ratio, classification, canonical_region, today, wire
 from .ledger import Ledger, Market, normalize_event, periods, split_notice_records, split_notice_confirmed
 from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES, cached_query
 from .version import VERSION, NAME
 from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
+from .holding_analysis import HoldingAnalysis, label_map, resolve_labels, normalize_labels
 from .event_deletion import deletion_plan
+from .dividend_review import reference_basis, review_changes, CHANGE_LABELS
 from . import market
 from . import dividends
 from .sync_meta import TRIGGERS, trigger_metadata
@@ -39,7 +41,7 @@ def running_days(portfolio):
 
 
 def event_fingerprint(record):
-    canonical = {k: v for k, v in record.items() if k not in ('id', 'created_at', 'updated_at', 'sequence', 'change_reason', 'allow_duplicate', 'locked_base_amount', 'fingerprint')}
+    canonical = {k: v for k, v in record.items() if k not in ('id', 'created_at', 'updated_at', 'sequence', 'change_reason', 'allow_duplicate', 'locked_base_amount', 'fingerprint', 'tags')}
     if 'region' in canonical:canonical['region']=canonical_region(canonical['region'])
     if canonical.get('record_date') is None:canonical.pop('record_date',None)
     if record['kind'] not in ('DIVIDEND', 'REINVEST'):
@@ -50,6 +52,7 @@ def event_fingerprint(record):
 class Service:
     def __init__(self, store: Store):
         self.store = store
+        self.holding_analysis = HoldingAnalysis(self)
         self.notes = InvestmentNotes(store)
         self.job_lock = threading.Lock()
         self.syncing = False
@@ -104,6 +107,7 @@ class Service:
             'portfolios': [dict(p, target_annual_pct=p.get('target_annual_pct', '5'), running_days=running_days(p)) for p in state['portfolios']],
             'today': today(), 'version': VERSION, 'data_directory': str(self.store.directory),
             'benchmarks':BENCHMARKS,
+            'holding_label_options': self.holding_analysis.options(state, None),
             'event_refs':[{k:e.get(k) for k in ('id','portfolio_id','instrument_id','kind','date','quantity')} for e in state['events'] if e['kind'] in ('BUY','SELL','DIVIDEND','REINVEST','OPENING_POSITION')],
             'latest_fx': {c: m.fx(c, today()) for c in CURRENCIES},
             'fx_entries': [r for r in state['fx'] if r.get('manual') and r.get('mode') != 'daily'][-60:],
@@ -178,7 +182,7 @@ class Service:
                   created_at=(old or {}).get('created_at') or now(),updated_at=now())
         old_alloc=next((a for a in state['allocations'] if a['portfolio_id']==portfolio['id'] and a['instrument_id']==inst['id']),None)
         allocation=dict(old_alloc or {},portfolio_id=portfolio['id'],instrument_id=inst['id'],
-                        target_pct=(old_alloc or {}).get('target_pct','0'),**tags(old_alloc or {}))
+                        target_pct=(old_alloc or {}).get('target_pct','0'),**classification(old_alloc or {}))
         differences=[]
         if old and old['name']!=name:differences.append({'field':'名称','before':old['name'],'after':name})
         info={'instrument':inst,'allocation':allocation,'before_instrument':old,'before_allocation':old_alloc,
@@ -193,7 +197,7 @@ class Service:
         db.execute('INSERT OR REPLACE INTO instruments VALUES (?,?,?)',(inst['id'],info['identity'],json_dumps(inst)))
         db.execute('INSERT OR REPLACE INTO allocations VALUES (?,?,?)',(allocation['portfolio_id'],inst['id'],json_dumps(allocation)))
         self.store.audit(db,'instrument',inst['id'],info['before_instrument'],inst,'买入时按代码合并标的；名称以最新填写为准')
-        self.store.audit(db,'allocation',allocation['portfolio_id']+':'+inst['id'],info['before_allocation'],allocation,'建立本组合持仓关联；标签统一在计划中管理')
+        self.store.audit(db,'allocation',allocation['portfolio_id']+':'+inst['id'],info['before_allocation'],allocation,'建立本组合持仓关联及分类')
 
     def save_instrument(self, data):
         scope = data.get('portfolio_id')
@@ -226,7 +230,7 @@ class Service:
                 existing = next((a for a in state['allocations'] if a['portfolio_id'] == scope and a['instrument_id'] == result['id']), None)
                 if not existing:
                     allocation = {'portfolio_id': scope, 'instrument_id': result['id'],
-                                  'target_pct': '0', **tags(data)}
+                                  'target_pct': '0', **classification(data)}
                     db.execute('INSERT INTO allocations VALUES (?,?,?)', (scope, result['id'], json_dumps(allocation)))
         return result
 
@@ -235,11 +239,18 @@ class Service:
             state = self.store.state(db); portfolio = self.portfolio(state, portfolio_id)
             if not any(i['id'] == instrument_id for i in state['instruments']): raise DomainError('标的不存在')
             old = next((a for a in state['allocations'] if a['portfolio_id'] == portfolio_id and a['instrument_id'] == instrument_id), None)
-            pct = plan_percentage(data.get('target_pct'))
+            if portfolio.get('archived'): raise DomainError('组合已归档，请先恢复后再设置计划')
+            pct = plan_percentage(data.get('target_pct', (old or {}).get('target_pct', '0')))
             funding = plan_funding(self.plan_snapshot(state, portfolio), instrument_id=instrument_id, target_pct=pct)
-            item = {'portfolio_id': portfolio_id, 'instrument_id': instrument_id, 'target_pct': ds(pct), **tags(data)}
+            merged = dict(old or {}, **{k: v for k, v in data.items() if k in ('asset_class', 'region')})
+            item = dict(old or {}, portfolio_id=portfolio_id, instrument_id=instrument_id, target_pct=ds(pct), **classification(merged))
+            if old and 'region' not in data: item['region'] = old.get('region', '未分类')
+            if data.get('holding_labels') is not None:
+                if type(data.get('expected_revision')) is not int: raise DomainError('合并保存须携带读取时的 expected_revision')
+                _, instrument = self.holding_analysis.context(state, portfolio_id, instrument_id)
+                self.holding_analysis.write(db, state, portfolio_id, instrument, data['holding_labels'])
             db.execute('INSERT OR REPLACE INTO allocations VALUES (?,?,?)', (portfolio_id, instrument_id, json_dumps(item)))
-            self.store.audit(db, 'allocation', portfolio_id + ':' + instrument_id, old, item, '更新持仓计划/当前标签；保留原始流水录入标签')
+            self.store.audit(db, 'allocation', portfolio_id + ':' + instrument_id, old, item, '更新持仓计划及资产类别、地区')
         return wire(dict(item, plan_funding=funding))
 
     def plan_snapshot(self, state, portfolio):
@@ -357,8 +368,11 @@ class Service:
                 raise DomainError('后补费税的关联记录将失效，请先更正或取消关联费税')
 
     def preview_event(self, payload, event_id=None):
+        label_input = payload.get('holding_labels')
+        payload = {k: v for k, v in payload.items() if k != 'holding_labels'}
         original = self.store.state();state,payload,inline=self.inline_instrument(original,payload)
         event, before, duplicate, candidate = self.prepared_event(state, payload, event_id)
+        proposed_labels = self.first_buy_labels(state, event, label_input, event_id)
         portfolio = self.portfolio(state, event['portfolio_id'])
         old_ledger = Ledger(original, portfolio); new_ledger = Ledger(candidate, portfolio)
         old = old_ledger.run(include_history=False)
@@ -369,7 +383,7 @@ class Service:
                    if old_splits.get(key) != new_splits.get(key)]
         changes.sort(key=lambda r: ((r['after'] or r['before'])['date'], r['event_id']))
         return wire({'revision': original['revision'], 'event': event, 'duplicate_of': duplicate,'instrument_merge':inline,
-            'split_changes': changes,
+            'split_changes': changes, 'holding_labels': proposed_labels,
             'cash_changes': [{'currency': c, 'before': old['cash'][n]['balance'], 'after': new['cash'][n]['balance'],
                               'change': new['cash'][n]['balance'] - old['cash'][n]['balance']} for n, c in enumerate(CURRENCIES)],
             'before': {k: old[k] for k in ('total_assets', 'capital', 'available_cash', 'pnl')},
@@ -377,16 +391,37 @@ class Service:
             'warnings': new['warnings'], 'recalculate_from': min(event['date'], before['date'] if before else event['date'])})
 
     def save_event(self, payload, event_id=None):
+        label_input = payload.get('holding_labels')
+        payload = {k: v for k, v in payload.items() if k != 'holding_labels'}
+        if label_input is not None and type(payload.get('expected_revision')) is not int:
+            raise DomainError('首次买入附带标签须携带预览时的 expected_revision')
         with self.store.transaction(expected_revision=payload.get('expected_revision')) as db:
             state,payload,inline = self.inline_instrument(self.store.state(db),payload)
             event, before, duplicate, candidate = self.prepared_event(state, payload, event_id)
+            proposed_labels = self.first_buy_labels(state, event, label_input, event_id)
             if duplicate and not payload.get('allow_duplicate'):
                 raise DomainError('发现相同流水；如确为另一笔相同成交，请在确认预览中允许重复')
             if before and not str(payload.get('change_reason') or '').strip(): raise DomainError('更正历史流水请填写更正原因')
             self.persist_inline(db,inline)
+            if proposed_labels is not None:
+                instrument = next(i for i in state['instruments'] if i['id'] == event['instrument_id'])
+                self.holding_analysis.write(db, state, event['portfolio_id'], instrument, proposed_labels)
             db.execute('INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,0)', (event['id'], event['portfolio_id'], event['date'], event['sequence'], event['fingerprint'], json_dumps(event)))
             self.store.audit(db, 'event', event['id'], before, event, payload.get('change_reason', '记账'))
         return wire(event)
+
+    def first_buy_labels(self, state, event, data, event_id):
+        if data is None:
+            return None
+        if not isinstance(data, dict) or event_id or event['kind'] != 'BUY':
+            raise DomainError('仅首次买入可附带标签；已有标的请通过设置标签修改')
+        if any(e['portfolio_id'] == event['portfolio_id'] and e.get('instrument_id') == event['instrument_id']
+               and e['kind'] in ('BUY', 'OPENING_POSITION', 'REINVEST', 'SUBSCRIBE_PENDING') for e in state['events']):
+            raise DomainError('已有本标的投资记录，请通过设置标签修改')
+        if label_map(state, event['portfolio_id']).get(event['instrument_id']):
+            raise DomainError('已有持仓标签，请通过设置标签修改')
+        instrument = next(i for i in state['instruments'] if i['id'] == event['instrument_id'])
+        return resolve_labels(instrument, normalize_labels(data, instrument))
 
     def preview_deletion(self, event_id, state=None):
         state = self.store.state() if state is None else state
@@ -447,7 +482,9 @@ class Service:
         if performance is None:
             performance = instrument_projection(state,portfolio,snap['holdings'],as_of,market=market_data)
             self.store.cache[perf_key] = performance
-        result['holdings']=[dict(h,performance=performance.get(h['instrument_id'])) for h in snap['holdings']]
+        saved_labels = label_map(state, portfolio_id)
+        result['holdings']=[dict(h, performance=performance.get(h['instrument_id']),
+                                 holding_labels=resolve_labels(h['instrument'], saved_labels.get(h['instrument_id']))) for h in snap['holdings']]
         result['capital_summary']=investment_summary(state,portfolio,snap,performance,as_of)
         result['plan_funding']=plan_funding(snap)
         result['running_days']=running_days(portfolio)
@@ -602,6 +639,10 @@ class Service:
                           currency=currency(source['currency']),fetched_at=now())
                 for key in ('record_date','pay_date'):
                     item[key]=str(day(source[key])) if source.get(key) else None
+                anchor=(before or {}).get('notification_basis')
+                if not anchor and before:anchor=reference_basis(before,None,before.get('record_date'))
+                current_basis=reference_basis(item,None,item.get('record_date'),anchor)
+                item['notification_basis']=current_basis if review_changes(anchor,current_basis) else anchor
                 db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(notice_id,instrument_id,json_dumps(item)))
                 old={k:v for k,v in (before or {}).items() if k!='fetched_at'}
                 current={k:v for k,v in item.items() if k!='fetched_at'}
@@ -655,9 +696,26 @@ class Service:
             if instrument_id and notice['instrument_id']!=instrument_id:continue
             if notice['ex_date']<p['start_date']:continue
             inst=instruments[notice['instrument_id']]
+            decision=next((r for r in state['corporate_actions'] if r.get('kind')=='dividend_decision' and r.get('portfolio_id')==portfolio_id and r.get('notice_id')==notice['id']),None)
             existing=next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('source_dividend_id')==notice['id']),None)
-            manual=next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['kind'] in ('DIVIDEND','REINVEST') and e['date']==notice['ex_date'] and not e.get('source_dividend_id')),None)
+            # keep_recorded links manual receipts without changing their source
+            # fields. Consume that explicit link before trying the date heuristic.
+            bound=next((e for e in state['events'] if decision and e['id']==decision.get('event_id') and
+                e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and
+                e['kind'] in ('DIVIDEND','REINVEST') and e.get('source_dividend_id') in (None,'',notice['id'])),None)
+            manual=bound or next((e for e in state['events'] if e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['kind'] in ('DIVIDEND','REINVEST') and e['date']==notice['ex_date'] and not e.get('source_dividend_id')),None)
+            recorded=existing or manual
+            # Receipt corrections do not revoke the accepted entitlement. Only
+            # an explicit notice confirmation/review advances the decision.
+            reviewed=bool(bound and recorded and bound['id']==recorded['id'] and decision.get('mode')=='keep_recorded')
+            baseline=decision.get('review_basis') if reviewed else (recorded or {}).get('dividend_basis')
+            if baseline:
+                baseline=dict(baseline)
+                # Confirming a notice has always required matching currencies;
+                # the receipt therefore supplies this missing legacy basis fact.
+                baseline.setdefault('currency',recorded['currency'])
             cutoff=(day(notice['ex_date'])-timedelta(days=1)).isoformat() if inst['market'] in ('HK','US') else notice.get('record_date')
+            if not cutoff and recorded:cutoff=(baseline or {}).get('record_date') or recorded.get('record_date')
             qty=None
             if cutoff and p['start_date']<=cutoff<=str(today()):
                 if market_data is None: market_data=Market(state)
@@ -669,14 +727,15 @@ class Service:
                 qty=sum((lot['quantity'] for lot in pos['lots'] if lot['available_on']<=cutoff),ZERO) if inst['market']=='FUND' else pos['quantity']
                 if qty<=0 and not (existing or manual):continue
             relevant=any(e['portfolio_id']==portfolio_id and e.get('instrument_id')==inst['id'] and e['date']<=notice['ex_date'] for e in state['events'])
-            if qty is None and not relevant:continue
-            decision=next((r for r in state['corporate_actions'] if r.get('kind')=='dividend_decision' and r.get('portfolio_id')==portfolio_id and r.get('notice_id')==notice['id']),None)
+            if qty is None and not relevant and not recorded:continue
             gross=(qty*dec(notice['per_share'])).quantize(Decimal('.01'),rounding=ROUND_HALF_UP) if qty is not None and notice['currency']==inst['currency'] else None
             pending_date=notice['ex_date']>str(today())
-            recorded=existing or manual
-            basis={'eligible_quantity':ds(qty) if qty is not None else None,'per_share':notice['per_share'],'estimated_gross':ds(gross) if gross is not None else None,'record_date':cutoff}
-            baseline=(recorded or {}).get('dividend_basis')
-            changed=bool(recorded and ((baseline and baseline!=basis) or (existing and not baseline) or (manual and gross is not None and dec(manual['gross_amount'])!=gross)))
+            basis=reference_basis(notice,ds(qty) if qty is not None else None,cutoff,baseline)
+            basis['estimated_gross']=ds(gross) if gross is not None else None
+            changes=review_changes(baseline,basis) if recorded and (baseline or existing) else ['missing_basis'] if manual and gross is not None and dec(manual['gross_amount'])!=gross else []
+            if reviewed and recorded['date']!=decision.get('event_date',baseline.get('ex_date',recorded['date'])):
+                changes.append('event_date')
+            changed=bool(changes)
             status='needs_review' if changed else 'confirmed' if existing else 'manual_recorded' if manual else 'ignored' if decision and decision.get('ignored') else 'future' if pending_date else 'pending'
             if inst['currency']!='CNY' and market_data is None: market_data=Market(state)
             rate=market_data.fx_series[inst['currency']].at(notice['ex_date']) if inst['currency']!='CNY' else {'rate':'1','date':notice['ex_date']}
@@ -692,6 +751,8 @@ class Service:
                     'change_reason':'补录历史交易或公告变化后重新核对分红'}}
             result.append({'notice':notice,'instrument':inst,'portfolio_id':portfolio_id,'eligible_quantity':qty,'eligibility_date':cutoff,
                 'estimated_gross':gross,'status':status,'event_id':(existing or manual or {}).get('id'),'suggested_event':suggested,
+                'revision':state['revision'],'review_basis':basis,'review_changes':[CHANGE_LABELS[k] for k in changes],
+                'review_revision':(decision or {}).get('review_revision',0),'review_decision':decision if reviewed else None,
                 'recorded_event':recorded,'previous_basis':baseline,'gross_difference':gross-dec(recorded['gross_amount']) if recorded and gross is not None else None,
                 'note':(('按登记日账本份额估算，税费、实际到账金额和再投确认份额须本人核对。' if notice['currency']==inst['currency'] else '派息币种与标的币种不一致，请先按实际到账核对并折算，未自动估算金额。')+notice.get('coverage_note',''))})
         return wire(sorted(result,key=lambda r:r['notice']['ex_date'],reverse=True))
@@ -719,9 +780,36 @@ class Service:
             db.execute('INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,0)',(event['id'],pid,event['date'],event['sequence'],event['fingerprint'],json_dumps(event)))
             self.store.audit(db,'event',event['id'],before,event,'历史持仓变化后重新核对分红' if before else '本人核对公开分红后确认入账')
             decision_id='decision:'+pid+':'+notice_id
-            decision={'id':decision_id,'kind':'dividend_decision','instrument_id':event['instrument_id'],'portfolio_id':pid,'notice_id':notice_id,'event_id':event['id'],'ignored':False,'updated_at':now()}
+            decision={'id':decision_id,'kind':'dividend_decision','instrument_id':event['instrument_id'],'portfolio_id':pid,'notice_id':notice_id,'event_id':event['id'],'ignored':False,'review_revision':state['revision']+1,'updated_at':now()}
             db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(decision_id,event['instrument_id'],json_dumps(decision)))
         return wire(event)
+
+    def review_dividend(self,notice_id,payload):
+        """Acknowledge the current reference without touching any event column."""
+        revision=payload.get('expected_revision')
+        if type(revision) is not int or revision<0:raise DomainError('分红核对必须提供读取时的 expected_revision')
+        reason=str(payload.get('reason') or '').strip()
+        if not reason:raise DomainError('请填写保留实际到账记录的核对说明')
+        if payload.get('mode')!='keep_recorded':raise DomainError('请选择保留原分红记录')
+        with self.store.transaction(expected_revision=revision) as db:
+            state=self.store.state(db);pid=payload.get('portfolio_id')
+            candidate=next((r for r in self.dividend_candidates(pid,state=state) if r['notice']['id']==notice_id),None)
+            if not candidate or candidate['status']!='needs_review':raise DomainError('该分红没有待核对的原记录，请刷新后核对')
+            event=candidate['recorded_event']
+            if event['kind'] not in ('DIVIDEND','REINVEST') or event.get('instrument_id')!=candidate['instrument']['id']:
+                raise DomainError('来源关联的原记录不是本标的的分红或再投，请先更正原流水')
+            if payload.get('event_id')!=event['id']:raise DomainError('原分红流水不匹配，请刷新后核对')
+            if payload.get('review_basis')!=candidate['review_basis']:raise DomainError('持仓或公告已变化，请刷新后重新核对')
+            key='decision:'+pid+':'+notice_id
+            before=next((r for r in state['corporate_actions'] if r['id']==key),None)
+            decision=dict(id=key,kind='dividend_decision',portfolio_id=pid,instrument_id=event['instrument_id'],
+                          notice_id=notice_id,event_id=event['id'],ignored=False,mode='keep_recorded',
+                          review_basis=candidate['review_basis'],event_fingerprint=event_fingerprint(event),
+                          event_date=event['date'],
+                          review_revision=revision+1,reason=reason,updated_at=now())
+            db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(key,event['instrument_id'],json_dumps(decision)))
+            self.store.audit(db,'dividend_decision',key,before,decision,reason)
+        return wire(dict(decision=decision,event=event,revision=revision+1))
 
     def ignore_dividend(self,notice_id,payload):
         with self.store.transaction() as db:
@@ -809,51 +897,6 @@ class Service:
                          'todos': current['todos'] if current else [], 'cancelled': bool(raw['deleted']),
                          'neighbors': [{'id': r['event']['id'], 'date': r['trade_date'], 'kind': r['event']['kind']} for r in results] if current else [],
                          'revisions': history})
-
-    def tag_report(self, portfolio_id=None, dimension='asset_class'):
-        if dimension not in ('asset_class', 'region', 'tags'): raise DomainError('标签统计维度无效')
-        state = self.store.state()
-        selected = [p for p in state['portfolios'] if p['id'] == portfolio_id] if portfolio_id else [p for p in state['portfolios'] if not p.get('archived')]
-        if portfolio_id and not selected: raise DomainError('组合不存在')
-        groups = {}; pie_groups = {}; total = ZERO; incomplete = False; untagged = ZERO
-        def add(bucket, key, label, value, detail):
-            if key not in bucket: bucket[key] = {'key': json_dumps(key), 'label': label, 'value': ZERO, 'details': []}
-            if value is not None: bucket[key]['value'] += value
-            bucket[key]['details'].append(detail)
-        for p in selected:
-            snap = self.dashboard(p['id'], view='summary')
-            if snap['total_assets'] is None: incomplete = True
-            else: total += dec(snap['total_assets'])
-            for h in snap['holdings']:
-                for lot in h['lots']:
-                    value = dec(lot['value_base']) if lot['value_base'] is not None else None
-                    labels = lot['tags'] if dimension == 'tags' else [lot.get(dimension) or '未分类']
-                    detail = dict(lot, portfolio_id=p['id'], portfolio_name=p['name'], instrument=h['instrument'])
-                    for label in labels: add(groups, label, label, value, detail)
-                    if not lot['tags'] and value is not None: untagged += value
-                    if dimension == 'tags':
-                        combination = tuple(sorted(set(labels)))
-                        label = ' + '.join('「'+v+'」' for v in combination) if combination else '未打主题标签'
-                        add(pie_groups, ('tags',)+combination, label, value, detail)
-            cash = dec(snap['cash_total']) if snap['cash_total'] is not None else None
-            cash_detail = {'portfolio_id': p['id'], 'portfolio_name': p['name'], 'value_base': cash, 'instrument': None}
-            add(pie_groups, ('cash',), '剩余可投金额', cash, cash_detail)
-            if dimension != 'tags': add(groups, '现金', '现金', cash, cash_detail)
-            for r in snap['receivables']:
-                value = dec(r['value_base']) if r['value_base'] is not None else None
-                detail = dict(r, portfolio_id=p['id'], portfolio_name=p['name'], instrument=None)
-                add(pie_groups, ('receivables',), '应收及在途', value, detail)
-                if dimension != 'tags': add(groups, '应收及在途', '应收及在途', value, detail)
-        if dimension != 'tags': pie_groups = groups
-        for bucket in (groups, pie_groups):
-            for item in bucket.values(): item['weight'] = ratio(item['value'], total) if not incomplete else None
-        slices = sorted(pie_groups.values(), key=lambda g: (-g['value'], g['label']))
-        pie_eligible = not incomplete and total > ZERO and all(g['value'] >= ZERO for g in slices)
-        return wire({'dimension': dimension, 'scope': portfolio_id or 'all', 'total_assets': None if incomplete else total,
-                     'groups': sorted(groups.values(), key=lambda g: (-g['value'], g['label'])), 'incomplete': incomplete,
-                     'pie_groups': slices, 'pie_eligible': pie_eligible,
-                     'pie_basis': '按互斥标签组合划分，各笔持仓只计一次；现金、未打标签及应收一并计入总资产' if dimension == 'tags' else '按总资产构成划分，包含现金及应收',
-                     'overlapping': dimension == 'tags', 'untagged_value': untagged, 'portfolio_count': len(selected)})
 
     def cache_prices(self, instrument_id, rows):
         counts = {'saved': 0, 'unchanged': 0}
@@ -950,7 +993,9 @@ class Service:
             try:
                 if category == 'events':
                     payload = dict(raw, portfolio_id=portfolio_id)
-                    if (raw.get('tags') or '').startswith('['):payload['tags']=json.loads(raw['tags'])
+                    # Legacy CSV columns are ignored and cannot reintroduce retired tags.
+                    payload.pop('tags', None)
+                    if payload.get('region') == '混合': payload['region'] = '未分类'
                     instrument_input=None
                     if payload.get('code') and str(payload.get('kind','')).upper() in ('BUY','OPENING_POSITION','SUBSCRIBE_PENDING','REINVEST') and not any(i['id']==payload.get('instrument_id') for i in state['instruments']):
                         instrument_input={'market':payload.get('market') or ('HK' if len(payload['code'])==5 else 'CN'),
@@ -962,7 +1007,6 @@ class Service:
                         matching = [i for i in state['instruments'] if i['code'] == payload['code'].zfill(5 if raw.get('market') == 'HK' else 6) and (not raw.get('market') or i['market'] == raw['market'])]
                         if len(matching) != 1: raise DomainError('请用instrument_id或准确市场+代码指定标的')
                         payload['instrument_id'] = matching[0]['id']
-                    if raw.get('tags', '').startswith('['): payload['tags'] = json.loads(raw['tags'])
                     source_id = raw.get('event_id') or None
                     e, duplicate, candidate = self.prepared_csv_event(state_for_row, payload, source_id)
                     if not source_id: duplicate = duplicate or (e['fingerprint'] if e['fingerprint'] in seen else None)
@@ -1038,12 +1082,12 @@ class Service:
                   'fx_rate', 'fx_type', 'fx_source_date', 'payment_date', 'confirmation_date', 'net_amount', 'pay_date', 'pay_fx_rate',
                   'reinvest_quantity', 'reinvest_price', 'reinvest_gross_amount', 'reinvest_date', 'reinvest_fx_rate', 'pay_fx_source_date', 'pay_fx_type', 'reinvest_fx_source_date', 'reinvest_fx_type', 'tax_known', 'ex_date_known',
                   'from_currency', 'to_currency', 'from_amount', 'to_amount', 'from_fx_rate', 'to_fx_rate', 'factor',
-                  'new_quantity', 'new_cost', 'historical_cost', 'initial_net_invested', 'asset_class', 'region', 'tags', 'reason', 'external_ref', 'reservation_id', 'transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined']
+                  'new_quantity', 'new_cost', 'historical_cost', 'initial_net_invested', 'asset_class', 'region', 'reason', 'external_ref', 'reservation_id', 'transfer_id','source_dividend_id','source_split_id','sell_lots','dividend_basis','record_date','related_event_id','costs_combined']
         buf = io.StringIO(); writer = csv.DictWriter(buf, fieldnames=fields, extrasaction='ignore'); writer.writeheader()
         for e in state['events']:
             if e['portfolio_id'] == portfolio_id:
                 inst=next((i for i in state['instruments'] if i['id']==e.get('instrument_id')),{})
-                writer.writerow(dict(e, event_id=e['id'], market=inst.get('market',''),code=inst.get('code',''),name=inst.get('name',''),tags=json_dumps(e.get('tags', [])),sell_lots=json_dumps(e.get('sell_lots',[])) if e.get('sell_lots') else '',dividend_basis=json_dumps(e['dividend_basis']) if e.get('dividend_basis') else ''))
+                writer.writerow(dict(e, event_id=e['id'], market=inst.get('market',''),code=inst.get('code',''),name=inst.get('name',''),sell_lots=json_dumps(e.get('sell_lots',[])) if e.get('sell_lots') else '',dividend_basis=json_dumps(e['dividend_basis']) if e.get('dividend_basis') else ''))
         return '\ufeff' + buf.getvalue()
 
     def backup_download(self):
@@ -1116,7 +1160,11 @@ class Service:
             preserved=self.store.restore(data, files);self.upgrade_budget_model()
             return {'restored': True, 'preserved_backup': preserved}
 
-    def start_sync(self, instrument_id=None, *, full=False, trigger='manual_update', _triggers=None, _queued=False):
+    def start_sync(self, instrument_id=None, *, full=False, trigger='manual_update', _triggers=None, _queued=False, scopes=None, fx_currencies=None):
+        fx_currencies=set(fx_currencies if fx_currencies is not None else ('HKD','USD'))
+        if not fx_currencies or not fx_currencies.issubset({'HKD','USD'}): raise DomainError('汇率币种无效')
+        scopes=set(scopes if scopes is not None else ('quotes','fx'))
+        if not scopes or not scopes.issubset({'quotes','fx'}): raise DomainError('无效的行情或汇率更新范围')
         causes=set(_triggers or [trigger])
         if not causes or not causes.issubset(TRIGGERS):raise DomainError('无效的更新触发原因')
         if causes.issubset({'startup', 'schedule'}):
@@ -1130,13 +1178,15 @@ class Service:
                 return {'skipped': True, 'reason': 'empty_ledger'}
         with self.job_lock:
             if self.syncing:
-                pending=self.pending_sync.setdefault(instrument_id or '*',{'full':False,'triggers':set()})
+                pending=self.pending_sync.setdefault(instrument_id or '*',{'full':False,'triggers':set(),'scopes':set(),'fx_currencies':set()})
                 pending['full'] |= full
                 pending['triggers'].update(causes)
+                pending['scopes'].update(scopes)
+                pending['fx_currencies'].update(fx_currencies)
                 return {'already_running': True,'queued':True}
             self.syncing = True
         job = {'id': uid(), 'status': 'running', 'started_at': now(), 'items': [], 'message': '正在更新本地缓存',
-               'instrument_id':instrument_id,'full':full,**trigger_metadata(causes,_queued)}
+               'instrument_id':instrument_id,'full':full,'scopes':sorted(scopes),**trigger_metadata(causes,_queued)}
         self.store.save_job(job)
         def work():
             try:
@@ -1145,7 +1195,7 @@ class Service:
                 start = min((p['start_date'] for p in state['portfolios']), default=(today() - timedelta(days=90)).isoformat())
                 start = (day(start) - timedelta(days=14)).isoformat()
                 # Only public symbol/date queries leave the device. No portfolio data is transmitted.
-                for c in ('HKD', 'USD'):
+                for c in (sorted(fx_currencies) if 'fx' in scopes else ()):
                     try:
                         existing = [r['date'] for r in state['fx'] if r['currency'] == c and not r.get('manual')]
                         beginning = start if full or not existing else max(start, (day(max(existing)) - timedelta(days=7)).isoformat())
@@ -1158,7 +1208,7 @@ class Service:
                     except Exception as exc:
                         job['items'].append({'source_kind':'fx','currency':c,'name': c + '/CNY', 'status': 'error', 'message': str(exc)[:500]})
                     self.store.save_job(job)
-                for inst in instruments:
+                for inst in (instruments if 'quotes' in scopes else []):
                     if inst['market'] == 'CUSTOM':
                         job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name':inst['name'],'status':'error','message':'该标的暂无可用同步数据源，请检查代码或稍后重试'})
                         self.store.save_job(job)
@@ -1212,9 +1262,9 @@ class Service:
                 if pending:
                     if '*' in pending:
                         self.start_sync(full=any(r['full'] for r in pending.values()),
-                            _triggers=set().union(*(r['triggers'] for r in pending.values())),_queued=True)
+                            _triggers=set().union(*(r['triggers'] for r in pending.values())),_queued=True,scopes=set().union(*(r['scopes'] for r in pending.values())),fx_currencies=set().union(*(r['fx_currencies'] for r in pending.values())))
                     else:
                         for target,request in sorted(pending.items()):
-                            self.start_sync(target,full=request['full'],_triggers=request['triggers'],_queued=True)
+                            self.start_sync(target,full=request['full'],_triggers=request['triggers'],_queued=True,scopes=request['scopes'],fx_currencies=request['fx_currencies'])
         threading.Thread(target=work, daemon=True, name='portfolio-market-update').start()
         return {'job_id': job['id'], 'status': 'running'}

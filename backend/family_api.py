@@ -2,14 +2,14 @@
 from typing import Any, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
-from .common import wire
+from .common import wire, today
 from .family_service import FamilyService
 from .family_notifications import FamilyNotifications
 
 
 class FamilyCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    operation: Literal['item', 'valuation', 'link', 'links', 'unlink', 'settings', 'schedule', 'reconcile', 'closure', 'income']
+    operation: Literal['item', 'valuation', 'link', 'links', 'unlink', 'settings', 'schedule', 'reconcile', 'closure', 'income', 'archive', 'restore']
     payload: dict[str, Any] = Field(description='操作参数 schema 见 GET /api/family/command-schema；金额保持十进制字符串')
     expected_revision: int = Field(strict=True, ge=0)
     record_id: str | None = None
@@ -17,7 +17,7 @@ class FamilyCommand(BaseModel):
 
 class NotificationCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    action: Literal['enable', 'disable', 'refresh', 'test']
+    action: Literal['enable', 'disable', 'refresh', 'test', 'open_settings']
 
 
 def family_router(store, environment):
@@ -33,7 +33,7 @@ def family_router(store, environment):
     @router.get('/revision')
     def revision():
         with store.connection() as db:
-            return {'revision': int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0])}
+            return {'revision': int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0]), 'today': str(today())}
 
     @router.get('/overview')
     def overview(date: str | None = None): return family.read(date)

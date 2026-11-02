@@ -88,30 +88,26 @@ def wire(value):
     return value
 
 
-REGIONS = ('A股', '美股', '港股', '海外其他', '混合', '未分类')
+REGIONS = ('A股', '美股', '港股', '海外其他', '未分类')
 
 
 def canonical_region(value):
     # Display/read compatibility only; never infer investment exposure from listing market.
-    return {'国内': 'A股', '海外': '海外其他'}.get(value, value) if value else '未分类'
+    return {'国内': 'A股', '海外': '海外其他', '混合': '未分类'}.get(value, value) if value else '未分类'
 
 
-def tags(payload):
+def classification(payload, *, historical=False):
+    if historical:
+        payload = {'asset_class': payload.get('asset_class'), 'region': canonical_region(payload.get('region'))}
+    if 'tags' in payload:
+        raise DomainError('旧风格/主题标签已移除，请使用独立的持仓分类路径')
     asset = payload.get('asset_class') or '未分类'
     region = canonical_region(payload.get('region'))
-    if asset not in ('权益', '债券', '其他', '未分类'):
-        raise DomainError('资产类别须为权益、债券、其他或未分类')
-    if region not in REGIONS:
-        raise DomainError('地区须为A股、美股、港股、海外其他、混合或未分类')
-    themes = payload.get('tags', [])
-    if isinstance(themes, str):
-        themes = themes.replace('，', ',').replace('|', ',').split(',')
-    if not isinstance(themes, list):
-        raise DomainError('标签须为数组或逗号分隔文字')
-    themes = list(dict.fromkeys(str(t).strip() for t in themes if str(t).strip()))
-    if len(themes) > 24 or any(len(t) > 30 for t in themes):
-        raise DomainError('最多24个主题标签，每个不超过30字')
-    return {'asset_class': asset, 'region': region, 'tags': themes}
+    if asset not in ('权益', '债券', '大宗商品', '其他', '未分类'):
+        raise DomainError('资产类别须为权益、债券、大宗商品、其他或未分类')
+    if payload.get('region') == '混合' or region not in REGIONS:
+        raise DomainError('地区须为A股、美股、港股、海外其他或未分类')
+    return {'asset_class': asset, 'region': region}
 
 
 def ratio(numerator, denominator):

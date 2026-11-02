@@ -1,6 +1,7 @@
 """Shared date bounds and debt summary for the household ledger."""
 import calendar
-from .common import ZERO, day, dec
+from .common import ZERO, day, dec, ds
+from .family_domain import at_item, active
 from .family_plans import installments
 from .ledger import Market
 
@@ -17,6 +18,16 @@ def recording_bounds(family, date):
                 income_years=sorted({int(d[:4]) for d in income_dates}, reverse=True))
 
 
+def balance_history(family):
+    items={i['id']:i for i in family['items']}
+    result=[]
+    for value in family['values']:
+        item=items.get(value['item_id']);meta=at_item(item,value['effective_on']) if item else None
+        total=(dec(value['amount'])+dec(value.get('interest',0))+dec(value.get('fees',0)))*dec(meta['share']) if meta and value['amount'] is not None else None
+        result.append(dict(value,household_total=ds(total) if total is not None else None))
+    return result
+
+
 def debt_summary(state, family, snap, *, market=None):
     date = snap['as_of']; d = day(date)
     start, end = str(d.replace(day=1)), str(d.replace(day=calendar.monthrange(d.year, d.month)[1]))
@@ -27,11 +38,13 @@ def debt_summary(state, family, snap, *, market=None):
         plan = row.get('payment_plan')
         if plan and plan.get('mode') != 'none':
             generated = installments(plan, row['id'], row['name'], row['currency'], start, end)
-            payments.extend(generated)
+            item=next(i for i in family['items'] if i['id']==row['id'])
+            payments.extend(p for p in generated if (meta:=at_item(item,p['due_date'])) and active(meta,p['due_date']))
         else:
             legacy = [s for s in family['schedules'] if s['item_id'] == row['id'] and s['kind'] == 'debt'
                       and s['status'] != 'cancelled' and start <= s['due_date'] <= end]
-            payments.extend(dict(s, currency=row['currency'], share=row['share']) for s in legacy)
+            item=next(i for i in family['items'] if i['id']==row['id'])
+            payments.extend(dict(s,currency=row['currency'],share=row['share']) for s in legacy if (meta:=at_item(item,s['due_date'])) and active(meta,s['due_date']))
             if not legacy and (row['value'] is None or row['value'] > 0): unconfigured.append(row['name'])
     amounts = []
     for p in payments:

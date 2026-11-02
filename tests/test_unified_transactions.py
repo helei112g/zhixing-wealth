@@ -6,17 +6,39 @@ from fastapi.testclient import TestClient
 from backend.app import create_app
 from backend.common import DomainError
 from backend.store import Store
+from backend.environment import claim_environment
 from backend.service import Service
 from backend.trade_analytics import xirr
 
 class UnifiedTransactionsTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.s=Service(Store(Path(self.tmp.name)))
+        self.tmp=tempfile.TemporaryDirectory();self.s=Service(Store(claim_environment(Path(self.tmp.name),'test')))
         self.p=self.s.save_portfolio({'name':'统一口径','planned_amount':'100000','start_date':'2023-01-01'})
     def tearDown(self):self.tmp.cleanup()
     def buy(self,code='159307',date='2023-01-01',qty='100',gross='1000',**kw):
         return self.s.save_event({'portfolio_id':self.p['id'],'kind':'BUY','date':date,'instrument':{'market':'CN','code':code},'quantity':qty,'gross_amount':gross,'fx_rate':'1',**kw})
     def price(self,e):self.s.cache_prices(e['instrument_id'],[{'date':'2023-01-01','price':'10'},{'date':'2024-01-01','price':'11'}])
+    def test_kind_filter_is_applied_before_pagination_and_scoped(self):
+        e=self.buy();self.buy('515080')
+        self.s.save_event(dict(portfolio_id=self.p['id'],instrument_id=e['instrument_id'],kind='DIVIDEND',date='2023-06-01',pay_date='2023-06-02',net_amount='10',fx_rate='1'))
+        other=self.s.save_portfolio(dict(name='合成隔离组合',planned_amount='100',start_date='2023-01-01'))
+        self.s.save_event(dict(portfolio_id=other['id'],kind='FEE',date='2023-06-01',amount='1',fx_rate='1'))
+        result=self.s.transaction_page(self.p['id'],kind='BUY',page=2,page_size=1)
+        self.assertEqual(result['total'],2);self.assertEqual(result['unfiltered_total'],3)
+        self.assertEqual(result['items'][0]['event']['kind'],'BUY');self.assertEqual(result['filters']['kind'],'BUY')
+        self.assertEqual(result['facets']['kinds'],['BUY','DIVIDEND'])
+        own=self.s.transaction_page(self.p['id'],e['instrument_id'],kind='DIVIDEND')
+        self.assertEqual(own['total'],1);self.assertEqual(own['items'][0]['event']['instrument_id'],e['instrument_id'])
+        self.assertEqual(self.s.transaction_page(self.p['id'],kind='FEE')['total'],0)
+        with self.assertRaises(DomainError):self.s.transaction_page(self.p['id'],kind='UNKNOWN')
+    def test_http_kind_only_request_returns_paginated_envelope(self):
+        self.buy()
+        with TestClient(create_app(self.tmp.name,testing=True,auto_sync=False)) as client:
+            self.assertIsInstance(client.get('/api/portfolios/'+self.p['id']+'/transactions').json(),list)
+            result=client.get('/api/portfolios/'+self.p['id']+'/transactions?kind=BUY')
+            self.assertEqual(result.status_code,200);self.assertEqual(result.json()['total'],1)
+            self.assertEqual(client.get('/api/portfolios/'+self.p['id']+'/transactions?kind=FAKE').status_code,422)
+
     def test_all_primary_returns_and_calendar_use_investment_cost(self):
         a=self.buy(transaction_costs='10');self.price(a)
         self.s.save_event({'portfolio_id':self.p['id'],'instrument_id':a['instrument_id'],'kind':'DIVIDEND','date':'2023-06-01','pay_date':'2023-06-03','net_amount':'90','tax':'10','fx_rate':'1'})

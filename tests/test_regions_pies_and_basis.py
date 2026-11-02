@@ -74,7 +74,7 @@ class RegionsPiesAndBasisTests(unittest.TestCase):
     def test_missing_and_negative_values_do_not_draw_false_pies(self):
         self.s.save_event({'portfolio_id':self.p['id'],'kind':'BUY','date':'2023-01-01','instrument':{'market':'US','code':'AAPL'},'quantity':'1','gross_amount':'100','fx_rate':'7'})
         r=self.s.holding_analysis.report(self.p['id']);self.assertTrue(r['incomplete']);self.assertFalse(r['eligible'])
-        with patch.object(self.s,'plan_snapshot',return_value={'date':'2026-10-31','holdings':[],'total_assets':'-5','securities_total':'0','cash_total':'-5','receivables':[]}):
+        with patch.object(self.s,'plan_snapshot',return_value={'portfolio':self.p,'available_cash':D('-5'),'date':'2026-10-31','holdings':[],'total_assets':'-5','securities_total':'0','cash_total':'-5','receivables':[]}):
             r=self.s.holding_analysis.report(self.p['id'],'assets');self.assertFalse(r['eligible']);self.assertEqual(r['nodes'][0]['value'],'-5')
     def test_all_yearly_metrics_expose_identical_investment_basis(self):
         e=self.buy();self.price(e);d=self.s.dashboard(self.p['id'],end='2024-01-01');basis=d['capital_summary']['xirr_basis']

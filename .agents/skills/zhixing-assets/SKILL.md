@@ -1,11 +1,11 @@
 ---
 name: zhixing-assets
-description: 查询或维护知行财富的资产更新、余额快照、负债、保险、收入和组合关联。用于个人或家庭的本机记账；不执行证券交易或投资建议。
+description: 查询或维护知行财富的资产更新、余额快照、负债、保险、月度收入开支和组合关联。用于个人或家庭的本机记账；不执行证券交易或投资建议。
 ---
 
 # 资产分析与资产更新
 
-侧边栏为「资产分析 → 总览／趋势分析／保险／收入」，在总览通过「资产更新」维护项目与余额。原 family API 路径和命令保持兼容。
+侧边栏为「资产分析 → 总览／趋势分析／保险／收入/开支」，在总览通过「资产更新」维护项目与余额。原 family API 路径和命令保持兼容。
 
 先阅读 [AI 接入约定](../../../docs/ai.md)。从技能目录向上三级是该版本的代码根目录；独立日常工作区优先使用其 `./zhixing` 入口替换下列客户端前缀，不切到开发目录，不依赖全局安装。
 
@@ -33,4 +33,7 @@ description: 查询或维护知行财富的资产更新、余额快照、负债�
 
 - 收入年度累计与分类占比使用 `/api/family/income?year=YYYY` 的 `summary`；`total` 未知或为零时不编造占比，`recorded_months` 不等于全年完整记录。字段详见 `docs/api.md`。
 
-归档与恢复：从catalog.archive_entries读取已归档对象ID，按command-schema版本2使用archive/restore。record_id为原item或link ID，payload含target=item|link及effective_on，先预览、原revision提交、回读catalog和overview。归档从当日退出统计并保留历史，不能清零或删除代替；归档关联不改变组合、交易或笔记，恢复关联创建新有效期。归档不是出售收款，需另行核对现金；恢复沿用最近记录余额，应核对当前金额。不得自动归档用户资产。
+归档与恢复：从catalog.archive_entries读取已归档对象ID，按command-schema版本3使用archive/restore。record_id为原item或link ID，payload含target=item|link及effective_on，先预览、原revision提交、回读catalog和overview。归档从当日退出统计并保留历史，不能清零或删除代替；归档关联不改变组合、交易或笔记，恢复关联创建新有效期。归档不是出售收款，需另行核对现金；恢复沿用最近记录余额，应核对当前金额。不得自动归档用户资产。
+
+
+月度收支读取cashflow?year=YYYY&include_fund=false。固定预算用expense_plan（name、amount CNY或source_item_id、effective_month、可选end_month），月度补录用expense_month（month、extra_plan、actual_amount、confirmed、note）。实际金额是整月总额，替代预算而非相加；不写逐笔支出、不改资产现金。预览→原revision提交→回读cashflow和catalog。编辑计划沿用原ID追加版本，月度ID为YYYY-MM。确认需有用户对整月完整数据的核对；缺少收入记录不能自行断言零收入。仅同组已核对月份纳入实际年度储蓄率，不平均月比例；公积金默认排除，预算估算和实际分开，收入更正后重新核对。

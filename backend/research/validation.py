@@ -29,7 +29,9 @@ def validate(module,value):
         rows=value.get('rows',[])
         if len({r['code'] for r in rows})!=len(rows):raise DomainError('公司代码重复')
         for r in rows:
-            if not re.fullmatch(r'\d{6}',r['code']):raise DomainError('公司代码格式无效')
+            venue=r.get('market')
+            pattern=r'\d{5}\.HK' if venue=='HK' else r'[A-Z][A-Z0-9.-]{0,15}\.(O|N|A)' if venue=='US' else r'\d{6}'
+            if not re.fullmatch(pattern,r['code']):raise DomainError('公司代码与市场格式无效')
             if r.get('date'):day(r['date'])
             for field in (('weight',) if module=='memberships' else ('pe','pb')):
                 if r.get(field) is not None:dec(r[field],nonnegative=field=='weight')

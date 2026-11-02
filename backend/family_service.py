@@ -186,6 +186,9 @@ class FamilyService:
                 raise DomainError(label + '不存在')
             return obj
         reason = text(data.get('reason'), '修订说明', 300) or '资产资料更新'
+        if operation in ('expense_plan', 'expense_month'):
+            from .family_expenses import apply_expense
+            return apply_expense(self, db, family, state, operation, data, record_id, reason)
         if operation in ('archive','restore'):
             return lifecycle(self,db,family,state,operation,data,record_id)
         if operation == 'item':
@@ -540,6 +543,8 @@ def validate_family_backup(db):
         for value in entry['versions']:
             money(value['amount']); currency(value['currency']); day(value['date'])
             if value['kind'] not in ('salary','rent','fund','custom') or value['date'][:7] != value['month']: raise DomainError('收入记录无效')
+    from .family_expenses import validate_expenses
+    validate_expenses(family)
     for table in (name for name in TABLES if name.removeprefix('family_') in family):
         for row in db.execute(f'SELECT id,data FROM {table}'):
             if json.loads(row[1]).get('id') != row[0]: raise DomainError('资产备份记录索引不一致')

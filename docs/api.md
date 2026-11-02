@@ -1,6 +1,6 @@
 # 本机 API：给 AI 与自动化客户端
 
-版本：0.8.5。与浏览器共用 FastAPI 服务和领域校验。开发默认 origin 为 `http://127.0.0.1:8877`；正式实例为 `http://127.0.0.1:8765`，调用前核对目标环境。API 不连接券商、不下单。
+版本：0.9.0。与浏览器共用 FastAPI 服务和领域校验。开发默认 origin 为 `http://127.0.0.1:8877`；正式实例为 `http://127.0.0.1:8765`，调用前核对目标环境。API 不连接券商、不下单。
 
 ## 资产分析 API
 
@@ -430,3 +430,16 @@ catalog另提供`value_history`：保留原快照字段并增加按该日档案�
 OpenAPI明确列出dashboard的full/summary、持仓分布的holdings/assets、研究basis/method/window/part的可选值。DashboardResponse公开CapitalSummary、HoldingSnapshot、PlanFunding，保留其他已有响应字段；数值保持Decimal字符串，未知保持null。ScenarioRequest/ScenarioResult区分输入change_ratio（比例）与curve[].change_pct（百分数）。409为版本或同request_id负载冲突，422为输入或业务口径不成立。
 
 UpdateRequest.resources按scope区分六种结构，OpenAPI同时公开各模块枚举；quotes必须显式传instrument_id（null为全部），fx必须传currency，指数资源必须传target与module。full只用于quotes/fx且必须是布尔值；资源scope须在请求scopes中。省略可选字段不会被补成新的重试负载。
+
+
+## 计划买入、分级配置与月度收支（0.9.0 / schema11）
+
+- `POST /api/portfolios/P/purchase-plans/preview` 与 `POST /api/portfolios/P/purchase-plans`：同一请求包含严格非负整数 `expected_revision`、`instrument_id` 或 `instrument:{market,code,name}`（二选一）、`target_pct`（十进制字符串，0至100之间且大于0）、`asset_class`、`holding_labels:{scope,direction,detail}`。返回 `instrument`、`allocation`、`target_amount`、`plan_funding`、`existing`、`revision`。预览只读，保存同事务写标的/关联/标签；不写事件或现金。同组合相同标的不重复关联，现有标的全局名称不被计划重命名。归档组合拒绝写入。
+- 新计划严格携带预览revision；旧版本409，不合法参数422。保存后回读dashboard与labels核对。已有计划使用原 `PUT /api/portfolios/P/instruments/I`；可附 `planned_buy:true` 显式重新加入计划买入，`target_pct:0`取消意图。实际买入后按事件识别状态，清仓不会自动重新计划。
+- `GET /api/portfolios/P/allocation-analysis`：`level=scope|direction|detail|instrument`；过滤 `scope,direction,detail,asset_class,instrument_id`，`status=all|incomplete|over|unplanned|planned`，`sort=gap|name`。返回 `rows,options,plan_funding,basis,revision`。行包含 `path,target_pct,target_amount,net_invested,input_weight,gap,gap_weight,required_amount,over_amount,value,market_weight,count,unplanned_count,incomplete_count,unknown_count`。instrument层另有instrument_id/status。百分数target_pct与比例input_weight/gap_weight/market_weight不可混用。所有分母固定为全组合，过滤不重置；required/over分别汇总，不相抵。父节点有未设目标成员时gap为null。
+- `GET /api/portfolios/P/label-options`：新增计划前读取建议路径和同一账本revision。原持仓分布节点额外返回 `plan`；旭日图包含实际市值，不用计划伪造扇区。
+- dashboard.capital_summary 与持仓performance新增 `holding_return` 比例；资本概要另有 `remaining_cost`。公式为holding_profit/remaining_cost，非正成本、无持仓或未知时null。
+- `GET /api/family/cashflow?year=YYYY&include_fund=false`：返回12个月 `rows`、同组已核对月份 `summary`、计划历史 `plans`、可引用项目 `source_items`、years、revision、basis。月度含 income/planned/actual/surplus/savings_rate/estimated_surplus/estimated_savings_rate/confirmed/needs_review/fixed_plan；金额CNY字符串，比例为0–1（可负），未知null。summary不平均月比例，按months所列月份计算；confirmed_months说明完整度。
+- `expense_plan`、`expense_month` 加入 `/api/family/preview` 和 `/api/family/commands`，沿用expected_revision、record_id。`command-schema`版本3提供完整JSON Schema。expense_plan包含name、amount或source_item_id、effective_month、end_month；编辑原ID追加版本。expense_month包含month、extra_plan、actual_amount、confirmed、note，record_id为YYYY-MM；未来月份只允许预算。
+- 实际开支总额替代预算，不相加。confirmed表示整月收入和开支已经完整核对，无收入记录时明确确认零收入；收入记录改变后needs_review为true并退出实际年度统计。已确认月份保存预算快照，之后改计划不改写该月。上述两类操作不产生现金流水、证券事件或资产快照；超时先回读，不自动重试。
+- 指数详情新增 `module_status`，逐模块包含supported/status/reason/date。科创50价格/全收益代码000688/000688CNY01，中证海外中国互联网H11136/H01136；后者估值及财务模块明确unsupported，不调用A股财务适配器。

@@ -331,7 +331,7 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
         # Settled sale performance does not depend on today's remaining-position valuation.
         sold_cost=h.get('sold_cost_base')
         realized_sale_profit = proceeds - dec(sold_cost) if proceeds_complete and sold_cost is not None else None
-        result[iid]={'realized_sale_profit':realized_sale_profit,'holding_profit':h.get('holding_profit'),'remaining_cost':h.get('cost_including_fees_base'),'profit':profit,'return_on_cost':ratio(profit,cost) if profit is not None else None,'cost':cost,'profit_breakdown':breakdown,
+        result[iid]={'realized_sale_profit':realized_sale_profit,'holding_profit':h.get('holding_profit'),'remaining_cost':h.get('cost_including_fees_base'),'holding_return':ratio(h.get('holding_profit'),h.get('cost_including_fees_base')) if h.get('holding_profit') is not None and h.get('cost_including_fees_base') is not None and h['cost_including_fees_base'] > ZERO else None,'profit':profit,'return_on_cost':ratio(profit,cost) if profit is not None else None,'cost':cost,'profit_breakdown':breakdown,
             'dividends_net':dividends_net,'xirr':annual['rate'],'xirr_status':annual['status'],'xirr_basis':XIRR_BASIS,'provisional':provisional,
             'pending_settlement':pending,'closed':h['quantity']==0,'as_of':end,'cash_flows':[{'date':d,'amount':v} for d,v in sorted(flows)]}
     return result
@@ -368,6 +368,8 @@ def investment_summary(state, portfolio, snapshot, performances, as_of):
     available = planned - dec(invested) if invested is not None else None
     open_holdings = [h for h in snapshot['holdings'] if dec(h['quantity']) > 0 or h.get('unconfirmed_split')]
     holding_profit = sum((dec(h['holding_profit']) for h in open_holdings),ZERO) if all(h.get('holding_profit') is not None for h in open_holdings) else None
+    remaining_cost = sum((dec(h['cost_including_fees_base']) for h in open_holdings),ZERO) if all(h.get('cost_including_fees_base') is not None for h in open_holdings) else None
+    holding_return = ratio(holding_profit, remaining_cost) if holding_profit is not None and remaining_cost is not None and remaining_cost > ZERO else None
     def combined(key):
         values=[r['profit_breakdown'][key] for r in rows]
         return sum((dec(v) for v in values),ZERO) if all(v is not None for v in values) else None
@@ -381,7 +383,7 @@ def investment_summary(state, portfolio, snapshot, performances, as_of):
         'invested_weight': ratio(invested, planned) if invested is not None else None,
         'available_amount': available, 'account_available_cash': snapshot['available_cash'], 'available_amount_basis':'planned_amount - invested_amount',
         'invested_amount_basis':'paid purchases and related fees less received sale proceeds and cash dividends; native reinvestment funding cancels; interest is separate',
-        'holding_profit':holding_profit, 'realized_sale_profit':sum((dec(r['realized_sale_profit']) for r in rows),ZERO) if all(r.get('realized_sale_profit') is not None for r in rows) else None,
+        'holding_profit':holding_profit, 'remaining_cost':remaining_cost, 'holding_return':holding_return, 'realized_sale_profit':sum((dec(r['realized_sale_profit']) for r in rows),ZERO) if all(r.get('realized_sale_profit') is not None for r in rows) else None,
         'dividends_net':combined('dividends_net'), 'holding_profit_basis':'market value less remaining book cost including purchase fees and taxes; excludes sold positions and distributions', 'market_value': snapshot['securities_total'],
         'profit': profit, 'return_on_cost': ratio(profit, cost) if profit is not None else None,
         'cost': cost, 'profit_breakdown':breakdown, 'xirr': annual['rate'], 'xirr_status': annual['status'], 'xirr_basis': XIRR_BASIS,

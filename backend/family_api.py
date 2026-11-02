@@ -9,7 +9,7 @@ from .family_notifications import FamilyNotifications
 
 class FamilyCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    operation: Literal['item', 'valuation', 'link', 'links', 'unlink', 'settings', 'schedule', 'reconcile', 'closure', 'income', 'archive', 'restore']
+    operation: Literal['item', 'valuation', 'link', 'links', 'unlink', 'settings', 'schedule', 'reconcile', 'closure', 'income', 'archive', 'restore', 'expense_plan', 'expense_month']
     payload: dict[str, Any] = Field(description='操作参数 schema 见 GET /api/family/command-schema；金额保持十进制字符串')
     expected_revision: int = Field(strict=True, ge=0)
     record_id: str | None = None
@@ -48,6 +48,11 @@ def family_router(store, environment):
     @router.get('/history', summary='月度比上月末、年度比上年末（previous）；显式 yoy 为去年同期')
     def history(start: str | None = None, end: str | None = None, grain: str = 'month', comparison: str = 'previous'):
         return family.history(start, end, grain, comparison)
+
+    @router.get('/cashflow', summary='月度收入/开支、固定计划与已核对月份储蓄率；不修改资产余额')
+    def cashflow(year: int | None = None, include_fund: bool = False):
+        from .family_expenses import expense_summary
+        return expense_summary(store, year, include_fund)
 
     @router.get('/income', summary='读取年度收入：月度 rows、最新 records、累计与分类占比 summary', description='summary 含 total/known_total/recorded_months/missing_count 和 groups；每组含 amount/share。金额为 Decimal 字符串，share 为 0–1 比例；无记录、缺汇率或非正分母保留未知，详见 docs/api.md。')
     def income(year: int | None = None): return family.income_summary(year)

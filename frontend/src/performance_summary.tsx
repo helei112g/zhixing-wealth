@@ -9,7 +9,7 @@ export function SummaryReturns({performance:a,annual}:Obj){return <div className
  </div>;}
 
 export function CurrentHoldingProfit({performance:a}:Obj){return <div className="current-holding-profit" data-current-holding-profit>
- <span>当前持仓收益 <b className={tone(a.holding_profit)}>{signedMoney(a.holding_profit)} CNY</b></span>
+ <span>当前持仓收益 <b className={tone(a.holding_profit)}>{signedMoney(a.holding_profit)} CNY <em className="holding-return-rate">{percent(a.holding_return,true)}</em></b></span>
  <small>{a.holding_profit==null?'行情或剩余成本待核对':'市值 − 剩余含费税记账成本'}</small>
  {a.xirr_status?.includes('期初')&&<small>期初份额仅计算记账以来。</small>}
  <small>已卖出收益 {signedMoney(a.realized_sale_profit)} · 净分红 {signedMoney(a.dividends_net)} CNY</small>

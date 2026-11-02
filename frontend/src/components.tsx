@@ -15,9 +15,10 @@ export function ErrorBox({error}: {error:any}) {return error?<div className="err
 export function Notice({children}: {children:React.ReactNode}) {return <div className="notice">{children}</div>;}
 export function Metric({label,value,note,positive=false}: {label:string;value:any;note?:React.ReactNode;positive?:boolean}) {return <div className="metric"><div>{label}</div><strong className={positive?tone(value):''}>{positive&&value!==null&&Number(value)>0?'+':''}{amount(value)}</strong>{note&&<small>{note}</small>}</div>;}
 export function XirrBasis({performance:a}: {performance:Obj}) {return <details className="xirr-basis" data-idle-cash="excluded"><summary>年化口径：仅实际投入资金，不含未投入现金</summary><p>{a?.xirr_basis?.description||'按实际投入与回收现金流计算 XIRR，未平仓持仓以期末市值计入；按实际天数/365年化。未投入的预算及现金余额不作为投资本金。'}</p></details>;}
-export function HoldingStatus({closed,unbought=false,title}:{closed?:boolean;unbought?:boolean;title?:string}){
- if(closed==null)return null;
- return <span className={'holding-status '+(unbought?'unbought':closed?'closed':'open')} title={title}>{unbought?'尚未买入':closed?'已清仓':'持有中'}</span>;
+export function HoldingStatus({closed,unbought=false,title,status}:{closed?:boolean;unbought?:boolean;title?:string;status?:string}){
+ if(closed==null&&!status)return null;
+ const label=status||(unbought?'尚未买入':closed?'已清仓':'持有中');
+ return <span className={'holding-status '+(label==='计划买入'?'planned':label==='持有中'?'open':label==='已清仓'?'closed':'unbought')} title={title}>{label}</span>;
 }
 export function ReturnPerformance({performance:a}:{performance?:Obj|null}){
  if(!a)return <span className="muted">-</span>;

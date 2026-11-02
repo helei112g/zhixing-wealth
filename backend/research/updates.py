@@ -132,6 +132,9 @@ class UpdateJobs:
         if r['scope'] in ('quotes','fx'):return self._legacy(r)
         iid,module=r['target'],r['module']
         p=self.research.profile(iid);asof=providers.cutoff()
+        capability=providers.module_capabilities(p)[module]
+        if not capability['supported']:
+            return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='unsupported',error=capability['reason'])]
         if module in ('price','total_return'):value=providers.prices(p,module,asof)
         elif module=='memberships':value=providers.constituents(p,asof)
         elif module=='historical_memberships':

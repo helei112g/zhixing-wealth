@@ -41,7 +41,7 @@ def main():
     check(notification['enabled'] is False and revision()==before_notifications,
           'AI notification status is read-only and never enables real OS notifications')
     schema=client.request(cap['family']['command_schema'])
-    check(set(schema['operations'])=={'item','valuation','links','unlink','income','archive','restore'},'recommended asset commands discoverable')
+    check(set(schema['operations'])=={'item','valuation','links','unlink','income','expense_plan','expense_month','archive','restore'},'recommended asset commands discoverable')
     check('/api/family/command-schema' in client.request(cap['openapi'])['paths'],'OpenAPI discovers asset contract')
     check('csrf_token' not in client.connect(),'client does not expose bootstrap credential')
     asset,old=command('item',dict(category='cash',currency='CNY',name='AI合成快照验收',effective_on='2024-01-01',household_amount='123456.78'))
@@ -271,6 +271,28 @@ def main():
     check(client.request(candidates)[0]['status']=='confirmed','AI Yahoo micro refresh leaves review complete')
     client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-03',instrument_id=holding['instrument_id'],quantity='1',gross_amount='10',fx_rate='.9',expected_revision=revision()),'POST')
     check(client.request(candidates)[0]['status']=='needs_review','AI real entitlement change reopens review')
+    # New plans and monthly cashflow use the same revision-guarded client, without a browser.
+    plan_portfolio=client.write('/api/portfolios',dict(name='AI合成配置盘点',planned_amount='100000',start_date='2024-01-01',expected_revision=revision()),'POST')
+    plan_body=dict(instrument=dict(market='FUND',code='009991',name='AI合成计划基金'),target_pct='10',holding_labels=dict(scope='A股',direction='宽基',detail='合成500'),expected_revision=revision())
+    original_revision=revision()
+    proposal=client.purchase_plan_preview(plan_portfolio['id'],plan_body)
+    check(proposal['target_amount']=='10000' and revision()==original_revision,'AI purchase-plan preview is read-only')
+    saved_plan=client.write('/api/portfolios/'+plan_portfolio['id']+'/purchase-plans',plan_body,'POST')
+    for level in ('scope','direction','detail','instrument'):
+        report=client.allocation_analysis(plan_portfolio['id'],level=level)
+        check(len(report['rows'])==1 and report['rows'][0]['required_amount']=='10000','AI configuration view '+level+' preserves target and gap')
+    check(client.allocation_analysis(plan_portfolio['id'],level='instrument',instrument_id=saved_plan['instrument']['id'])['rows'][0]['status']=='计划买入','AI exact instrument filter reads plan status')
+    check(client.investment_summary(plan_portfolio['id'])['holding_return'] is None,'AI unbought plan never fabricates holding return')
+    try:client.write('/api/portfolios/'+plan_portfolio['id']+'/purchase-plans',plan_body,'POST')
+    except RuntimeError as error:check('HTTP 409' in str(error),'AI stale purchase plan cannot overwrite current state')
+    else:raise AssertionError('stale purchase plan accepted')
+    command('income',dict(kind='salary',month='2023-01',date='2023-01-31',currency='CNY',amount='10000'))
+    command('expense_plan',dict(name='AI合成固定开支',amount='3000',effective_month='2023-01',end_month='2023-01'))
+    month_body=dict(month='2023-01',extra_plan='500',actual_amount='4000',confirmed=True)
+    command('expense_month',month_body,'2023-01')
+    cashflow=client.cashflow(2023)
+    check(cashflow['rows'][0]['planned']=='3500' and cashflow['rows'][0]['surplus']=='6000' and cashflow['summary']['savings_rate']=='0.6','AI cashflow uses actual total once and annual matched-month savings')
+    check(client.request('/api/portfolios/'+plan_portfolio['id']+'/dashboard?view=summary')['cash_total']=='100000','AI plans and expenses never mutate portfolio cash')
     (output/'ai-passed.json').write_text(json.dumps({'checks':len(checks),'passed':checks},ensure_ascii=False,indent=2))
 
 

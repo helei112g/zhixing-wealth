@@ -13,6 +13,8 @@ CSI = 'https://www.csindex.com.cn'
 CNI = 'https://www.cnindex.com.cn'
 # Explicitly paired official identities; unknown codes are never prefix-matched.
 CATALOG = [
+    dict(code='000688', return_code='000688CNY01', name='科创50', provider='csi', kind='宽基', launch='2020-07-23', exposure='CN'),
+    dict(code='H11136', return_code='H01136', name='中国互联网', provider='csi', kind='行业', launch='2011-09-20', exposure='overseas'),
     dict(code='000300', return_code='H00300', name='沪深300', provider='csi', kind='宽基', launch='2005-04-08'),
     dict(code='000905', return_code='H00905', name='中证500', provider='csi', kind='宽基', launch='2007-01-15'),
     dict(code='000985', return_code='H00985', name='中证全指', provider='csi', kind='宽基', launch='2011-08-02'),
@@ -34,6 +36,32 @@ def identity(code):
         'https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/' + p['code'] + 'factsheet.pdf')
     p['return_launch_status'] = 'verified' if p.get('return_launch') else 'not_independently_verified'
     return p
+
+
+def module_capabilities(profile):
+    modules = ('price','total_return','memberships','historical_memberships','valuations','stock_valuations','financials','historical_financials')
+    result = {m:dict(supported=True,reason=None) for m in modules}
+    if profile['code'] == 'H11136':
+        for m in ('valuations','stock_valuations'):
+            result[m] = dict(supported=False, reason='现有估值源未覆盖中国互联网指数；不使用A股或相似指数估值替代')
+        for m in ('financials','historical_financials'):
+            result[m] = dict(supported=False, reason='港美股财报的币种、会计口径及重复上市映射尚未完成核验，暂不聚合财务')
+        result['historical_memberships'] = dict(supported=False,reason='尚无逐年核验的境外历史成分与权重，不以当前成分回填历史')
+    return result
+
+
+def constituent_identity(code, exchange, overseas=False):
+    value = str(code).strip().upper()
+    if overseas:
+        if exchange in ('香港证券交易所','香港联合交易所') and re.fullmatch(r'\d{1,5}\.HK', value):
+            return dict(code=value[:-3].zfill(5)+'.HK',market='HK',ticker=value[:-3].zfill(5),exchange=exchange)
+        if any(x in exchange for x in ('纳斯达克','纽约','美国证券交易所')) and re.fullmatch(r'[A-Z][A-Z0-9.-]{0,15}\.(O|N|A)',value):
+            return dict(code=value,market='US',ticker=value.rsplit('.',1)[0],exchange=exchange)
+        raise market.ProviderError('境外成分代码与官方交易所无法匹配；拒绝按A股代码推断')
+    normalized = cell_code(code)
+    if not re.fullmatch(r'\d{6}', normalized): raise market.ProviderError('境内成分代码无效')
+    venue = 'SH' if exchange == '上海证券交易所' else 'SZ' if exchange == '深圳证券交易所' else 'SH' if normalized.startswith('6') else 'SZ'
+    return dict(code=normalized,market=venue,exchange=exchange)
 
 
 def cutoff():
@@ -72,6 +100,8 @@ def prices(profile, basis, asof):
 
 
 def valuations(profile, asof):
+    capability = module_capabilities(profile)['valuations']
+    if not capability['supported']: raise market.ProviderError(capability['reason'])
     out = {}; evidence = []
     with SOURCE_LOCK:
         for metric, fields in {'pe': {'overall': 'addTtmPe', 'median': 'middleTtmPe', 'arithmetic': 'ttmPe'},
@@ -152,7 +182,7 @@ def constituents(profile, asof):
         url='https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/closeweight/'+profile['code']+'closeweight.xls'
         r=requests.get(url,timeout=20);r.raise_for_status();data=excel_rows(r.content)[1:]
         if any(cell_code(row[1])!=profile['code'] for row in data):raise market.ProviderError('成分指数身份不匹配')
-        rows=[dict(date=cell_date(row[0]),code=cell_code(row[4]),name=str(row[5]),weight=ds(dec(row[9])),market='SH' if cell_code(row[4]).startswith('6') else 'SZ',industry='') for row in data]
+        rows=[dict(date=cell_date(row[0]),name=str(row[5]),weight=ds(dec(row[9])),industry='',source_code=str(row[4]),**constituent_identity(row[4],str(row[7]),profile.get('exposure')=='overseas' or profile['code']=='H11136')) for row in data]
     else:
         url=CNI+'/sample-detail/download-history?'+urlencode({'indexcode':profile['code']})
         r=requests.get(url,timeout=20);r.raise_for_status();data=excel_rows(r.content)[1:]
@@ -163,6 +193,7 @@ def constituents(profile, asof):
 
 
 def stock_valuations(members, asof):
+    if any(r['market'] not in ('SH','SZ') for r in members): raise market.ProviderError('境外成分估值尚无核验适配，不调用A股接口')
     rows = []; evidence = []
     for pos in range(0, len(members), 50):
         group = members[pos:pos+50]
@@ -186,6 +217,7 @@ def stock_valuations(members, asof):
 
 
 def financials(members, asof):
+    if any(r['market'] not in ('SH','SZ') for r in members): raise market.ProviderError('境外成分财报口径尚未核验，不调用A股财务接口')
     # Official availability is conservative: supplier notice date is used unless separately verified.
     periods = sorted({f'{int(asof[:4])-y}-12-31' for y in range(1,11)} | {asof[:4]+'-'+m for m in ('03-31','06-30','09-30') if asof[:4]+'-'+m <= asof})
     periods = sorted(set(periods) | {str(int(p[:4])-1)+p[4:] for p in periods})

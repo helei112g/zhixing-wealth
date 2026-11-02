@@ -89,6 +89,41 @@ class QuoteChangeTests(unittest.TestCase):
         self.instrument['market'] = 'HK'
         self.assertEqual(self.result('2026-10-22')['basis'], 'raw')
 
+    def test_adjusted_daily_requires_known_previous_trading_day(self):
+        self.instrument['market'] = 'SH'
+        self.quote('2026-10-28', 5, 'adjusted')
+        self.quote('2026-10-29', 11)
+        self.quote('2026-10-30', 12)
+        self.quote('2026-10-30', 6, 'adjusted')
+        daily = self.result()['daily']
+        self.assertEqual(daily['status'], 'missing_base')
+        self.assertIsNone(daily['ratio'])
+        self.assertIn('2026-10-29', daily['status_label'])
+        self.quote('2026-10-29', '5.5', 'adjusted')
+        self.assertEqual(self.result()['daily']['ratio'], D(6)/D('5.5')-1)
+
+    def test_adjusted_weekly_requires_known_last_session_before_week(self):
+        self.instrument['market'] = 'HK'
+        self.quote('2026-10-22', 4, 'adjusted')
+        self.quote('2026-10-23', 10)
+        self.quote('2026-10-30', 12)
+        self.quote('2026-10-30', 6, 'adjusted')
+        weekly = self.result()['weekly']
+        self.assertEqual(weekly['status'], 'missing_base')
+        self.assertIsNone(weekly['ratio'])
+        self.assertIn('2026-10-23', weekly['status_label'])
+        self.quote('2026-10-23', 5, 'adjusted')
+        self.assertEqual(self.result()['weekly']['ratio'], D('.2'))
+
+    def test_adjusted_base_may_be_more_recent_than_raw_cache(self):
+        self.instrument['market'] = 'US'
+        self.quote('2026-10-22', 10)
+        self.quote('2026-10-23', 5, 'adjusted')
+        self.quote('2026-10-29', '5.5', 'adjusted')
+        self.quote('2026-10-30', 6, 'adjusted')
+        self.assertEqual(self.result()['daily']['ratio'], D(6)/D('5.5')-1)
+        self.assertEqual(self.result()['weekly']['ratio'], D('.2'))
+
     def test_known_raw_split_is_not_reported_as_loss(self):
         self.quote('2026-10-23', 10); self.quote('2026-10-29', 5); self.quote('2026-10-30', 5)
         self.state['corporate_actions'].append(dict(instrument_id='a',kind='split_notice',date='2026-10-28'))

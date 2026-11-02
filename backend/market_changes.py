@@ -37,6 +37,9 @@ def instrument_market_changes(state, instrument, as_of, *, market=None):
         if not base:
             return unavailable('missing_base', '缺少上周末基准行情' if weekly else '缺少前一交易日行情')
         boundary = monday if weekly else day(latest['date'])
+        known_base_date = max((r['date'] for r in raw if r['date'] < str(boundary)), default=None)
+        if basis == 'adjusted' and known_base_date and base['date'] < known_base_date:
+            return unavailable('missing_base', '基准交易日的复权行情尚未同步（基准日期 '+known_base_date+'）')
         if (boundary - day(base['date'])).days > 15:
             return unavailable('missing_base', '基准行情间隔超过15日，暂不可比')
         if dec(base['price']) <= 0 or dec(latest['price']) <= 0:

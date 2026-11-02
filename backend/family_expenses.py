@@ -104,7 +104,7 @@ def apply_expense(service, db, family, state, operation, data, record_id, reason
     return result
 
 
-def expense_summary(store, year=None, include_fund=False):
+def expense_summary(store, year=None, include_fund=True):
     year = year or today().year
     if not 1900 <= year <= today().year + 10: raise DomainError('收支年份无效')
     with store.connection() as db:
@@ -130,6 +130,11 @@ def expense_summary(store, year=None, include_fund=False):
                          surplus=surplus, savings_rate=surplus / income if surplus is not None and income > ZERO else None,
                          estimated_surplus=estimate, estimated_savings_rate=estimate / income if estimate is not None and income > ZERO else None,
                          status='需重新核对收入' if needs_review else '已核对' if confirmed else '预算估算' if planned is not None else '未记录'))
+    annual_records = [r for r in records if r['month'].startswith(str(year)+'-') and (include_fund or r['kind'] != 'fund')]
+    known_income = sum((r['value'] for r in annual_records if r['value'] is not None), ZERO) if annual_records else None
+    missing_income_months = sorted({r['month'] for r in annual_records if r['value'] is None})
+    income_summary = dict(total=known_income if not missing_income_months else None, known_total=known_income,
+                          months=sorted({r['month'] for r in annual_records}), missing_fx_months=missing_income_months)
     included = [r for r in rows if r['confirmed'] and r['income'] is not None and r['actual'] is not None]
     income = sum((r['income'] for r in included), ZERO) if included else None
     expense = sum((r['actual'] for r in included), ZERO) if included else None
@@ -139,9 +144,9 @@ def expense_summary(store, year=None, include_fund=False):
     years = {today().year, year} | {int(r['month'][:4]) for r in records} | {int(m[:4]) for m in saved}
     years |= {int(v['effective_month'][:4]) for r in family.get('expense_plans', []) for v in r['versions']}
     source_items = [dict(id=r['id'], name=r['versions'][-1]['name']) for r in family['items'] if r['versions'][-1]['category'] in ('debt', 'insurance')]
-    return wire(dict(year=year, years=sorted(years, reverse=True), revision=state['revision'], rows=rows, summary=summary,
+    return wire(dict(year=year, years=sorted(years, reverse=True), revision=state['revision'], rows=rows, summary=summary, income_summary=income_summary,
                      include_fund=include_fund, plans=family.get('expense_plans', []), source_items=source_items,
-                     basis='现金收支口径；实际总额替代预算，不与固定开支相加；年储蓄率按同一组已核对月份的收入和开支合计计算；未记录不等于零'))
+                     basis=('全部收入（含公积金）' if include_fund else '不含公积金收入')+'口径；实际总额替代预算，不与固定开支相加；年储蓄率按同一组已核对月份的收入和开支合计计算；未记录不等于零'))
 
 
 def validate_expenses(family):

@@ -227,7 +227,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'notifications': '/api/notifications',
                            'notification_scheduling': {'mode': 'single_next', 'max_pending': 1,
                                                        'same_time': 'combined', 'continuation_requires_service': True}, 'schema': SCHEMA,
-                           'cashflow': '/api/family/cashflow?year=YYYY&include_fund=false',
+                           'cashflow': '/api/family/cashflow?year=YYYY',
                            'savings_basis':'only confirmed matched months; (sum income - sum actual expense) / sum income; zero or missing income yields null; actual replaces plan',
                            'income': '/api/family/income', 'income_summary': {'field': 'summary', 'groups': ['salary','rent','fund','custom'], 'shares': '0–1; null when total is unknown or nonpositive'}, 'history_default_comparison': 'previous', 'summary': '/api/family/summary', 'recurring_payments': True,
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},

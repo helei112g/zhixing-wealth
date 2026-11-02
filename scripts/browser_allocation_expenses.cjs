@@ -67,17 +67,22 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'allocation-expenses-resul
   await command('income',{kind:'salary',month:at,amount:'10000',currency:'CNY'});
   await command('income',{kind:'fund',month:at,amount:'2000',currency:'CNY'});
   await command('income',{kind:'salary',month:year+'-02',amount:'20000',currency:'CNY'});
-  await cashNav();await page.getByRole('button',{name:'设置固定开支',exact:true}).click();await field('开支名称').fill('合成固定生活开支');await field('每月金额').fill('3000');await field('生效月份').fill(at);
+  await cashNav();await page.locator('[data-cashflow-metric="income"] strong').getByText('32,000.00',{exact:true}).waitFor();
+  const cashActions=page.getByRole('group',{name:'收入与开支录入',exact:true});
+  check(await cashActions.getByRole('button').count()===3&&await cashActions.evaluate(el=>el.getBoundingClientRect().bottom<document.querySelector('[aria-label="收入开支内容"]').getBoundingClientRect().top),'income and both expense entries share the toolbar above tabs');
+  check(await page.getByRole('checkbox',{name:'储蓄率包含公积金收入',exact:true}).count()===0,'all income types are included by default without a checkbox');
+  const unconfirmed=await api('/family/cashflow?year='+year);check(unconfirmed.income_summary.total==='32000'&&unconfirmed.summary.confirmed_months===0&&unconfirmed.summary.expense===null,'annual recorded income remains visible before any expense confirmation');
+  check((await page.locator('.cashflow-summary-note').innerText()).includes('本年尚无已核对月份'),'missing expense confirmation has an explicit explanation');await shot('cashflow-income-before-expenses');
+  await page.getByRole('tab',{name:'收入分类与明细',exact:true}).click();check(await cashActions.isVisible(),'shared actions remain available on income details');await page.getByRole('tab',{name:'收支盘点',exact:true}).click();
+  await page.getByRole('button',{name:'设置固定开支',exact:true}).click();await field('开支名称').fill('合成固定生活开支');await field('每月金额').fill('3000');await field('生效月份').fill(at);
   await dialog.getByRole('button',{name:'预览计划',exact:true}).click();await dialog.getByRole('button',{name:'确认保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
   await page.getByRole('button',{name:'设置固定开支',exact:true}).click();await dialog.getByRole('button',{name:'编辑',exact:true}).click();await field('每月金额').fill('3500');await field('生效月份').fill(at);await dialog.getByRole('button',{name:'预览计划',exact:true}).click();await dialog.getByRole('button',{name:'确认保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
   check((await api('/family/cashflow?year='+year)).rows[0].planned==='3500','editing a fixed plan appends valid version and refreshes budget');
   await page.locator('.cashflow-months').getByRole('button',{name:at,exact:true}).click();await field('当月额外计划').fill('500');await field('实际开支总额').fill('4000');await dialog.getByRole('checkbox',{name:/本月收入与实际开支已完整核对/}).check();
   await dialog.getByRole('button',{name:'预览月度收支',exact:true}).click();await shot('monthly-expense-preview');await dialog.getByRole('button',{name:'确认保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
   await page.locator('.cashflow-months').getByRole('button',{name:year+'-02',exact:true}).click();await field('实际开支总额').fill('2000');await dialog.getByRole('checkbox',{name:/本月收入与实际开支已完整核对/}).check();await dialog.getByRole('button',{name:'预览月度收支',exact:true}).click();await dialog.getByRole('button',{name:'确认保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
-  const cf=await api('/family/cashflow?year='+year);check(cf.rows[0].surplus==='6000'&&cf.summary.expense==='6000'&&cf.summary.savings_rate==='0.8','actual replaces monthly budget; annual rate is aggregate 80%, not average 75%');
-  check((await page.locator('.cashflow-summary').innerText()).includes('80.00%'),'rendered annual savings rate matches API');
-  await page.getByRole('checkbox',{name:'储蓄率包含公积金收入',exact:true}).check();await page.locator('.cashflow-summary').getByText('81.25%',{exact:true}).waitFor();check(true,'provident-fund switch recalculates same confirmed month set');
-  await page.getByRole('checkbox',{name:'储蓄率包含公积金收入',exact:true}).uncheck();await page.locator('.cashflow-summary').getByText('80.00%',{exact:true}).waitFor();
+  const cf=await api('/family/cashflow?year='+year);check(cf.rows[0].surplus==='8000'&&cf.summary.expense==='6000'&&cf.summary.savings_rate==='0.8125','actual replaces monthly budget; annual rate includes fund income and uses matched aggregate totals');
+  check((await page.locator('.cashflow-summary').innerText()).includes('81.25%'),'rendered annual savings rate matches API including fund income');
   await shot('cashflow-desktop');for(const width of [390,768]){await page.setViewportSize({width,height:950});await shot('cashflow-'+width);check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'cashflow layout fits viewport '+width);}
   check((await api('/portfolios/'+p.id+'/dashboard?view=summary')).cash_total===before.cash_total,'income and expense records never alter portfolio cash');
   for(const [code,paired] of [['000688','000688CNY01'],['H11136','H01136']]){const r=await api('/research/indices/resolve',{code});check(JSON.stringify(r).includes(paired),'official price/return pair resolves '+code);}

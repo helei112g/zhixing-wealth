@@ -74,7 +74,10 @@ class AllocationExpenseTests(unittest.TestCase):
             self.assertEqual(capture(self.directory),after)
             single=client.get('/api/portfolios/'+self.p['id']+'/allocation-analysis',params=dict(level='instrument',instrument_id=saved.json()['instrument']['id'])).json()
             self.assertEqual(single['rows'][0]['required_amount'],'10000')
-            self.assertEqual(client.get('/api/family/cashflow?year=2025').json()['summary']['confirmed_months'],0)
+            self.income(amount='2000',kind='fund')
+            cashflow=client.get('/api/family/cashflow?year=2025').json()
+            self.assertEqual(cashflow['summary']['confirmed_months'],0)
+            self.assertEqual(cashflow['income_summary']['total'],'2000');self.assertTrue(cashflow['include_fund'])
 
     def test_first_purchase_then_sale_requires_explicit_new_intention(self):
         plan=self.purchase();iid=plan['instrument']['id']
@@ -135,11 +138,39 @@ class AllocationExpenseTests(unittest.TestCase):
         self.command('expense_month',payload,preview=True);self.assertEqual(capture(self.directory),before)
         self.command('expense_month',payload)
         report=expense_summary(self.store,2025);row=report['rows'][0]
-        self.assertEqual((row['planned'],row['actual'],row['surplus'],row['savings_rate']),('3500','4000','6000','0.6'))
-        self.assertEqual(report['summary']['savings_rate'],'0.6')
-        self.assertEqual(expense_summary(self.store,2025,True)['rows'][0]['income'],'12000')
+        self.assertEqual((row['planned'],row['actual'],row['surplus']),('3500','4000','8000'))
+        self.assertAlmostEqual(D(report['summary']['savings_rate']),D(2)/D(3))
+        self.assertEqual(row['income'],'12000')
+        self.assertEqual(expense_summary(self.store,2025,False)['rows'][0]['savings_rate'],'0.6')
         self.assertEqual(self.store.state()['events'],[])
         self.assertEqual(self.s.dashboard(self.p['id'],view='summary')['cash_total'],'100000')
+
+    def test_recorded_annual_income_is_independent_of_expense_confirmation(self):
+        self.income(amount='10000');self.income(amount='2000',kind='fund');self.income(amount='3000',kind='rent')
+        self.command('income',dict(month='2025-01',kind='custom',name='合成其他收入',currency='CNY',amount='1000'))
+        self.income('2025-02','20000');self.income('2024-01','99999')
+        report=expense_summary(self.store,2025)
+        self.assertTrue(report['include_fund'])
+        self.assertEqual(report['income_summary'],dict(total='36000',known_total='36000',months=['2025-01','2025-02'],missing_fx_months=[]))
+        self.assertEqual(report['summary']['confirmed_months'],0)
+        self.assertIsNone(report['summary']['expense']);self.assertIsNone(report['summary']['savings_rate'])
+        self.command('expense_month',dict(month='2025-01',actual_amount='4000',confirmed=True))
+        report=expense_summary(self.store,2025)
+        self.assertEqual(report['income_summary']['total'],'36000')
+        self.assertEqual(report['summary']['income'],'16000');self.assertEqual(report['summary']['savings_rate'],'0.75')
+        self.assertEqual(report['summary']['months'],['2025-01'])
+
+    def test_annual_income_missing_fx_is_unknown_and_reading_never_writes(self):
+        self.income(amount='10000')
+        self.command('income',dict(month='2025-02',kind='salary',currency='USD',amount='100'))
+        before=capture(self.directory)
+        report=expense_summary(self.store,2025)
+        self.assertEqual(report['income_summary']['known_total'],'10000')
+        self.assertIsNone(report['income_summary']['total'])
+        self.assertIn('2025-02',report['income_summary']['missing_fx_months'])
+        self.assertEqual(capture(self.directory),before)
+        empty=expense_summary(self.store,2023)
+        self.assertIsNone(empty['income_summary']['total']);self.assertEqual(empty['income_summary']['months'],[])
 
     def test_annual_weighted_rate_missing_zero_and_income_recheck(self):
         first=self.income(amount='10000');self.income('2025-02','20000')

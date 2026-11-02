@@ -36,4 +36,4 @@ description: 查询或维护知行财富的资产更新、余额快照、负债�
 归档与恢复：从catalog.archive_entries读取已归档对象ID，按command-schema版本3使用archive/restore。record_id为原item或link ID，payload含target=item|link及effective_on，先预览、原revision提交、回读catalog和overview。归档从当日退出统计并保留历史，不能清零或删除代替；归档关联不改变组合、交易或笔记，恢复关联创建新有效期。归档不是出售收款，需另行核对现金；恢复沿用最近记录余额，应核对当前金额。不得自动归档用户资产。
 
 
-月度收支读取cashflow?year=YYYY&include_fund=false。固定预算用expense_plan（name、amount CNY或source_item_id、effective_month、可选end_month），月度补录用expense_month（month、extra_plan、actual_amount、confirmed、note）。实际金额是整月总额，替代预算而非相加；不写逐笔支出、不改资产现金。预览→原revision提交→回读cashflow和catalog。编辑计划沿用原ID追加版本，月度ID为YYYY-MM。确认需有用户对整月完整数据的核对；缺少收入记录不能自行断言零收入。仅同组已核对月份纳入实际年度储蓄率，不平均月比例；公积金默认排除，预算估算和实际分开，收入更正后重新核对。
+月度收支读取cashflow?year=YYYY。固定预算用expense_plan（name、amount CNY或source_item_id、effective_month、可选end_month），月度补录用expense_month（month、extra_plan、actual_amount、confirmed、note）。实际金额是整月总额，替代预算而非相加；不写逐笔支出、不改资产现金。预览→原revision提交→回读cashflow和catalog。编辑计划沿用原ID追加版本，月度ID为YYYY-MM。确认需有用户对整月完整数据的核对；缺少收入记录不能自行断言零收入。仅同组已核对月份纳入实际年度储蓄率，不平均月比例；收入默认全部计入（含公积金），预算估算和实际分开，收入更正后重新核对。

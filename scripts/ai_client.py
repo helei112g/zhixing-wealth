@@ -134,7 +134,7 @@ class Client:
     def allocation_analysis(self, portfolio_id, **filters):
         return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/allocation-analysis?' + urllib.parse.urlencode(filters))
 
-    def cashflow(self, year, include_fund=False):
+    def cashflow(self, year, include_fund=True):
         return self.request('/api/family/cashflow?' + urllib.parse.urlencode(dict(year=year, include_fund=str(include_fund).lower())))
 
     def resolve_index(self,code):

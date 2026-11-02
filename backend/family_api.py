@@ -50,7 +50,7 @@ def family_router(store, environment):
         return family.history(start, end, grain, comparison)
 
     @router.get('/cashflow', summary='月度收入/开支、固定计划与已核对月份储蓄率；不修改资产余额')
-    def cashflow(year: int | None = None, include_fund: bool = False):
+    def cashflow(year: int | None = None, include_fund: bool = True):
         from .family_expenses import expense_summary
         return expense_summary(store, year, include_fund)
 

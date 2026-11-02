@@ -111,7 +111,18 @@ class EventRequest(WriteRequest):
     allow_duplicate: bool = Field(False, description='仅确认为另一笔相同成交时使用，不是失败重试开关')
 
 
+class PurchasePlanRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: int = Field(strict=True, ge=0)
+    instrument: InstrumentInput | None = None
+    instrument_id: str | None = None
+    target_pct: str = Field(description='计划占组合总预算百分数，大于0且不超过100')
+    asset_class: Literal['权益', '债券', '大宗商品', '其他', '未分类'] = '未分类'
+    holding_labels: dict[str, str] | None = None
+
+
 class AllocationRequest(WriteRequest):
+    planned_buy: bool | None = Field(None, description='显式重新计划买入/取消意向；省略保持现状，比例0取消计划')
     model_config = ConfigDict(extra='forbid')
     target_pct: Amount = Field('0', description='单标的计划占总预算百分数，0至100；组合计划资金缺口仅提醒，允许保存')
     asset_class: Literal['权益', '债券', '大宗商品', '其他', '未分类'] = '未分类'
@@ -407,6 +418,8 @@ class AllocationResult(BaseModel):
 
 
 class CapitalSummary(BaseModel):
+    holding_return: str | None = Field(None, description='持仓收益除以剩余持仓含费税成本；比例值，非正成本为null')
+    remaining_cost: str | None = None
     model_config = ConfigDict(extra='allow')
     planned_amount: str = Field(description='总预算，CNY')
     cost: str = Field(description='累计买入及再投含费税成本；不减卖出或分红，不等于新增个人本金')

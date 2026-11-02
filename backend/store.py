@@ -273,7 +273,10 @@ class Store:
                 if int(version[0]) >= 4:
                     from .family_domain import TABLES
                     from .family_service import validate_family_backup
-                    if not (set(TABLES) if int(version[0]) >= 6 else set(TABLES)-{'family_income'}).issubset(found):
+                    family_required = set(TABLES)
+                    if int(version[0]) < 11: family_required -= {'family_expense_plans', 'family_expense_months'}
+                    if int(version[0]) < 6: family_required -= {'family_income'}
+                    if not family_required.issubset(found):
                         raise DomainError('备份缺少家庭资料表')
                     validate_family_backup(db)
                 references(db)

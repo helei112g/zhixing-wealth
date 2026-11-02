@@ -76,6 +76,7 @@ class RefinementTests(unittest.TestCase):
             db.execute('INSERT INTO holding_labels VALUES (?,?,?)', (p['id'], e['instrument_id'], json_dumps(label)))
             for table in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):
                 db.execute('DROP TABLE IF EXISTS '+table)
+            db.execute('DROP TABLE IF EXISTS family_expense_plans'); db.execute('DROP TABLE IF EXISTS family_expense_months')
             db.execute("UPDATE meta SET value='8' WHERE key='schema'")
             db.execute("UPDATE alembic_version SET version_num='0007_holding_labels'")
             db.commit()

@@ -167,6 +167,22 @@ class HoldingAnalysis:
             row['weight'] = ratio(row['value'], total) if row['value'] is not None and not incomplete and total and total > ZERO else None
         eligible = not incomplete and total > ZERO and all(n['value'] >= ZERO for n in nodes)
         reason = '部分估值或汇率缺失，占比暂不计算' if incomplete else '暂无正值资产可展示' if total <= ZERO else '存在负值，保留实际金额明细' if not eligible else ''
+        from .allocation_planning import allocation_report
+        plan_rows = allocation_report(self.service, portfolio_id, level='instrument', _state=state, _snapshot=snap)['rows']
+        def add_plans(group):
+            for node in group:
+                path = node['path']
+                if path[-1] == '本级持仓':
+                    members = [r for r in plan_rows if r['path'][:len(path)-1] == path[:-1] and r['path'][len(path)-1] == '未细分']
+                else:
+                    members = [r for r in plan_rows if r['path'][:len(path)] == path]
+                def summed(key):
+                    return sum((dec(r[key]) for r in members), ZERO) if members and all(r[key] is not None for r in members) else None
+                net = summed('net_invested')
+                node['plan'] = dict(target_pct=summed('target_pct'), required_amount=summed('required_amount'),
+                                    input_weight=ratio(net, dec(portfolio['planned_amount'])) if net is not None else None)
+                add_plans(node['children'])
+        add_plans(nodes)
         return wire(dict(portfolio_id=portfolio_id, revision=state['revision'], date=snap['date'], basis=basis, currency='CNY',
                          total=total, nodes=nodes, holdings=holdings, eligible=eligible, incomplete=incomplete,
                          estimated=snap.get('estimated', False), reason=reason,

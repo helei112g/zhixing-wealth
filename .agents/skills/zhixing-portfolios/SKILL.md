@@ -37,3 +37,6 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 净投入使用`capital_summary.invested_amount`（实际买入支出与相关费用减已到账卖出净回款和现金分红）；`available_amount=planned_amount-invested_amount`。再投内部抵消，利息单列；`account_available_cash`是账面现金，不保证等于预算余量，期初本金未知时不猜。当前份额盈亏读`holding_profit`，剩余含费税成本按原交易汇率和移动平均成本；`realized_sale_profit`为已卖出部分收益（含已确认应收），分红另读净分红字段。未卖出但发生再投时当前盈亏可能不同于累计收益。
 
 - 近期行情读取instrument_detail(P,I).market_changes：daily/weekly为同一序列的行情涨跌，报告实际日期、basis_label及缺失原因，不能代替实际投资收益。计划设置用plan_check(P,I,target_pct)只读试算，同时展示计划合计、尚可分配比例/金额（负值为超配）和现金shortfall；未满100%不等于现金足够，仍以原revision保存。
+
+
+计划买入使用purchase_plan_preview(P,payload)后原revision POST /api/portfolios/P/purchase-plans，回读dashboard和labels；仅建立标的计划，不写BUY、预留或扣现金。target_pct是全组合预算百分数，路径可含scope/direction/detail。已有标的按ID或精确代码复用，不修改全局名称。实际买入转持有中，清仓后需明确意图才重新计划；目标归零取消。allocation_analysis(P,level=scope|direction|detail|instrument,...)按完整标签路径汇总，筛选仍以全组合预算/资产作分母；required_amount与over_amount分别保留，不相抵。当前持仓收益率读取holding_return，基于剩余含费税成本，不用累计买入成本或已实现收益替代。

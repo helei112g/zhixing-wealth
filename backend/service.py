@@ -241,9 +241,20 @@ class Service:
             old = next((a for a in state['allocations'] if a['portfolio_id'] == portfolio_id and a['instrument_id'] == instrument_id), None)
             if portfolio.get('archived'): raise DomainError('组合已归档，请先恢复后再设置计划')
             pct = plan_percentage(data.get('target_pct', (old or {}).get('target_pct', '0')))
-            funding = plan_funding(self.plan_snapshot(state, portfolio), instrument_id=instrument_id, target_pct=pct)
+            plan_snapshot = self.plan_snapshot(state, portfolio)
+            funding = plan_funding(plan_snapshot, instrument_id=instrument_id, target_pct=pct)
             merged = dict(old or {}, **{k: v for k, v in data.items() if k in ('asset_class', 'region')})
             item = dict(old or {}, portfolio_id=portfolio_id, instrument_id=instrument_id, target_pct=ds(pct), **classification(merged))
+            if pct == ZERO:
+                item['planned_buy'] = False
+            if 'planned_buy' in data:
+                from .allocation_planning import purchase_ids
+                if type(data['planned_buy']) is not bool: raise DomainError('计划买入标记须为布尔值')
+                if data['planned_buy'] and pct <= ZERO: raise DomainError('计划买入须设置正数目标比例')
+                item['planned_buy'] = data['planned_buy']
+                if data['planned_buy'] and any(h['instrument_id'] == instrument_id and (dec(h['quantity']) > ZERO or h.get('unconfirmed_split')) for h in plan_snapshot['holdings']):
+                    raise DomainError('已有持仓请直接调整目标比例，无需标记计划买入')
+                if data['planned_buy']: item['planned_buy_after'] = purchase_ids(state, portfolio_id, instrument_id)
             if old and 'region' not in data: item['region'] = old.get('region', '未分类')
             if data.get('holding_labels') is not None:
                 if type(data.get('expected_revision')) is not int: raise DomainError('合并保存须携带读取时的 expected_revision')
@@ -482,8 +493,9 @@ class Service:
         if performance is None:
             performance = instrument_projection(state,portfolio,snap['holdings'],as_of,market=market_data)
             self.store.cache[perf_key] = performance
+        from .allocation_planning import holding_status
         saved_labels = label_map(state, portfolio_id)
-        result['holdings']=[dict(h, performance=performance.get(h['instrument_id']),
+        result['holdings']=[dict(h, status=holding_status(state, portfolio_id, h), performance=performance.get(h['instrument_id']),
                                  holding_labels=resolve_labels(h['instrument'], saved_labels.get(h['instrument_id']))) for h in snap['holdings']]
         result['capital_summary']=investment_summary(state,portfolio,snap,performance,as_of)
         result['plan_funding']=plan_funding(snap)

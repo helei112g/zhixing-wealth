@@ -132,7 +132,10 @@ class ResearchService:
     def detail(self, iid, basis='price', method='overall', window=3):
         if basis not in ('price','total_return') or method not in ('overall','median','arithmetic') or window not in WINDOWS: raise DomainError('指数口径、估值方法或窗口无效')
         with self.store.lock:
-            p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff();key=(iid,basis,method,window,revision,calculation_date)
+            p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff()
+            recent=self.updates.jobs()
+            coverage_key=json_dumps([item for job in recent for item in job.get('items',[]) if item.get('target')==iid])
+            key=(iid,basis,method,window,revision,calculation_date,coverage_key)
             if key in self.cache: return self.cache[key]
             resources={name:self.module(iid,name) for name in ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials')}
         price=resources[basis];v=resources['valuations'];members=resources['memberships'];stocks=resources['stock_valuations'];finance=resources['financials']
@@ -167,9 +170,15 @@ class ResearchService:
             period=f'{year}-12-31';metrics=totals.get(period,{})
             annual.append(dict(period=period,membership_status='current_basket',metrics={m:dict(amount=v['current']['amount'],growth=v['growth'],count=v['current']['count'],denominator=v['current']['denominator'],count_coverage=v['current']['count_coverage'],weight_coverage=v['current']['coverage'],previous_amount=v['previous']['amount'],previous_coverage=v['previous']['coverage'],change=v['change'],status=v['status']) for m,v in metrics.items()}))
         sources=[dict(module=name,snapshot_id=m['snapshot_id'],fetched_at=m['fetched_at'],sha256=m['sha256'],effective_date=m.get('effective_date'),evidence=m.get('evidence',[]),limitation=m.get('limitation') or m.get('methodology_note') or m.get('theoretical_history_note')) for name,m in resources.items() if m]
-        result=wire(dict(id=iid,profile=p,basis=basis,series_code=p['return_code'] if basis=='total_return' else p['code'],asof=asof,latest=prices[-1] if prices else None,
+        module_status={}
+        for module, capability in providers.module_capabilities(p).items():
+            snapshot=resources.get(module)
+            last=next((i for job in recent for i in reversed(job.get('items',[])) if i.get('target')==iid and i.get('module')==module),None)
+            module_status[module]=dict(supported=capability['supported'],status='unsupported' if not capability['supported'] else 'available' if snapshot else 'error' if last and last.get('status')=='error' else 'missing',
+                                       reason=capability['reason'] or (last.get('error') if last else None), date=snapshot.get('effective_date') if snapshot else None)
+        result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=p['return_code'] if basis=='total_return' else p['code'],asof=asof,latest=prices[-1] if prices else None,
             research_revision=revision,method=method,window=window,method_version=METHOD_VERSION,analysis_id=hashlib.sha256(json_dumps([m['snapshot_id'] if m else None for m in resources.values()]+[basis,method,METHOD_VERSION]).encode()).hexdigest(),
-            valuation=valuations,drawdown=dd,curve=chart,daily_series=moving_averages(prices,window),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))),companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
+            valuation=valuations,drawdown=dd,curve=chart,daily_series=moving_averages(prices,window),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
             sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and method=='overall' and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb')))))
         if len(self.cache)>8:self.cache.clear()

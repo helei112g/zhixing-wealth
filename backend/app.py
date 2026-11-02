@@ -20,7 +20,7 @@ from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
 from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
-from .api_models import HoldingLabelRequest
+from .api_models import HoldingLabelRequest, PurchasePlanRequest
 from .api_models import InstrumentDetail, DashboardResponse
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
@@ -173,7 +173,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                 'domains': {'ledger': {'field': 'expected_revision', 'read': '/api/bootstrap'},
                                             'research': {'field': 'expected_research_revision', 'read': '/api/research/revision'},
                                             'settings': {'field': 'expected_settings_revision', 'read': '/api/settings/data-updates'}},
-                                'operations': ['portfolios', 'allocations', 'holding_labels', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
+                                'operations': ['portfolios', 'allocations', 'holding_labels', 'purchase_plans', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
                 'portfolios': {'create': '/api/portfolios', 'edit': '/api/portfolios/{portfolio_id}',
                                'description': {'max_length': 10000, 'format': 'plain text; preserve newlines',
                                                'omitted_or_null': 'preserve', 'empty_string': 'clear'},
@@ -184,9 +184,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                              'scenario': {'method': 'POST', 'read_only': True, 'cli': 'scenario INDEX_ID REQUEST.json',
                                           'required_context': ['analysis_id', 'accept_fixed_basket_assumption'],
                                           'basis': 'same-date price series and overall valuation; no total-return mapping'},
-                             'revision_field':'expected_research_revision','request_id_required':True,'scope':'A-share verified registry; no name or prefix guessing',
+                             'revision_field':'expected_research_revision','request_id_required':True,'scope':'verified index registry including cross-market families; consult module_status; no name or prefix guessing',
                              'windows':[3,5,10],'bases':['price','total_return'],'valuation_methods':['overall','median','arithmetic'],
-                             'detail_fields':['changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources'],
+                             'detail_fields':['module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources'],
                              'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-library-2','missing':'null with status; UI -'},
                 'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
                                  'job': '/api/data-updates/jobs/{job_id}', 'request_id_required': True,
@@ -199,10 +199,18 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                        'net_input':'invested_amount', 'net_input_basis':'实际买入支出及相关费用－已到账卖出净回款－已到账现金分红；红利再投内部抵消，利息单列',
                                        'remaining_budget':'planned_amount - invested_amount', 'account_cash':'account_available_cash',
                                        'current_holding_profit':'holding_profit', 'current_holding_profit_basis':'剩余份额市值－剩余含买入费税的记账成本（锁定交易汇率）；移动平均成本；不含已卖出和分红',
+                                       'current_holding_return':'holding_return', 'current_holding_return_basis':'持仓收益÷剩余含费税记账成本；无持仓、成本非正或未知时为null',
                                        'realized_sales':'realized_sale_profit',
                                        'dividend_components': ['profit_breakdown.cash_dividends_net','profit_breakdown.reinvested_dividends_net'],
                                        'dividend_total': 'profit_breakdown.dividends_net',
                                        'unpaid_dividends': '已确认应收计入分红收益，到账前不属于已回收现金'},
+                'purchase_plans': {'preview':'/api/portfolios/{portfolio_id}/purchase-plans/preview',
+                                   'write':'/api/portfolios/{portfolio_id}/purchase-plans', 'expected_revision_required':True,
+                                   'cash_effect':'none; no event or reserve created', 'target_pct':'percentage of total budget'},
+                'allocation_analysis': {'read':'/api/portfolios/{portfolio_id}/allocation-analysis',
+                                        'levels':['scope','direction','detail','instrument'],
+                                        'filters':['scope','direction','detail','asset_class','instrument_id','status'],
+                                        'bases':'target and net input / whole portfolio budget; market value / whole portfolio assets; filtering never rebases'},
                 'holding_analysis': {'read': '/api/portfolios/{portfolio_id}/holding-analysis?basis=holdings',
                                      'bases': ['holdings', 'assets'], 'current_only': True,
                                      'labels': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels',
@@ -210,7 +218,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                      'cardinality': 'one path per portfolio instrument; no duplicated values'},
                 'family': {'label': '资产分析', 'read': '/api/family/overview',
                            'catalog': '/api/family/catalog', 'command_schema': '/api/family/command-schema',
-                           'recommended_operations': ['item','valuation','links','unlink','income','archive','restore'],
+                           'recommended_operations': ['item','valuation','links','unlink','income','expense_plan','expense_month','archive','restore'],
                            'comparison': {'summary_default': 'month', 'summary_baseline': 'previous_period_end', 'history_curve': 'previous',
                                           'history_options': ['previous', 'year_start', 'yoy']},
                            'skills': ['zhixing-assets','zhixing-portfolios','zhixing-notes'], 'history': '/api/family/history',
@@ -219,6 +227,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'notifications': '/api/notifications',
                            'notification_scheduling': {'mode': 'single_next', 'max_pending': 1,
                                                        'same_time': 'combined', 'continuation_requires_service': True}, 'schema': SCHEMA,
+                           'cashflow': '/api/family/cashflow?year=YYYY',
+                           'savings_basis':'only confirmed matched months; (sum income - sum actual expense) / sum income; zero or missing income yields null; actual replaces plan',
                            'income': '/api/family/income', 'income_summary': {'field': 'summary', 'groups': ['salary','rent','fund','custom'], 'shares': '0–1; null when total is unknown or nonpositive'}, 'history_default_comparison': 'previous', 'summary': '/api/family/summary', 'recurring_payments': True,
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},
                 'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system']},
@@ -309,6 +319,28 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def allocation(portfolio_id: str, instrument_id: str, payload: AllocationRequest):
         payload = payload.model_dump(exclude_unset=True)
         return reply(service.attach_instrument(portfolio_id, instrument_id, payload))
+
+    @app.post('/api/portfolios/{portfolio_id}/purchase-plans/preview', summary='预览计划买入：建档、目标与标签，无交易和现金变化')
+    def preview_purchase_plan(portfolio_id: str, payload: PurchasePlanRequest):
+        from .allocation_planning import purchase_plan
+        return reply(purchase_plan(service, portfolio_id, payload.model_dump(exclude_unset=True), preview=True))
+
+    @app.post('/api/portfolios/{portfolio_id}/purchase-plans', summary='按原revision原子保存计划买入；保存后按正式标的ID回读')
+    def create_purchase_plan(portfolio_id: str, payload: PurchasePlanRequest):
+        from .allocation_planning import purchase_plan
+        return reply(purchase_plan(service, portfolio_id, payload.model_dump(exclude_unset=True)))
+
+    @app.get('/api/portfolios/{portfolio_id}/allocation-analysis', summary='按一级、二级、三级标签或具体标的盘点配置；分母始终为整个组合')
+    def allocation_analysis(portfolio_id: str, level: Literal['scope','direction','detail','instrument']='scope',
+                            scope: str='', direction: str='', detail: str='', asset_class: str='', instrument_id: str='',
+                            status: Literal['all','incomplete','over','unplanned','planned']='all', sort: Literal['gap','name']='gap'):
+        from .allocation_planning import allocation_report
+        return reply(allocation_report(service, portfolio_id, level, scope, direction, detail, asset_class, status, sort, instrument_id=instrument_id))
+
+    @app.get('/api/portfolios/{portfolio_id}/label-options', summary='添加计划买入前读取标签选项与revision')
+    def label_options(portfolio_id: str):
+        state = service.store.state(); service.portfolio(state, portfolio_id)
+        return reply(dict(options=service.holding_analysis.options(state, portfolio_id), revision=state['revision']))
 
     @app.get('/api/portfolios/{portfolio_id}/holding-analysis', summary='当前持仓层级分布；不含历史标签回看')
     def holding_analysis(portfolio_id: str, basis: Literal['holdings', 'assets'] = 'holdings'):

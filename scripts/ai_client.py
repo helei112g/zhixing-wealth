@@ -96,10 +96,10 @@ class Client:
     def preview(self, payload, path='/api/events/preview'):
         """Return the full preview, including split_changes after historical backfills."""
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
-        if path not in ('/api/events/preview', '/api/family/preview', '/api/research/indices/resolve'):
+        if path not in ('/api/events/preview', '/api/family/preview', '/api/research/indices/resolve') and not re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans/preview', path):
             raise ValueError('Use a documented preview endpoint')
-        if path == '/api/family/preview' and (type(payload.get('expected_revision')) is not int or payload['expected_revision'] < 0):
-            raise ValueError('Asset preview requires the revision from catalog')
+        if (path == '/api/family/preview' or path.endswith('/purchase-plans/preview')) and (type(payload.get('expected_revision')) is not int or payload['expected_revision'] < 0):
+            raise ValueError('Preview requires the original ledger revision')
         self.connect()
         return self.request(path, payload)
 
@@ -107,6 +107,7 @@ class Client:
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
         # Only the documented, atomically revision-checked mutations are exposed here.
         core = (method == 'POST' and path in ('/api/portfolios', '/api/events') or
+                method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans', path) or
                 method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+(?:/labels)?)?|events/[^/]+)', path) or
                 method == 'DELETE' and re.fullmatch(r'/api/events/[^/]+', path) or
                 method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/(confirm|review)', path))
@@ -126,6 +127,15 @@ class Client:
         self.connect()
         # Never retry a mutation or replace its expected_revision automatically.
         return self.request(path, payload, method)
+
+    def purchase_plan_preview(self, portfolio_id, payload):
+        return self.preview(payload, '/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/purchase-plans/preview')
+
+    def allocation_analysis(self, portfolio_id, **filters):
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/allocation-analysis?' + urllib.parse.urlencode(filters))
+
+    def cashflow(self, year, include_fund=True):
+        return self.request('/api/family/cashflow?' + urllib.parse.urlencode(dict(year=year, include_fund=str(include_fund).lower())))
 
     def resolve_index(self,code):
         return self.preview({'code':code},'/api/research/indices/resolve')
@@ -202,7 +212,7 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('target', help='Describe the selected target without connecting or changing data')
     read = commands.add_parser('read'); read.add_argument('path')
-    preview = commands.add_parser('preview'); preview.add_argument('file', type=Path); preview.add_argument('--path', choices=['/api/events/preview','/api/family/preview','/api/research/indices/resolve'], default='/api/events/preview')
+    preview = commands.add_parser('preview'); preview.add_argument('file', type=Path); preview.add_argument('--path', default='/api/events/preview')
     scenario = commands.add_parser('scenario', help='Read-only index calculation; requires the reviewed analysis_id and assumptions')
     scenario.add_argument('index_id'); scenario.add_argument('file', type=Path)
     write = commands.add_parser('write'); write.add_argument('method', choices=['POST', 'PUT', 'DELETE'])

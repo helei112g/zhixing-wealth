@@ -9,7 +9,7 @@ from .common import DomainError, ZERO, dec, ds, currency, day, today, now, json_
 from .ledger import Ledger, Market
 
 TABLES = ('family_items', 'family_values', 'family_links', 'family_schedules', 'family_settings',
-          'family_reconciliations', 'family_closures', 'family_notification_state', 'family_income')
+          'family_reconciliations', 'family_closures', 'family_notification_state', 'family_income', 'family_expense_plans', 'family_expense_months')
 CATEGORIES = {'cash': '现金', 'fixed': '固定资产', 'investment': '投资理财', 'receivable': '应收款（别人欠我的钱）', 'insurance': '保单现金价值', 'debt': '负债'}
 REASONS = ('opening', 'balance', 'valuation', 'income_expense', 'transfer', 'correction', 'scope')
 
@@ -41,7 +41,7 @@ def fraction(value):
 
 def read_state(db):
     return {table.removeprefix('family_'): [json.loads(r[0]) for r in db.execute(f'SELECT data FROM {table} ORDER BY rowid')]
-            for table in TABLES if table != 'family_income' or db.execute("SELECT 1 FROM sqlite_master WHERE name='family_income'").fetchone()}
+            for table in TABLES if db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone()}
 
 
 def at_item(item, date):

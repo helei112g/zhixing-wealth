@@ -43,6 +43,19 @@ PAYLOADS = {
     }, ['item_id', 'effective_on', 'household_amount']),
     'links': obj({'portfolio_ids': dict(type='array', items=ID, minItems=1, maxItems=100, uniqueItems=True), 'reason': REASON}, ['portfolio_ids']),
     'unlink': obj({'link_ids': dict(type='array', items=ID, minItems=1, maxItems=100, uniqueItems=True), 'reason': REASON}, ['link_ids']),
+    'expense_plan': obj({
+        'name': dict(type='string', minLength=1, maxLength=80),
+        'amount': dict(anyOf=[MONEY, dict(type='null')], description='CNY每月预算；引用贷款/保费时为null'),
+        'effective_month': dict(type='string', pattern=r'^\d{4}-\d{2}$'),
+        'end_month': dict(type=['string','null'], description='包含该月；留空表示持续'),
+        'source_item_id': dict(type=['string','null'], description='可选：已有贷款或保险ID，不可重复引用'), 'reason': REASON,
+    }, ['name','effective_month']),
+    'expense_month': obj({
+        'month': dict(type='string', pattern=r'^\d{4}-\d{2}$'), 'extra_plan': MONEY,
+        'actual_amount': dict(anyOf=[MONEY, dict(type='null')], description='CNY整月实际开支总额，替代预算，不相加'),
+        'confirmed': dict(type='boolean', description='确认整月收入和开支完整；没有收入记录表示已核实零收入'),
+        'note': dict(type='string', maxLength=300), 'reason': REASON,
+    }, ['month']),
     'income': obj({
         'kind': dict(enum=['salary', 'rent', 'fund', 'custom']),
         'name': dict(type='string', maxLength=80, description='custom 时必填'),
@@ -56,17 +69,17 @@ PAYLOADS = {
 def asset_command_contract():
     variants = []
     for operation, payload in PAYLOADS.items():
-        record = dict(type=['string', 'null'], description='编辑item/income和归档/恢复时使用原记录ID；valuation始终追加快照') if operation in ('item', 'income', 'archive', 'restore') else dict(type='null')
+        record = dict(type=['string', 'null'], description='编辑item/income/expense_plan和归档/恢复使用原记录ID；expense_month使用YYYY-MM；valuation始终追加快照') if operation in ('item', 'income', 'expense_plan', 'expense_month', 'archive', 'restore') else dict(type='null')
         if operation in ('archive','restore'):record = dict(ID,description='原item或link ID，必填；恢复组合将返回新关联ID')
         variants.append(obj({'operation': dict(const=operation), 'payload': deepcopy(payload),
                              'expected_revision': dict(type='integer', minimum=0), 'record_id': record},
                             ['operation', 'payload', 'expected_revision'] + (['record_id'] if operation in ('archive','restore') else [])))
     return {
-        'contract_version': 2,
+        'contract_version': 3,
         'schema': {'$schema': 'https://json-schema.org/draft/2020-12/schema', 'title': '资产推荐写入命令', 'oneOf': variants},
         'preview': '/api/family/preview', 'write': '/api/family/commands', 'catalog': '/api/family/catalog',
         'readback': {'archive':'/api/family/catalog', 'restore':'/api/family/catalog', 'item': '/api/family/catalog', 'valuation': '/api/family/catalog',
-                     'links': '/api/family/overview', 'unlink': '/api/family/overview', 'income': '/api/family/income?year=YYYY'},
+                     'expense_plan':'/api/family/cashflow?year=YYYY', 'expense_month':'/api/family/cashflow?year=YYYY', 'links': '/api/family/overview', 'unlink': '/api/family/overview', 'income': '/api/family/income?year=YYYY'},
         'operations': {
             'archive':'按生效日期退出统计；项目保留历史版本，组合只关闭关联，不改写组合或交易',
             'restore':'按日期恢复；沿用最近记录余额，组合新建关联区间，不填补归档期间',
@@ -74,6 +87,8 @@ def asset_command_contract():
             'valuation': '追加指定日期完整余额，同日新值生效，历史保留，不覆盖之后日期',
             'links': '多选关联投资组合，当天生效；只读引用，不反向写入组合',
             'unlink': '按关联ID解除，当天生效；保留组合和历史',
+            'expense_plan': '配置固定月度开支，按生效月追加版本；不写现金流水',
+            'expense_month': '补录月度预算或实际开支总额；确认完整后纳入月/年储蓄率；不改资产余额',
             'income': '记录收入或按record_id更正；不自动增加现金，不重复计入资产',
         },
         'rules': {
@@ -81,7 +96,7 @@ def asset_command_contract():
             'retry': '未提供幂等键；超时先回读核对，不自动重试任何写入',
             'preview_ids': '预览中的新ID是暂定值；提交后使用响应result的正式ID回读',
             'numbers': '金额为Decimal字符串；null为未知，零为已知0；API不返回万/亿缩写',
-            'scope': '推荐schema覆盖当前界面操作；原始兼容字段见/api/guide，不重建退役的开支/逐笔提醒功能',
+            'scope': '推荐schema覆盖当前界面操作；原始兼容字段见/api/guide，开支仅支持月度预算和整月实际总额，不生成逐笔支出或现金流水',
             'archive':'归档不是出售或收款，不自动增加现金；恢复后应核对最新金额',
             'item_edit': '编辑保留原category/currency；只变余额用valuation，勿将catalog的versions直接作为payload',
             'payment': '计划只生成提醒，不扣余额；debt支持none/once/fixed/annuity/equal_principal，insurance支持none/once/annual',

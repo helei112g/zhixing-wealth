@@ -124,3 +124,5 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 当前持仓收益读取`holding_profit`，剩余成本读取`holdings[].cost_including_fees_base`，已卖出收益读取`realized_sale_profit`；不要把累计收益冒充当前份额浮盈亏。交易按`kind`先筛选后分页。资产归档与恢复从`family.command_schema`发现archive/restore，必须明确对象和日期、预览、原revision提交、回读；归档不自动产生收款，关联归档不等于组合归档或删除，不能用清零替代。catalog.archive_entries用于查找已归档的精确ID。
 
 标的近期行情可用客户端 `instrument_detail(P,I)` 读取 `market_changes`，返回最近交易日及本自然周涨跌幅、取价日期、同一序列口径与缺失原因；不把它当作个人收益。计划试算用 `plan_check(P,I,target_pct)`：同时核对 `total_target_pct`、`unallocated_target_pct/amount`（负值为超配）及独立的 `shortfall`。尚可分配预算不等于可用现金；读取与预览不写入，保存仍使用原revision。
+
+月度收支 `Client.cashflow(year)` 默认包含全部收入（含公积金）。`income_summary` 为全年已录入收入，不依赖开支确认；`summary` 仅包含同组已核对月份的实际收支及储蓄率，不能混用两者分母。

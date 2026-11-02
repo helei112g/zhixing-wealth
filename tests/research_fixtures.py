@@ -78,6 +78,8 @@ def install_providers():
 
 # A richer synthetic browser basket verifies top10 boundaries and fixed weight ordering.
 def browser_members(profile,asof=ASOF):
+    if profile['code']=='H11136':
+        return dict(rows=[dict(code='00999.HK',name='合成境外公司甲',weight='60',market='HK',industry='',date='2026-09-30'),dict(code='SYN.O',name='合成境外公司乙',weight='40',market='US',industry='',date='2026-09-30')],effective_date='2026-09-30',source='synthetic',evidence=[])
     weights=[30,20,10,8,6,5,5,4,4,3,3,2]
     rows=[dict(code='600201' if n==0 else f'{200+n:06d}',name='合成科技' if n==0 else '合成银行' if n==1 else f'合成公司{n+1}',weight=str(w),market='SH' if n==0 else 'SZ',industry='银行' if n==1 else '信息技术',date='2026-09-30') for n,w in enumerate(weights)]
     return dict(rows=rows,effective_date='2026-09-30',source='synthetic',evidence=[])

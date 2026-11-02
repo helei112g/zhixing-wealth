@@ -44,7 +44,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
   check(await page.locator('.instrument-profit .equation-part b').evaluateAll(es=>es.every(e=>getComputedStyle(e).color==='rgb(146, 153, 163)')),'formula values are small neutral gray');await shot('instrument-profit');
   await nav('持仓分析');await page.locator('.holding-sunburst-node').first().waitFor();
   check(await page.locator('.holding-sunburst-node path').evaluateAll(es=>new Set(es.map(e=>e.getAttribute('fill'))).size>=3),'sunburst distinguishes three markets with the muted palette');await shot('sunburst');
-  for(const name of ['总览','趋势分析','保险','收入']){await nav(name,'资产分析');await page.locator('.family-intro').waitFor();check(await caption.count()===1&&(await caption.innerText()).includes('资产 ·')&&await page.locator('.family-intro>span').count()===0,name+' has one caption in the title');}
+  for(const name of ['总览','趋势分析','保险','收入/开支']){await nav(name,'资产分析');await page.locator('.family-intro').waitFor();check(await caption.count()===1&&(await caption.innerText()).includes('资产 ·')&&await page.locator('.family-intro>span').count()===0,name+' has one caption in the title');}
   await nav('保险','资产分析');await page.getByRole('button',{name:'新增记录',exact:true}).click();await field('保单名称').fill('合成终身保单');await field('保单现金价值').fill('100');await field('保障期限').selectOption('lifetime');
   check(await page.getByRole('dialog').locator('input[type=date]').count()===0,'lifetime term does not use an artificial expiry date');
   await shot('insurance-lifetime');await page.getByRole('button',{name:'检查并继续',exact:true}).click();await page.getByRole('button',{name:'确认保存',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});

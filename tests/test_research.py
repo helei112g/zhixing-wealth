@@ -142,6 +142,16 @@ class ResearchTests(unittest.TestCase):
     def test_missing_total_return_no_substitute(self):
         a,_=self.add();self.r.publish(a['id'],'price',price_payload(self.r.profile(a['id']),'price'))
         self.assertIsNone(self.r.detail(a['id'],'total_return')['latest'])
+    def test_coverage_failure_refreshes_without_a_new_data_snapshot(self):
+        a,_=self.add('000688');before=self.r.detail(a['id']);revision=self.r.revision()
+        self.assertEqual(before['module_status']['price']['status'],'missing')
+        job=dict(items=[dict(target=a['id'],module='price',status='error',error='synthetic unavailable source')])
+        with patch.object(self.r.updates,'jobs',return_value=[job]):
+            after=self.r.detail(a['id'])
+        self.assertEqual(self.r.revision(),revision)
+        self.assertEqual(after['module_status']['price']['status'],'error')
+        self.assertEqual(after['module_status']['price']['reason'],'synthetic unavailable source')
+        self.assertIsNone(after['top10_weight'])
     def test_sparse_latest_quarter_does_not_replace_covered_period(self):
         p=self.populate();value=finance_payload(member_payload(p)['rows']);value['periods'].append('2026-09-30');value['rows'].append(dict(code='000201',period='2026-09-30',revenue='1',profit='1'));self.r.publish(p['id'],'financials',value)
         self.assertEqual(self.r.detail(p['id'])['financials']['main_period'],'2025-12-31')
@@ -167,6 +177,7 @@ class ResearchTests(unittest.TestCase):
         p=self.legacy.save_portfolio(dict(name='合成迁移',planned_amount='1000',start_date='2024-01-01'))
         with self.store.connection() as db:
             for t in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):db.execute('DROP TABLE '+t)
+            db.execute('DROP TABLE IF EXISTS family_expense_plans'); db.execute('DROP TABLE IF EXISTS family_expense_months')
             db.execute("UPDATE meta SET value='9' WHERE key='schema'");db.execute("UPDATE alembic_version SET version_num='0008_retire_legacy_labels'");db.commit()
         before=capture(self.path)
         from backend import migration

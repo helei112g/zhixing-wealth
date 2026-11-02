@@ -41,6 +41,19 @@ class PlanTests(unittest.TestCase):
         self.plan(self.a,'50') # Already over this target by 100,000, but no cash released.
         funding=self.check(self.b,'40')['plan_funding']
         self.assertEqual(D(funding['total_target_pct']),90);self.assertEqual(D(funding['shortfall']),50000)
+        self.assertEqual(D(funding['unallocated_target_pct']),10)
+        self.assertEqual(D(funding['unallocated_target_amount']),50000)
+        self.assertEqual(D(funding['total_target_amount']),450000)
+
+    def test_allocation_balance_replaces_current_target_and_keeps_signed_excess(self):
+        self.plan(self.a,'70');self.plan(self.b,'20')
+        before=self.s.store.state()
+        for pct,remaining in [('20','10'),('30','0'),('40','-10'),('0','30'),('29.999','0.001')]:
+            funding=self.check(self.b,pct)['plan_funding']
+            self.assertEqual(D(funding['unallocated_target_pct']),D(remaining))
+            self.assertEqual(D(funding['unallocated_target_amount']),D(remaining)*5000)
+            self.assertEqual(D(funding['total_target_amount'])+D(funding['unallocated_target_amount']),D(500000))
+        self.assertEqual(self.s.store.state(),before)
     def test_balanced_surplus_and_no_plan_are_distinct(self):
         self.plan(self.a,'70')
         self.assertEqual(self.check(self.b,'30')['plan_funding']['status'],'balanced')

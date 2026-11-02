@@ -32,6 +32,8 @@ def main():
         check(saved['revision']==body['expected_revision']+1,operation+' uses reviewed revision')
         return saved['result'],body
     cap=client.request('/api/capabilities')
+    check(set(cap['skills'])=={'zhixing-assets','zhixing-portfolios','zhixing-notes','zhixing-research'},'all four project skills are discoverable')
+    check(cap['family']['comparison']['history_curve']=='previous','AI history default agrees with UI and endpoint')
     schema=client.request(cap['family']['command_schema'])
     check(set(schema['operations'])=={'item','valuation','links','unlink','income','archive','restore'},'recommended asset commands discoverable')
     check('/api/family/command-schema' in client.request(cap['openapi'])['paths'],'OpenAPI discovers asset contract')
@@ -65,7 +67,7 @@ def main():
     check(history['rows'][0]['comparison_date']=='2024-01-31', 'history previous compares prior month end through HTTP')
     check(len([r for r in records if r['id']==income['id']])==1 and next(r for r in records if r['id']==income['id'])['amount']=='120','income correction replaces current amount, not duplicate record')
     check(client.request('/api/family/overview')['total_assets']==before,'income does not double-count cash')
-    p=client.write('/api/portfolios',dict(name='AI合成组合验收',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
+    p=client.write('/api/portfolios',dict(name='AI合成组合验收',description='合成组合介绍\n保留策略与背景',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
     q=client.write('/api/portfolios',dict(name='AI合成隔离组合',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
     event=dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'CN','code':'510300','name':'AI合成标的'},quantity='10',gross_amount='100',fx_rate='1',expected_revision=revision())
     client.preview(event)
@@ -76,6 +78,7 @@ def main():
     check(any(r['event']['id']==saved['id'] for r in rows['items']),'trade ID and portfolio read back')
     dashboard='/api/portfolios/'+p['id']+'/dashboard'
     full=client.request(dashboard);summary=client.request(dashboard+'?view=summary')
+    check(summary['portfolio']['description']=='合成组合介绍\n保留策略与背景','AI-created introduction reads back with original line breaks')
     check(summary['capital_summary']==full['capital_summary'] and summary['holdings']==full['holdings'], 'AI summary view shares canonical financial values')
     check('curve' not in summary and 'calendar' not in summary and 'calendar' in full, 'AI summary omits historical projections and full stays compatible')
     investment=client.investment_summary(p['id'])
@@ -114,6 +117,11 @@ def main():
     try: client.write(label_path,label_payload,'PUT')
     except RuntimeError as error: check('HTTP 409' in str(error),'stale label revision rejected through HTTP')
     else: raise AssertionError('stale label write succeeded')
+
+    detail=client.instrument_detail(p['id'],saved['instrument_id'])
+    check('market_changes' in detail and cap['instrument_market_changes']['field']=='market_changes','AI discovers and reads shared quote changes')
+    before_revision=revision();plan=client.plan_check(p['id'],saved['instrument_id'],'25')
+    check(plan['plan_funding']['unallocated_target_pct']=='75' and revision()==before_revision,'AI plan preview exposes unallocated budget without writes')
     boot=client.connect();original_portfolios=boot['portfolios']
     links,_=command('links',{'portfolio_ids':[p['id'],q['id']]})
     check(all(any(x['id']==link['id'] for x in client.request('/api/family/catalog')['links']) for link in links),'multiple associations read back')

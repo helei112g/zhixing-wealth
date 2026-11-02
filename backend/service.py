@@ -29,6 +29,7 @@ from .instruments import BENCHMARKS, describe, identity
 from .transactions import transaction_facts, split_effects
 from .planning import plan_funding, plan_percentage
 from .trade_windows import forward_performance
+from .market_changes import instrument_market_changes
 from .trade_analytics import lot_projection, instrument_projection, annual_summary, dividend_segments, target_path, investment_summary
 
 
@@ -617,7 +618,8 @@ class Service:
                      'todos': [t for t in snap['todos'] if t.get('instrument_id',t.get('event',{}).get('instrument_id'))==instrument_id], 'dividend_values': dividend_values,
                      'dividends': [e for e in events if e['kind'] in ('DIVIDEND', 'REINVEST')],
                      'dividend_candidates':self.dividend_candidates(portfolio_id,instrument_id,state=state),
-                     'trade_results': profit_rows, 'note_count': self.notes.count(portfolio_id, instrument_id)})
+                     'trade_results': profit_rows, 'note_count': self.notes.count(portfolio_id, instrument_id),
+                     'market_changes': instrument_market_changes(state, holding['instrument'], snap['date'], market=market_data)})
 
     def cache_dividends(self,instrument_id,rows):
         with self.store.transaction() as db:

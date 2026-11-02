@@ -51,7 +51,7 @@ fs.mkdirSync(out,{recursive:true});
   const pct=v=>v==null?'—':(Number(v)>0?'+':'')+(Number(v)*100).toFixed(2)+'%';
   const buyReturn=page.locator('[data-ledger-event="'+buy.id+'"] .transaction-return');
   check(await buyReturn.locator('.transaction-return-main b').innerText()==='累计 '+pct(actual.return_on_cost)&&(await buyReturn.locator('.transaction-return-main').innerText()).includes(signed(actual.profit)+' CNY'),'first line preserves backend cumulative rate and CNY profit');
-  check((await buyReturn.locator('.transaction-return-secondary').innerText()).includes('年化（XIRR） '+pct(actual.xirr)+' · 持有中')&&await buyReturn.locator('.transaction-return-secondary').getAttribute('title')===actual.xirr_status,'second line preserves annualization, status and calculation explanation');
+  check((await buyReturn.locator('.transaction-return-secondary').innerText()).includes('年化（XIRR） '+pct(actual.xirr))&&!(await buyReturn.innerText()).includes('持有中')&&await page.locator('[data-ledger-event="'+buy.id+'"] .transaction-identity .holding-status').innerText()==='持有中'&&await buyReturn.locator('.transaction-return-secondary').getAttribute('title')===actual.xirr_status,'annualization keeps its explanation while batch status moves to identity');
   check(await row.locator('.transaction-return').innerText()==='-'&&await row.locator('.transaction-return-main,.transaction-return-secondary').count()===0,'non-investment records show one dash without cumulative or annual placeholders');
   const returnText=await buyReturn.innerText();
   await nav('持仓标的');await page.getByRole('button',{name:'合成分红标的',exact:true}).click();await page.locator('.instrument-return-grid').waitFor();

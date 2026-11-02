@@ -8,6 +8,7 @@ import secrets
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
@@ -20,6 +21,7 @@ from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
 from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
 from .api_models import HoldingLabelRequest
+from .api_models import InstrumentDetail, DashboardResponse
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -165,18 +167,31 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.get('/api/capabilities')
     def capabilities():
         return {'api_version': VERSION, 'openapi': '/api/openapi.json', 'guide': '/api/guide',
+                'skills': ['zhixing-assets', 'zhixing-portfolios', 'zhixing-notes', 'zhixing-research'],
                 'authentication': {'bootstrap': '/api/bootstrap', 'cookie': session_cookie, 'header': 'X-CSRF-Token'},
                 'concurrency': {'field': 'expected_revision', 'conflict_status': 409,
+                                'domains': {'ledger': {'field': 'expected_revision', 'read': '/api/bootstrap'},
+                                            'research': {'field': 'expected_research_revision', 'read': '/api/research/revision'},
+                                            'settings': {'field': 'expected_settings_revision', 'read': '/api/settings/data-updates'}},
                                 'operations': ['portfolios', 'allocations', 'holding_labels', 'events', 'investment_notes', 'dividend_confirm', 'dividend_review', 'family']},
+                'portfolios': {'create': '/api/portfolios', 'edit': '/api/portfolios/{portfolio_id}',
+                               'description': {'max_length': 10000, 'format': 'plain text; preserve newlines',
+                                               'omitted_or_null': 'preserve', 'empty_string': 'clear'},
+                               'preview': 'review the current values and proposed changes; no dedicated preview endpoint'},
                 'research': {'resolve':'/api/research/indices/resolve','indices':'/api/research/indices','detail':'/api/research/indices/{id}',
                              'parts':['series','constituents','financials','sources'],'scenarios':'/api/research/indices/{id}/scenarios',
+                             'projection': '/api/research/indices/{id}/{part}',
+                             'scenario': {'method': 'POST', 'read_only': True, 'cli': 'scenario INDEX_ID REQUEST.json',
+                                          'required_context': ['analysis_id', 'accept_fixed_basket_assumption'],
+                                          'basis': 'same-date price series and overall valuation; no total-return mapping'},
                              'revision_field':'expected_research_revision','request_id_required':True,'scope':'A-share verified registry; no name or prefix guessing',
                              'windows':[3,5,10],'bases':['price','total_return'],'valuation_methods':['overall','median','arithmetic'],
                              'detail_fields':['changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources'],
                              'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-library-2','missing':'null with status; UI -'},
                 'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
+                                 'job': '/api/data-updates/jobs/{job_id}', 'request_id_required': True,
                                  'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials'],
-                                 'retry':'use the exact failed item.resource; preserve request_id after unknown result',
+                                 'retry':'unknown outcome: read back and preserve original request_id/payload; confirmed failed resource: submit a new request_id with the exact failed item.resource',
                                  'execution':'while app runs only; restart resumes durable work unless --no-sync or read-only'},
                 'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',
                                        'field': 'capital_summary', 'cumulative_input': 'cost',
@@ -196,7 +211,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'family': {'label': '资产分析', 'read': '/api/family/overview',
                            'catalog': '/api/family/catalog', 'command_schema': '/api/family/command-schema',
                            'recommended_operations': ['item','valuation','links','unlink','income','archive','restore'],
-                           'comparison': {'summary_default': 'month', 'summary_baseline': 'previous_period_end', 'history_curve': 'yoy'},
+                           'comparison': {'summary_default': 'month', 'summary_baseline': 'previous_period_end', 'history_curve': 'previous',
+                                          'history_options': ['previous', 'year_start', 'yoy']},
                            'skills': ['zhixing-assets','zhixing-portfolios','zhixing-notes'], 'history': '/api/family/history',
                            'preview': '/api/family/preview', 'write': '/api/family/commands',
                            'expected_revision_required': True, 'portfolio_link': 'read-only; excludes unused budget',
@@ -212,7 +228,12 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                         'summary': 'same current financial values without historical projections'}},
                 'numbers': 'decimal strings; rates are ratios except *_pct percentages; unknown values are null',
                 'plan_funding': {'check_endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/plan-check?target_pct=50',
-                                 'dashboard_field': 'plan_funding', 'shortfall_blocks_save': False},
+                                 'dashboard_field': 'plan_funding', 'shortfall_blocks_save': False,
+                                 'allocation_fields': ['total_target_pct', 'total_target_amount', 'unallocated_target_pct', 'unallocated_target_amount'],
+                                 'allocation_basis': 'total budget; negative unallocated values mean over-allocation, separate from cash shortfall'},
+                'instrument_market_changes': {'endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}',
+                                              'field': 'market_changes', 'windows': ['daily', 'weekly'],
+                                              'basis': 'same quote series; calendar week uses last close before Monday; null includes reason'},
                 'forward_performance': {'endpoint': '/api/portfolios/{portfolio_id}/transactions/{event_id}',
                                         'months': [1, 3], 'basis': 'market series reference; separate from actual lot profit'},
                 'investment_notes': {'endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/notes',
@@ -253,8 +274,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'storage': {'schema': SCHEMA, 'prices': 'skip identical latest automatic quote; preserve changed versions',
                             'jobs_visible': 5, 'jobs_total_retained': 20, 'jobs_finished_retained': 20, 'jobs_running_retained': True,
                             'automatic_backup_dates_retained': 30},
-                'write_workflow': 'read → preview → confirm intent → write with expected_revision → read back',
-                'idempotency': 'No automatic mutation retry. Reuse expected_revision: an already committed write makes it stale.'}
+                'write_workflow': 'read → preview or display exact changes → confirm intent → write with original domain revision/request_id → read back',
+                'idempotency': 'No automatic mutation retry. Ledger/settings commits make their original revision stale. Research creation and data updates replay the same request_id and payload; a changed payload conflicts.'}
 
     @app.get('/api/reference-rate')
     def reference_rate(currency: str, date: str):
@@ -288,7 +309,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         return reply(service.attach_instrument(portfolio_id, instrument_id, payload))
 
     @app.get('/api/portfolios/{portfolio_id}/holding-analysis', summary='当前持仓层级分布；不含历史标签回看')
-    def holding_analysis(portfolio_id: str, basis: str = 'holdings'):
+    def holding_analysis(portfolio_id: str, basis: Literal['holdings', 'assets'] = 'holdings'):
         return reply(service.holding_analysis.report(portfolio_id, basis))
 
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/labels', summary='当前组合同标的标签、可选方向及原revision')
@@ -303,11 +324,13 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def plan_check(portfolio_id: str, instrument_id: str, target_pct: str):
         return reply(service.check_plan(portfolio_id, instrument_id, target_pct))
 
-    @app.get('/api/portfolios/{portfolio_id}/dashboard')
-    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None, grain: str = 'month', view: str = 'full'):
+    @app.get('/api/portfolios/{portfolio_id}/dashboard', response_model=DashboardResponse, response_model_exclude_unset=True)
+    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None,
+                  grain: Literal['day', 'week', 'month', 'year'] = 'month', view: Literal['full', 'summary'] = 'full'):
         return reply(service.dashboard(portfolio_id, start=start, end=end, grain=grain, view=view))
 
-    @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}')
+    @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}', response_model=InstrumentDetail,
+             summary='标的详情与最近交易日、本自然周行情涨跌幅；行情参考独立于实际投资收益')
     def detail(portfolio_id: str, instrument_id: str): return reply(service.instrument_detail(portfolio_id, instrument_id))
 
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/notes', response_model=NotePage,

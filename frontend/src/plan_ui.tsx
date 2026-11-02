@@ -1,6 +1,15 @@
 import {money,Obj} from './api';
 import './planning.css';
 
+export function PlanAllocation({value}:{value:Obj}){
+ const over=Number(value.unallocated_target_pct)<0,complete=Number(value.unallocated_target_pct)===0;
+ return <section className={'plan-allocation'+(over?' overallocated':'')} aria-live="polite">
+  <div><span>设置后计划合计</span><b>{money(value.total_target_pct)}% / 100%</b><small>{money(value.total_target_amount)} CNY</small></div>
+  <div><span>{over?'超出总预算':complete?'总预算已分配完成':'尚可分配'}</span><strong>{money(Math.abs(Number(value.unallocated_target_pct)))}%</strong><b>{money(Math.abs(Number(value.unallocated_target_amount)))} CNY</b></div>
+  <p>按本次输入替换当前标的计划后计算；尚可分配额是未分配的总预算，实际现金能否完成计划见下方核对。{over?'计划合计超过100%，可调整比例，也可继续保存。':''}</p>
+ </section>;
+}
+
 export function PlanFundingNotice({value,compact=false}:{value:Obj|null|undefined;compact?:boolean}){
  if(!value)return null;
  const short=value.status==='shortfall',unknown=value.status==='unknown';

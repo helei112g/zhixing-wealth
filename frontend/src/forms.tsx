@@ -3,7 +3,7 @@ import {api, decimalSum, exactMoney, amount, downloadText, kindNames, money, uni
 import {Button, Chips, ErrorBox, Field, Modal, Notice} from './components';
 import {DatedRateField,useDatedRate} from './fx_ui';
 import {HoldingLabelFields} from './holding_labels_ui';
-import {PlanFundingNotice} from './plan_ui';
+import {PlanAllocation,PlanFundingNotice} from './plan_ui';
 import {ReinvestmentQuantityField,useReinvestmentEstimate} from './reinvestment_ui';
 import {SplitEffectView,SplitSummary} from './split_ui';
 
@@ -155,7 +155,7 @@ export function PlanForm({boot,portfolio,onClose,onSaved,holding}:BaseProps&{hol
  const timer=setTimeout(()=>{api(base+'/plan-check?target_pct='+encodeURIComponent(target)).then(v=>{if(active)Check({key,value:v});}).catch(e=>{if(active)CheckError(e.message);});},200);return()=>{active=false;clearTimeout(timer);};},[base,target,key,retry,checkRetry]);
  async function submit(e:React.FormEvent){e.preventDefault();if(!context||!labels||review)return;B(true);E('');try{await api(base,{...f,holding_labels:labels,expected_revision:context.revision},'PUT');await api(base+'/labels');onSaved();}catch(e:any){E(e.message);if(e.status===409)Review(true);}finally{B(false);}}
  return <Modal className="holding-label-drawer unified-plan-drawer" title="设置计划" subtitle={portfolio?.name+' / '+holding.instrument.name} onClose={onClose} busy={busy}><form onSubmit={submit}><fieldset disabled={busy||!context}><h3>投入计划</h3><Field label="计划占总预算比例 · %"><input required aria-label="计划占总预算比例" type="number" step="any" min="0" max="100" value={f.target_pct} onFocus={()=>{if(Number(f.target_pct||0)===0)F(old=>({...old,target_pct:''}));}} onBlur={()=>{if(f.target_pct==='')F(old=>({...old,target_pct:'0'}));}} onChange={e=>F({...f,target_pct:e.target.value.replace(/^0+(?=\d)/,'')})}/></Field><small className="muted">0表示未设投入目标，仍可设置资产类别和持仓标签。</small>
- {current?<><p className="muted small">本标的计划金额 {money(current.target_amount)} CNY · 组合计划比例合计 {money(current.plan_funding.total_target_pct)}%</p><PlanFundingNotice value={current.plan_funding}/></>:checkError?<div className="plan-funding"><small>额度校验暂不可用：{checkError}。保存时由服务端重新核算。</small><Button small onClick={()=>CheckRetry(v=>v+1)}>重试额度校验</Button></div>:<p className="muted small">正在核对计划资金…</p>}
+ {current?<><p className="muted small">本标的计划金额 {money(current.target_amount)} CNY</p><PlanAllocation value={current.plan_funding}/><PlanFundingNotice value={current.plan_funding}/></>:checkError?<div className="plan-funding"><small>额度校验暂不可用：{checkError}。保存时由服务端重新核算。</small><Button small onClick={()=>CheckRetry(v=>v+1)}>重试额度校验</Button></div>:<p className="muted small">正在核对计划资金…</p>}
  <h3>资产类别与持仓标签</h3><Field label="资产类别"><select aria-label="资产类别" value={f.asset_class} onChange={e=>F({...f,asset_class:e.target.value})}>{['权益','债券','大宗商品','其他','未分类'].map(v=><option key={v}>{v}</option>)}</select></Field>
  {labels&&context?<HoldingLabelFields value={labels} onChange={Labels} automatic={context.labels.automatic_scope} options={context.options} suggestions={context.options.suggestions}/>:<p className="muted small">读取当前标签…</p>}
  <Notice>仅修改本组合此标的的投入计划、资产类别与持仓分类路径；历史交易保持原录入内容。</Notice><ErrorBox error={error}/>

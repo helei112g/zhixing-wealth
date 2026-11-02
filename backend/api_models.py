@@ -343,6 +343,34 @@ class ForwardPerformance(BaseModel):
     windows: list[MarketWindow]
 
 
+class QuoteChange(BaseModel):
+    ratio: str | None = Field(description='同一序列的期末价格/基准价格−1；比例值，不计持仓、交易或汇率')
+    from_date: str | None
+    to_date: str | None
+    from_price: str | None
+    to_price: str | None
+    from_source: str | None
+    to_source: str | None
+    status: Literal['available', 'pending', 'missing_quote', 'missing_base', 'corporate_action']
+    status_label: str
+
+
+class InstrumentMarketChanges(BaseModel):
+    as_of: str
+    currency: str
+    basis: Literal['raw', 'adjusted']
+    basis_label: str
+    latest_date: str | None
+    week_start: str = Field(description='观察日期所属自然周的周一；本周尚无行情时weekly.ratio为null')
+    daily: QuoteChange
+    weekly: QuoteChange
+
+
+class InstrumentDetail(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    market_changes: InstrumentMarketChanges
+
+
 class PlanFunding(BaseModel):
     available_amount_basis: Literal['account_available_cash']
     currency: Literal['CNY']
@@ -353,6 +381,9 @@ class PlanFunding(BaseModel):
     shortfall: str | None = Field(description='max(剩余计划需投入-账面可用现金,0)，CNY；仅提醒，不阻止保存')
     surplus: str | None = Field(description='max(账面可用现金-剩余计划需投入,0)，CNY')
     total_target_pct: str
+    total_target_amount: str = Field(description='总预算乘所有标的计划比例之和，CNY')
+    unallocated_target_pct: str = Field(description='100减组合计划比例合计；百分数，负数表示超配')
+    unallocated_target_amount: str = Field(description='未分配总预算，CNY；负数表示超配，与剩余现金区分')
     unknown_instrument_ids: list[str]
     basis: str
 
@@ -372,6 +403,37 @@ class AllocationResult(BaseModel):
     target_pct: str
     asset_class: str
     region: str
+    plan_funding: PlanFunding
+
+
+class CapitalSummary(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    planned_amount: str = Field(description='总预算，CNY')
+    cost: str = Field(description='累计买入及再投含费税成本；不减卖出或分红，不等于新增个人本金')
+    invested_amount: str | None = Field(description='净投入：实际买入支出及相关费用减已到账卖出净回款和现金分红；再投内部抵消，利息单列')
+    available_amount: str | None = Field(description='剩余预算＝planned_amount−invested_amount；不是账面现金')
+    account_available_cash: str | None = Field(description='账面可用现金，CNY；plan_funding以此检查执行计划的现金缺口')
+    holding_profit: str | None = Field(description='当前份额市值减剩余含费税记账成本；不含已卖出收益和分红')
+    realized_sale_profit: str | None = Field(description='已卖出净回款（含已确认应收）减售出部分记账成本，CNY')
+    profit: str | None
+    return_on_cost: str | None = Field(description='累计收益÷累计买入成本；比例字符串，null表示未知')
+    xirr: str | None = Field(description='实际投资现金流XIRR；比例字符串，排除未投入现金')
+    profit_breakdown: ProfitBreakdown
+
+
+class HoldingSnapshot(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    instrument_id: str
+    quantity: str
+    holding_profit: str | None
+    cost_including_fees_base: str | None = Field(description='剩余含费税成本，CNY；按原交易锁定汇率及移动平均成本')
+    performance: Performance | None
+
+
+class DashboardResponse(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    capital_summary: CapitalSummary
+    holdings: list[HoldingSnapshot]
     plan_funding: PlanFunding
 
 

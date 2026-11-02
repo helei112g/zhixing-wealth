@@ -2,6 +2,9 @@
 """Real HTTP AI-client contract on the explicitly marked synthetic research server."""
 import json
 import os
+import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 from ai_client import Client
@@ -28,6 +31,20 @@ def main():
     check(d['daily_series'][-1]['ma850'] is not None and d['changes']['ytd']['ratio']=='0.2','full-history moving average and calendar YTD')
     scenario=c.research_scenario(saved['id'],dict(analysis_id=d['analysis_id'],metric='pe',target_multiple='10',change_ratio='0.25',reference_window=3,accept_fixed_basket_assumption=True))
     check(scenario['point']=='150' and len(scenario['curve'])==21 and 'p10' in scenario['reference_points'],'scenario curve and reference band use the same backend response')
+    cli=[sys.executable,str(Path(__file__).with_name('ai_client.py')),'--environment','test',
+         '--base-url',os.environ['PORTFOLIO_TEST_URL'],'--expected-data-dir',os.environ['PORTFOLIO_TEST_DATA_DIR']]
+    original=(c.connect()['revision'],c.request('/api/research/revision'),c.update_settings(),c.request('/api/data-updates/jobs'))
+    with tempfile.TemporaryDirectory(prefix='scenario-cli-',dir=os.environ['PORTFOLIO_TEST_OUTPUT']) as temp:
+        request=Path(temp)/'request.json'
+        payload=dict(analysis_id=d['analysis_id'],metric='pe',target_multiple='10',change_ratio='0.25',reference_window=3,accept_fixed_basket_assumption=True)
+        request.write_text(json.dumps(payload))
+        result=subprocess.run([*cli,'scenario',saved['id'],str(request)],capture_output=True,text=True,timeout=20)
+        check(result.returncode==0 and json.loads(result.stdout)==scenario,'CLI scenario returns canonical result without a write-confirmation flag')
+        for changes,status in [(dict(analysis_id='old'),409),(dict(accept_fixed_basket_assumption=False),422)]:
+            request.write_text(json.dumps(dict(payload,**changes)))
+            result=subprocess.run([*cli,'scenario',saved['id'],str(request)],capture_output=True,text=True,timeout=20)
+            check(result.returncode!=0 and 'HTTP '+str(status) in result.stderr and not result.stdout,'CLI preserves stale analysis or unaccepted assumptions instead of silently replacing them')
+    check((c.connect()['revision'],c.request('/api/research/revision'),c.update_settings(),c.request('/api/data-updates/jobs'))==original,'CLI scenarios do not write ledger research settings or update jobs')
     check(cap['research']['moving_averages']==[51,120,250,850] and cap['research']['valuation_methods']==['overall','median','arithmetic'],'enhanced research is machine discoverable')
     windows=[c.research_index(saved['id'],window=w) for w in (3,5,10)]
     check([v['window'] for v in windows]==[3,5,10] and len({v['analysis_id'] for v in windows})==1 and len({len(v['daily_series']) for v in windows})==3,'all windows return distinct series under one immutable analysis version')
@@ -48,6 +65,10 @@ def main():
     else:raise AssertionError('stale settings accepted')
     resource=dict(scope='index_prices',target=saved['id'],module='total_return');task=dict(scopes=['index_prices'],resources=[resource],request_id='synthetic-ai-exact')
     queued=c.write('/api/data-updates/run',task,'POST');check(c.write('/api/data-updates/run',task,'POST')['job_id']==queued['job_id'],'update receipt remains idempotent')
+    check(c.request('/api/data-updates/jobs/'+queued['job_id'])['resources']==[resource],'typed update request preserves the exact resource through HTTP')
+    try:c.write('/api/data-updates/run',dict(scopes=['quotes'],resources=[dict(scope='quotes')],request_id='synthetic-invalid-resource'),'POST')
+    except RuntimeError as e:check('422' in str(e),'missing quote identity cannot silently expand into a full update')
+    else:raise AssertionError('incomplete resource accepted')
     check(c.connect()['revision']==before,'research and update metadata do not invalidate ledger previews')
     try:c.request('/api/research/indices/'+saved['id']+'/constituents?analysis_id=old')
     except RuntimeError as e:check('409' in str(e),'cross-version page rejected')

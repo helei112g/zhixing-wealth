@@ -143,6 +143,8 @@ class Client:
         return self.request('/api/settings/data-updates')
 
     def research_scenario(self,index_id,payload):
+        """Read-only calculation against the caller's original analysis version."""
+        if not isinstance(payload,dict):raise ValueError('Scenario must be a JSON object')
         self.connect()
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/scenarios',payload)
 
@@ -166,6 +168,17 @@ class Client:
         """Read the complete causal deletion list; submit its original revision and IDs."""
         return self.request('/api/events/' + urllib.parse.quote(event_id, safe='') + '/deletion-preview')
 
+    def instrument_detail(self, portfolio_id, instrument_id):
+        """Read holding and market_changes; quote ratios are not investment returns."""
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'
+                            + urllib.parse.quote(instrument_id, safe=''))
+
+    def plan_check(self, portfolio_id, instrument_id, target_pct):
+        """Preview remaining budget allocation and independent plan cash shortfall."""
+        path = ('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'
+                + urllib.parse.quote(instrument_id, safe='') + '/plan-check')
+        return self.request(path + '?' + urllib.parse.urlencode({'target_pct': target_pct}))
+
     def reinvestment_estimate(self, portfolio_id, instrument_id, date, gross_amount):
         """Read an estimate only; caller must review quantity before event preview/write."""
         path = ('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'
@@ -182,6 +195,8 @@ def main():
     commands.add_parser('target', help='Describe the selected target without connecting or changing data')
     read = commands.add_parser('read'); read.add_argument('path')
     preview = commands.add_parser('preview'); preview.add_argument('file', type=Path); preview.add_argument('--path', choices=['/api/events/preview','/api/family/preview','/api/research/indices/resolve'], default='/api/events/preview')
+    scenario = commands.add_parser('scenario', help='Read-only index calculation; requires the reviewed analysis_id and assumptions')
+    scenario.add_argument('index_id'); scenario.add_argument('file', type=Path)
     write = commands.add_parser('write'); write.add_argument('method', choices=['POST', 'PUT', 'DELETE'])
     write.add_argument('path'); write.add_argument('file', type=Path)
     write.add_argument('--confirm-write', action='store_true', help='The human has authorized this exact mutation')
@@ -194,6 +209,7 @@ def main():
     else:
         payload = json.loads(args.file.read_text())
         if args.command == 'preview': value = client.preview(payload, args.path)
+        elif args.command == 'scenario': value = client.research_scenario(args.index_id, payload)
         else:
             if not args.confirm_write: parser.error('write requires --confirm-write; inspect the preview and user authorization first')
             value = client.write(args.path, payload, args.method)

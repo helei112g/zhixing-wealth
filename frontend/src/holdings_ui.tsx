@@ -1,7 +1,7 @@
 import {InvestmentProgress} from './performance_summary';
 import {CSSProperties,useEffect,useState} from 'react';
 import {marketKey,marketNames,money,Obj,percent,signedMoney,tone,units} from './api';
-import {Button,Empty,ListSection,Panel,ReturnPerformance} from './components';
+import {Button,Empty,HoldingStatus,ListSection,Panel,ReturnPerformance} from './components';
 
 export function HoldingsTable({dash,action,openDetail,onLabelsSaved}:Obj){
  const[page,Page]=useState(1),[pageSize,Size]=useState(20),total=dash.holdings.length,pages=Math.max(1,Math.ceil(total/pageSize)),current=Math.min(page,pages),shown=dash.holdings.slice((current-1)*pageSize,current*pageSize);
@@ -11,7 +11,7 @@ export function HoldingsTable({dash,action,openDetail,onLabelsSaved}:Obj){
  {!dash.holdings.length?<Empty title="还没有持仓">点击页面右上角“记录一笔”开始买入；保存时自动建立标的。</Empty>:<div className="table-wrap"><table className="holdings-table"><thead><tr>
  {['标的','持仓市值 · CNY','收益表现','占比','投入计划 · CNY','计划进度','操作'].map(label=><th scope="col" key={label}>{label}</th>)}
  </tr></thead><tbody>{shown.map((h:Obj)=>{return <tr key={h.instrument_id} className="holding-row" tabIndex={0} aria-label={'查看'+h.instrument.name+'持仓详情'} onClick={()=>openDetail(h.instrument_id)} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openDetail(h.instrument_id);}}}>
- <td className="holding-identity"><span className={'market-tag market-'+marketKey(h.instrument)}>{marketNames[marketKey(h.instrument)]}</span><button className="text-button" onClick={e=>{e.stopPropagation();openDetail(h.instrument_id);}}>{h.instrument.name}</button><small>{h.instrument.code}.{h.instrument.market} · {h.instrument.currency}{Number(h.quantity)===0?' · 已清仓 / 尚未买入':''}</small>{h.holding_labels&&<small className="holding-label-path">{h.holding_labels.path.join(' / ')}</small>}</td>
+ <td className="holding-identity"><span className={'market-tag market-'+marketKey(h.instrument)}>{marketNames[marketKey(h.instrument)]}</span><button className="text-button" onClick={e=>{e.stopPropagation();openDetail(h.instrument_id);}}>{h.instrument.name}</button><div className="instrument-meta"><small>{h.instrument.code}.{h.instrument.market} · {h.instrument.currency}</small><HoldingStatus closed={h.quantity==null?undefined:Number(h.quantity)===0} unbought={Number(h.quantity)===0&&h.performance?.cost!=null&&Number(h.performance.cost)===0}/></div>{h.holding_labels&&<small className="holding-label-path">{h.holding_labels.path.join(' / ')}</small>}</td>
  <td className="holding-valuation"><b>{money(h.value_base)}</b><small>{units(h.quantity)}份 × 现价 {money(h.price,4)} {h.instrument.currency}</small><small>成本价 {money(h.average_cost,4)} {h.instrument.currency}/份 · 含费税</small>{h.instrument.currency!=='CNY'&&<small>估值汇率 1 {h.instrument.currency} = {money(h.fx?.rate,6)} CNY</small>}</td>
  <td className="holding-return transaction-return"><ReturnPerformance performance={h.performance}/><small className="holding-dividends">累计净分红 {money(h.performance?.dividends_net)} CNY · 已计入收益</small></td>
  <td className="holding-weight"><b>持仓 {percent(h.holding_weight)}</b><small>总资产 {percent(h.weight)}</small></td>

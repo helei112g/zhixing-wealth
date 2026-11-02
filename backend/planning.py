@@ -33,5 +33,8 @@ def plan_funding(snapshot, *, instrument_id=None, target_pct=None):
     return {'currency': 'CNY', 'status': 'unknown' if not complete else 'shortfall' if gap > 0 else 'surplus' if surplus > 0 else 'balanced',
             'available_amount': available, 'required_amount': required if complete else None,
             'known_required_amount': required, 'shortfall': gap, 'surplus': surplus,
-            'total_target_pct': total_pct, 'unknown_instrument_ids': unknown,
+            'total_target_pct': total_pct, 'total_target_amount': budget * total_pct / 100,
+            'unallocated_target_pct': 100 - total_pct,
+            'unallocated_target_amount': budget * (100 - total_pct) / 100,
+            'unknown_instrument_ids': unknown,
             'basis': '剩余计划需投入＝各已设置计划标的 max(计划金额−净投入, 0) 之和；已超投不抵扣其他标的需求，未到账回款不计可投金额。'}

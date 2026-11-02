@@ -76,8 +76,8 @@ macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当
 | 方法与路径 | 参数/结果 |
 |---|---|
 | GET `/api/bootstrap` | portfolios、instruments、allocations、revision、同步状态等；不要持久化 csrf_token |
-| GET `/api/portfolios/{pid}/dashboard` | `start`、`end`、`grain=day/week/month/year`；capital_summary、holdings、curve、calendar、todos；不传日期为当前 |
-| GET `/api/portfolios/{pid}/instruments/{iid}` | 当前组合标的详情、曲线、收益、关联交易、分红公告；旧全量 transactions 保留兼容，新列表使用分页接口 |
+| GET `/api/portfolios/{pid}/dashboard` | `start`、`end`、`grain=day/week/month/year`、`view=full/summary`（默认full）；不传日期为当前。summary保留相同capital_summary、holdings、todos等当前财务值，省略curve、curve_quality、calendar、periods、target、benchmark及selected_*历史投影 |
+| GET `/api/portfolios/{pid}/instruments/{iid}` | 当前组合标的详情、market_changes（最近交易日/本周行情涨跌）、曲线、收益、关联交易、分红公告；旧全量 transactions 保留兼容，新列表使用分页接口 |
 | GET `/api/portfolios/{pid}/transactions` | 见分页约定 |
 | GET `/api/portfolios/{pid}/transactions/{event_id}` | 本笔流水 facts、actual、同组合同标的 neighbors、revisions；不含复盘正文 |
 | GET `/api/portfolios/{pid}/sale-lots` | `instrument_id`、`date`；可选 `exclude_event_id`、`sequence`，返回可卖批次 |
@@ -119,7 +119,7 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 
 | 方法与路径 | 必要内容 |
 |---|---|
-| POST `/api/portfolios` / PUT `/api/portfolios/{pid}` | name、planned_amount、start_date；目标、基准、归档等见 schema |
+| POST `/api/portfolios` / PUT `/api/portfolios/{pid}` | name、planned_amount、start_date；可选 description 为最多10000字的纯文字组合介绍（保留换行）；目标、基准、归档等见 schema |
 | PUT `/api/portfolios/{pid}/instruments/{iid}` | target_pct、asset_class、region、tags；单标的比例0–100；组合资金不足仅提醒，不限制合计≤100 |
 | POST `/api/events/preview` | 拟写入的完整事件；更正带 id。只读计算，返回 revision、event、现金变化、warnings、duplicate_of、instrument_merge |
 | POST `/api/events` | 与已核对预览相同的输入；expected_revision；服务端再校验 |
@@ -127,6 +127,8 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&tag=红利
 | GET `/api/events/{id}/deletion-preview` | 只读关联删除预览：revision、event_ids、items、can_delete、validation_error |
 | DELETE `/api/events/{id}` | reason、expected_revision；cascade=true 时必须提交预览全部 event_ids，逻辑删除并保留修订；默认兼容单条/转移对 |
 | POST `/api/dividends/{notice_id}/confirm` | 在候选 suggested_event 上核对税前总额、税费、到账、再投信息，保留 dividend_basis，附 expected_revision；权益变更时拒绝旧核对 |
+
+组合介绍随组合对象在保存响应、bootstrap.portfolios 和 dashboard.portfolio 返回。创建时省略或null为空；编辑时省略或null保留原介绍，空字符串清空。旧组合可没有该字段，读取不回写。超长或非字符串返回422；过期revision返回409且不保存介绍或其他变更。介绍仅作展示，不参与财务计算。
 
 旧交易/计划接口的 `expected_revision` 兼容为可选；资产、投资笔记接口和 AI 客户端写入强制提供。不能把 CSRF token 当作并发版本。
 
@@ -248,6 +250,7 @@ PUT计划响应和 dashboard.plan_funding 提供相同结构：
 - `available_amount`：当前可投金额，CNY；未到账回款不算可投。
 - `shortfall` / `surplus`：需求超过余额的差额 / 余额超过需求的余量，均非负。
 - `status`：shortfall / balanced / surplus / unknown。缺净投入或余额时，required_amount、shortfall、surplus 为null，known_required_amount仅为已知部分，不能替代完整合计。
+- `total_target_amount`＝总预算×计划合计比例；`unallocated_target_pct`＝100−total_target_pct，`unallocated_target_amount`为对应未分配预算（CNY）。后两者保留负数表示超配，不能用作剩余现金。
 - `total_target_pct` 为组合比例合计（百分数）；`unknown_instrument_ids` 明确缺失净投入的标的。资金缺口只警示，不拒绝合法计划保存；不会改预算、交易或现金。
 
 交易详情新增 `forward_performance`（非买卖/再投或已取消时null）：包含 `basis`（raw / adjusted / total_return）、交易日起点的价格、日期、来源和1/3个自然月的 `windows`。优先使用交易日有精确记录的全收益、复权、未复权序列；观察端使用同一序列，不混合端点。
@@ -313,4 +316,10 @@ A股行情同步单独读取已实施送股/转增公告，`jobs.items[].source_
 
 先 GET 预览（无副作用），核对全部清单，再 DELETE 同一ID，例如 `{"reason":"重复录入，已核对关联流水","cascade":true,"event_ids":["BUY_ID","SALE_ID"],"expected_revision":42}`。服务端在同一事务重新推导并核对清单、revision 和剩余账务；清单不一致或账务失败返回422，过期revision返回409，均无写入。预览 `can_delete=false` 时返回具体 `validation_error`，不允许确认。返回兼容字段 `cancelled` 和完整 `deleted_event_ids`；每条记录保留审计，删除记录可按原ID从交易详情读回 `cancelled=true`。省略cascade保留旧单条/转移对删除语义，不自动扩大旧客户端删除范围。
 
-Dashboard 增加 `curve_quality`：`missing_days`、`from/to` 和 `reasons[{message,from,to}]`。仅统计已投入或估值不完整时无法展示的组合曲线点；未投资的空白不当作故障。原因取自对应历史日期（如送转待核对、缺价格/汇率），不借用今天的状态解释历史；缺口后的累计曲线不补零、不跨缺口连接。图旁红色说明有待办时提供提醒中心入口，否则进入全局设置补齐历史数据。持仓分页为完整 dashboard 数据上的本地分页，默认20，可选10/20/50；汇总和排行榜使用全量数据。排行榜宽屏紧凑多列，默认展示前50，更多可展开。
+Dashboard full 视图包含 `curve_quality`：`missing_days`、`from/to` 和 `reasons[{message,from,to}]`。仅统计已投入或估值不完整时无法展示的组合曲线点；未投资的空白不当作故障。原因取自对应历史日期（如送转待核对、缺价格/汇率），不借用今天的状态解释历史；缺口后的累计曲线不补零、不跨缺口连接。图旁红色说明有待办时提供提醒中心入口，否则进入全局设置补齐历史数据。持仓分页为完整 dashboard 持仓上的本地分页，默认20，可选10/20/50；汇总和排行榜使用全量数据。排行榜50只以内为单列并随页面向下滚动；桌面超过50只按每列50只顺序拆列，手机保持单列，不截断排名。
+
+## 标的近期行情涨跌幅
+
+标的详情的 `market_changes` 由 UI 与 AI 共用，含 `as_of`、`week_start`、`currency`、`basis`、`basis_label`、`latest_date`、`daily`、`weekly`。每个窗口含 `ratio`（Decimal比例字符串）、`from_date/to_date`、`from_price/to_price`、`from_source/to_source`、`status/status_label`。日涨跌以最近两条有效行情比较；周涨跌以观察日所在自然周的周一前最后行情为基准。仅使用截止日前非人工、未取消的缓存记录；同日按有效版本选取。
+
+场外基金使用单位净值；上市证券有复权行情时使用同一复权序列，两端不能混用；最新未复权行情已到但复权未到则显示 missing_quote。无本周行情为 pending；缺基准或基准间隔超过15日为 missing_base；未复权区间存在已知拆分/企业行动为 corporate_action；其余缺行情或无效价格为 missing_quote。不可用时ratio为null，正常零涨跌为字符串0。日期保留实际取价日，不猜停牌/休市原因。行情涨跌独立于持仓、交易、分红到账与汇率；不会计入profit/XIRR。

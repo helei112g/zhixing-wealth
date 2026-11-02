@@ -123,6 +123,17 @@ class Client:
         """Read the complete causal deletion list; submit its original revision and IDs."""
         return self.request('/api/events/' + urllib.parse.quote(event_id, safe='') + '/deletion-preview')
 
+    def instrument_detail(self, portfolio_id, instrument_id):
+        """Read holding and market_changes; quote ratios are not investment returns."""
+        return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'
+                            + urllib.parse.quote(instrument_id, safe=''))
+
+    def plan_check(self, portfolio_id, instrument_id, target_pct):
+        """Preview remaining budget allocation and independent plan cash shortfall."""
+        path = ('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'
+                + urllib.parse.quote(instrument_id, safe='') + '/plan-check')
+        return self.request(path + '?' + urllib.parse.urlencode({'target_pct': target_pct}))
+
     def reinvestment_estimate(self, portfolio_id, instrument_id, date, gross_amount):
         """Read an estimate only; caller must review quantity before event preview/write."""
         path = ('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/instruments/'

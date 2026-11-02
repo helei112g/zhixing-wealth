@@ -3,7 +3,12 @@ import {marketKey,marketNames,money,Obj,percent,signedMoney,tone,units} from './
 import {Button,Panel,XirrBasis} from './components';
 import {ProfitEquation,PriceProfitDetails} from './profit_ui';
 
+function MarketChanges({value}:{value:Obj}){
+ return <><div className="instrument-market-changes">{[['daily','最近交易日涨跌幅'],['weekly','本周累计涨跌幅']].map(([key,label])=>{const item=value[key];return <div className="instrument-market-change" key={key} data-market-change={key}><span>{label}</span><strong className={tone(item.ratio)}>{percent(item.ratio,true)}</strong><small>{item.from_date&&item.to_date?item.from_date+' → '+item.to_date:item.to_date?'行情截至 '+item.to_date:'暂无行情'}</small>{item.status!=='available'&&<small>{item.status_label}</small>}</div>;})}</div><p className="instrument-market-basis">{value.basis_label} · 本周以周一前最后有效行情为基准 · 不计个人交易与汇率变化</p></>;
+}
+
 export function InstrumentSummary({data,sync,compact=false}:Obj){const h=data.holding,a=h.performance||{},pending=data.dividend_candidates.filter((r:Obj)=>['pending','needs_review'].includes(r.status)).length;return <Panel className={'instrument-summary instrument-performance'+(compact?' compact':'')}><header className="instrument-summary-heading"><div><div className="instrument-identity"><span className={'market-tag market-'+marketKey(h.instrument)}>{marketNames[marketKey(h.instrument)]}</span><h2>{h.instrument.name}</h2><span className="instrument-code">{h.instrument.code}.{h.instrument.market}</span></div><p>{h.instrument.currency} · 行情截至 {h.quote?.date||'暂无行情'} · {h.quote?.source||'等待同步'}</p></div><Button small onClick={sync}><RefreshCw size={14}/>更新此标的</Button></header>
+{data.market_changes&&<MarketChanges value={data.market_changes}/>}
 {!compact&&<><div className="instrument-return-grid">
 <div className="instrument-market"><span>持仓市值 · CNY</span><strong>{money(h.value_base)}</strong><small>{units(h.quantity)}份 × {money(h.price,4)} {h.instrument.currency}</small></div>
 <div className="instrument-profit"><span>累计收益 · CNY</span><strong className={tone(a.profit)}>{signedMoney(a.profit)}</strong><small>含净分红、汇兑与费税</small></div>

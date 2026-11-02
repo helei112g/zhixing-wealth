@@ -19,6 +19,7 @@ from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
 from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview
+from .api_models import InstrumentDetail
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -172,9 +173,17 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,
                                'filters': ['instrument_id', 'market', 'tag', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},
+                'dashboard': {'endpoint': '/api/portfolios/{portfolio_id}/dashboard', 'default_view': 'full',
+                              'views': {'full': 'summary plus historical curves, calendar and periods',
+                                        'summary': 'same current financial values without historical projections'}},
                 'numbers': 'decimal strings; rates are ratios except *_pct percentages; unknown values are null',
                 'plan_funding': {'check_endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/plan-check?target_pct=50',
-                                 'dashboard_field': 'plan_funding', 'shortfall_blocks_save': False},
+                                 'dashboard_field': 'plan_funding', 'shortfall_blocks_save': False,
+                                 'allocation_fields': ['total_target_pct', 'total_target_amount', 'unallocated_target_pct', 'unallocated_target_amount'],
+                                 'allocation_basis': 'total budget; negative unallocated values mean over-allocation, separate from cash shortfall'},
+                'instrument_market_changes': {'endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}',
+                                              'field': 'market_changes', 'windows': ['daily', 'weekly'],
+                                              'basis': 'same quote series; calendar week uses last close before Monday; null includes reason'},
                 'forward_performance': {'endpoint': '/api/portfolios/{portfolio_id}/transactions/{event_id}',
                                         'months': [1, 3], 'basis': 'market series reference; separate from actual lot profit'},
                 'investment_notes': {'endpoint': '/api/portfolios/{portfolio_id}/instruments/{instrument_id}/notes',
@@ -244,10 +253,11 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         return reply(service.check_plan(portfolio_id, instrument_id, target_pct))
 
     @app.get('/api/portfolios/{portfolio_id}/dashboard')
-    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None, grain: str = 'month'):
-        return reply(service.dashboard(portfolio_id, start=start, end=end, grain=grain))
+    def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None, grain: str = 'month', view: str = 'full'):
+        return reply(service.dashboard(portfolio_id, start=start, end=end, grain=grain, view=view))
 
-    @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}')
+    @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}', response_model=InstrumentDetail,
+             summary='标的详情与最近交易日、本自然周行情涨跌幅；行情参考独立于实际投资收益')
     def detail(portfolio_id: str, instrument_id: str): return reply(service.instrument_detail(portfolio_id, instrument_id))
 
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/notes', response_model=NotePage,

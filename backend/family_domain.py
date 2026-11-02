@@ -70,8 +70,8 @@ def event_signatures(state, pid, date):
     return result
 
 
-def portfolio_snapshot(state, portfolio, date):
-    ledger = Ledger(state, portfolio)
+def portfolio_snapshot(state, portfolio, date, *, market=None):
+    ledger = Ledger(state, portfolio, market=market)
     for op in ledger.ops:
         if op[0] > date:
             break
@@ -86,8 +86,8 @@ def settings_at(family, date):
         'debt_plan_complete': False, 'policy_plan_complete': False}
 
 
-def snapshot(state, family, date):
-    market = Market(state)
+def snapshot(state, family, date, *, market=None):
+    market = market if market is not None else Market(state)
     rows, missing, warnings, pending, links = [], [], [], [], []
     def convert(value, c):
         fx = market.fx(c, date)
@@ -131,7 +131,7 @@ def snapshot(state, family, date):
         p = next((p for p in state['portfolios'] if p['id'] == link['portfolio_id']), None)
         if not p:
             missing.append('关联组合不存在'); continue
-        snap = portfolio_snapshot(state, p, date)
+        snap = portfolio_snapshot(state, p, date, market=market)
         share = dec(link['share'])
         receivables = [r['value_base'] for r in snap['receivables']]
         invest = None if snap['securities_total'] is None or any(v is None for v in receivables) else (snap['securities_total'] + sum(receivables, ZERO)) * share

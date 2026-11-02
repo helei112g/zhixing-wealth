@@ -6,3 +6,6 @@
 
 .split-summary{display:block}
 .split-summary small{display:block;color:var(--muted);font-size:12px}
+.plan-allocation{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;border:1px solid var(--line);border-radius:7px;background:var(--bg);margin-top:16px}
+.plan-allocation>div{display:flex;flex-direction:column;gap:5px;min-width:0}.plan-allocation span,.plan-allocation small{color:var(--muted);font-size:12px}.plan-allocation strong{font-size:23px;color:var(--blue);font-variant-numeric:tabular-nums}.plan-allocation b{font-size:14px;overflow-wrap:anywhere}.plan-allocation.overallocated strong{color:var(--red)}.plan-allocation p{grid-column:1/-1;font-size:12px;color:var(--muted);line-height:1.8;margin:0}
+@media(max-width:380px){.plan-allocation{grid-template-columns:1fr}}

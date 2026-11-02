@@ -4,13 +4,14 @@ from __future__ import annotations
 import calendar
 import json
 import uuid
-from copy import deepcopy
 from datetime import timedelta
 
 from .common import ConflictError, DomainError, ZERO, day, dec, ds, now, today, month_after, json_dumps, wire
 from .family_domain import (TABLES, CATEGORIES, REASONS, text, money, past, fraction, currency,
                             read_state, at_item, active, event_signatures, snapshot, schedule_projection)
 from .family_ledger import recording_bounds, debt_summary
+from .ledger import Market
+from .store import cached_query
 
 
 def check_fields(data, allowed):
@@ -23,24 +24,23 @@ class FamilyService:
     def __init__(self, store):
         self.store = store
 
+    @cached_query
     def read(self, date=None):
         date = past(date or today(), '估值日期')
         with self.store.connection() as db:
             state, family = self.store.state(db), read_state(db)
-            key = ('family', state['revision'], date)
-            result = self.store.cache.get(key)
-            if result is None:
-                snap = snapshot(state, family, date)
-                result = wire(dict(snap, debt_summary=debt_summary(state, family, snap)))
-                self.store.cache[key] = result
-            return deepcopy(result)
+        market = Market(state)
+        snap = snapshot(state, family, date, market=market)
+        return wire(dict(snap, debt_summary=debt_summary(state, family, snap, market=market)))
 
+    @cached_query
     def catalog(self):
         with self.store.connection() as db:
             state, family = self.store.state(db), read_state(db)
+            market = Market(state) if family['closures'] else None
             for closure in family['closures']:
                 previous = closure['snapshot']
-                current = wire(snapshot(state, family, closure['effective_on']))
+                current = wire(snapshot(state, family, closure['effective_on'], market=market))
                 fields = ('total_assets', 'total_debt', 'net_assets')
                 closure['needs_review'] = any(current[k] != previous[k] for k in fields)
                 closure['current_net_assets'] = current['net_assets']
@@ -48,6 +48,7 @@ class FamilyService:
             return dict(family, revision=state['revision'], bounds=recording_bounds(family, str(today())), portfolios=[{k: p.get(k) for k in
                         ('id', 'name', 'funding_mode', 'archived', 'start_date')} for p in state['portfolios']])
 
+    @cached_query
     def history(self, start=None, end=None, grain='month', comparison='previous'):
         end = day(past(end or today()))
         if grain not in ('month', 'year'):
@@ -62,13 +63,11 @@ class FamilyService:
             start = max(day(start or min(dates)), day(min(dates)))
             if start > end or (end - start).days > 366 * 30:
                 raise DomainError('历史区间须按时间顺序且不超过30年')
-            key = ('family-history', state['revision'], str(start), str(end), grain, comparison)
-            if key in self.store.cache:
-                return deepcopy(self.store.cache[key])
+            market = Market(state)
             points, cursor, projections = [], start, {}
             def projected(d):
                 if str(d) < min(dates): return None
-                if d not in projections: projections[d] = snapshot(state, family, str(d))
+                if d not in projections: projections[d] = snapshot(state, family, str(d), market=market)
                 return projections[d]
             def values_of(snap):
                 values = {c['key']: c['value'] for c in snap['categories']}
@@ -107,14 +106,16 @@ class FamilyService:
                                'active_ids': scope(snap)})
                 cursor = period_end + timedelta(days=1)
             result = wire({'rows': points, 'revision': state['revision'], 'basis': '按当前资料重算；生效日前无数据，手工估值延用并保留来源日'})
-            self.store.cache[key] = result
-            return deepcopy(result)
+            return result
 
+    @cached_query
     def summary(self, grain='month', period=None, start=None, end=None):
         from .family_summary import period_summary
         with self.store.connection() as db:
-            return period_summary(self.store.state(db), read_state(db), grain, period, start, end)
+            state, family = self.store.state(db), read_state(db)
+        return period_summary(state, family, grain, period, start, end)
 
+    @cached_query
     def income_summary(self, year=None):
         year = year or today().year
         if not 1900 <= year <= today().year: raise DomainError('收入年份无效')

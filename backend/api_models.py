@@ -39,6 +39,7 @@ class WriteRequest(BaseModel):
 
 class PortfolioRequest(WriteRequest):
     name: str
+    description: str | None = Field(None, max_length=10000, description='可选组合介绍，纯文字，保留换行；省略或null保留原介绍，空字符串清空')
     planned_amount: Amount = Field(description='CNY 总预算；推荐十进制字符串')
     start_date: str | None = Field(None, description='YYYY-MM-DD，不得晚于今天；省略为今天')
     target_annual_pct: Amount = Field('5', description='目标年化百分数，5 表示5%')
@@ -312,6 +313,34 @@ class ForwardPerformance(BaseModel):
     windows: list[MarketWindow]
 
 
+class QuoteChange(BaseModel):
+    ratio: str | None = Field(description='同一序列的期末价格/基准价格−1；比例值，不计持仓、交易或汇率')
+    from_date: str | None
+    to_date: str | None
+    from_price: str | None
+    to_price: str | None
+    from_source: str | None
+    to_source: str | None
+    status: Literal['available', 'pending', 'missing_quote', 'missing_base', 'corporate_action']
+    status_label: str
+
+
+class InstrumentMarketChanges(BaseModel):
+    as_of: str
+    currency: str
+    basis: Literal['raw', 'adjusted']
+    basis_label: str
+    latest_date: str | None
+    week_start: str = Field(description='观察日期所属自然周的周一；本周尚无行情时weekly.ratio为null')
+    daily: QuoteChange
+    weekly: QuoteChange
+
+
+class InstrumentDetail(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    market_changes: InstrumentMarketChanges
+
+
 class PlanFunding(BaseModel):
     currency: Literal['CNY']
     status: Literal['shortfall', 'balanced', 'surplus', 'unknown']
@@ -321,6 +350,9 @@ class PlanFunding(BaseModel):
     shortfall: str | None = Field(description='max(剩余计划需投入-剩余可投金额,0)，CNY；仅提醒，不阻止保存')
     surplus: str | None = Field(description='max(剩余可投金额-剩余计划需投入,0)，CNY')
     total_target_pct: str
+    total_target_amount: str = Field(description='总预算乘所有标的计划比例之和，CNY')
+    unallocated_target_pct: str = Field(description='100减组合计划比例合计；百分数，负数表示超配')
+    unallocated_target_amount: str = Field(description='未分配总预算，CNY；负数表示超配，与剩余现金区分')
     unknown_instrument_ids: list[str]
     basis: str
 

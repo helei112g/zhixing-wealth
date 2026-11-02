@@ -51,7 +51,16 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
   await page.getByText('保障期限：终身',{exact:true}).waitFor();const family=await api('/family/overview'),policy=family.items.find(r=>r.name==='合成终身保单');
   check(policy.policy_lifetime===true&&policy.policy_end===null,'lifetime insurance saves and reads back explicitly');
   const failure={enabled:true,supported:true,authorization:'authorized',pending_count:1,missing_count:1,environment:'test',error:'1 条提醒未成功排入系统通知队列',missing_requests:[{id:'synthetic-notification',item_id:policy.id,name:policy.name,kind:'premium',due_date:'2026-11-08',at:'2026-11-01T09:00:00+08:00',reason:'合成系统排程失败',error_domain:'SyntheticError',error_code:7}]};let status=failure,retried=false;
-  await page.route('**/api/notifications',async route=>{if(route.request().method()==='POST'){assert.equal(route.request().postDataJSON().action,'refresh');retried=true;status={...failure,error:null,missing_count:0,missing_requests:[],scheduling_mode:'single_next',desired_count:75,selected_count:1,deferred_count:74,next_notification_at:'2026-11-02T09:00:00+08:00',note:'每次仅安排最近一条，同一时刻的事项合并提醒；后续排程需要本机服务运行。服务停止后仅保留已登记的一条。'};}await route.fulfill({json:status});});
+  const healthy={...failure,error:null,missing_count:0,missing_requests:[],scheduling_mode:'single_next',desired_count:75,selected_count:1,deferred_count:74,next_notification_at:'2026-11-02T09:00:00+08:00',note:'每次仅安排最近一条，同一时刻的事项合并提醒；后续排程需要本机服务运行。服务停止后仅保留已登记的一条。'};
+  let holdNextRead=false,heldRead=null,postCount=0;
+  await page.route('**/api/notifications',async route=>{
+   if(route.request().method()==='POST'){
+    postCount++;const action=route.request().postDataJSON().action;
+    if(action==='refresh'){retried=true;status=healthy;}
+    else{assert.equal(action,'test');status={...healthy,test_scheduled:true,test_pending_until:'2026-11-02T08:00:10+08:00',next_notification_at:null,selected_count:0,deferred_count:75};}
+   }else if(holdNextRead){holdNextRead=false;const snapshot=status;await new Promise(resolve=>{heldRead=async()=>{await route.fulfill({json:snapshot});resolve();};});return;}
+   await route.fulfill({json:status});
+  });
   await nav('全局设置','全局页面');await page.locator('.notification-issues').waitFor();
   check((await page.locator('.notification-issues').innerText()).includes(policy.name)&&(await page.locator('.notification-issues').innerText()).includes('2026-11-01 09:00')&&(await page.locator('.notification-issues').innerText()).includes('SyntheticError / 7'),'notice identifies the plan, exact time and OS reason');await shot('notification-details');
   await page.getByRole('button',{name:'查看相关计划',exact:true}).click();await page.getByRole('heading',{name:policy.name,exact:true}).waitFor();check(true,'notice opens its exact asset plan');
@@ -61,6 +70,17 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
   check(await page.getByText('后续排程需要本机服务运行',{exact:false}).isVisible(),'explains continuation requires local service');
   await page.locator('.toast').waitFor({state:'hidden'});const notificationPanel=page.locator('.panel').filter({has:page.getByRole('heading',{name:'macOS 系统通知',exact:true})});
   await notificationPanel.screenshot({path:path.join(out,'notification-single-next.png')});
+  holdNextRead=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  while(!heldRead)await new Promise(resolve=>setTimeout(resolve,10));
+  await page.getByRole('button',{name:'发送测试通知',exact:true}).click();
+  const testing=page.getByText('测试通知正在排程，稍后自动恢复业务提醒。',{exact:true});await testing.waitFor();
+  await heldRead();
+  await page.waitForTimeout(100);
+  check(await testing.isVisible(),'old in-flight GET cannot overwrite a newer test action');
+  const posts=postCount;status=healthy;
+  await testing.waitFor({state:'hidden'});
+  check(await page.getByText('下一条通知 2026-11-02 09:00',{exact:false}).isVisible(),'polling restores current business status without navigation');
+  check(postCount===posts,'automatic notification refresh is read-only');
   await page.setViewportSize({width:390,height:1000});await page.waitForFunction(()=>document.querySelector('#app-navigation').getBoundingClientRect().right<=0);
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'single notification status fits mobile');await notificationPanel.screenshot({path:path.join(out,'notification-single-next-mobile.png')});
   for(const width of [390,320]){await page.setViewportSize({width,height:1000});await nav('持仓标的');await page.locator('.holding-row').first().waitFor();await row.getByRole('button',{name:'设置计划',exact:true}).click();await drawer.getByLabel('投资范围',{exact:true}).waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'drawer fits '+width);await shot('drawer-'+width);await page.keyboard.press('Escape');await nav('持仓分析');await page.locator('.holding-sunburst-node').first().waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'sunburst fits '+width);await shot('sunburst-'+width);}

@@ -164,11 +164,6 @@ class FamilyNotifications:
         with self.lock:
             if not self._read(self.preferences).get('enabled'): return self.status()
             old = self._read(self.result_path)
-            current = datetime.now(TZ)
-            # A requested test temporarily owns the one OS slot. Do not cancel it
-            # on the five-second background tick or on a concurrent ledger change.
-            if old.get('test_pending_until') and current < datetime.fromisoformat(old['test_pending_until']):
-                return self.status()
             try:
                 if not self.prepared:
                     self._build(); self.prepared = True
@@ -177,7 +172,17 @@ class FamilyNotifications:
                     state = self.store.state(db)
                     rows += self.dividend_rows(state)
                     source_revision = state['revision']
+                # Building the helper and projecting the ledger may take seconds.
+                # Immediate requests must use a fresh clock after those operations.
+                current = datetime.now(TZ)
                 desired = notification_plan(rows, current)
+                imminent = (datetime.fromisoformat(desired[0]['at']) if desired else None)
+                if imminent and imminent > current+timedelta(seconds=45):
+                    imminent = None
+                # Preserve a test long enough to display, but let a newly added
+                # imminent business reminder take over before its deadline.
+                if old.get('test_pending_until') and current < datetime.fromisoformat(old['test_pending_until']) and not imminent:
+                    return self.status()
                 dispatched = old.get('dividend_dispatches', {})
                 active_dividends = {r['id'] for r in rows if r.get('kind') == 'dividend'}
                 dispatched = {k:v for k,v in dispatched.items() if k in active_dividends}
@@ -185,6 +190,11 @@ class FamilyNotifications:
                     if row.get('kind') != 'dividend': continue
                     at = dispatched.setdefault(row['id'], (current+timedelta(seconds=5)).replace(microsecond=0).isoformat())
                     if datetime.fromisoformat(at) > current:
+                        # Do not evict a timed reminder just before it fires: the
+                        # next five-second tick could already be past its deadline.
+                        if imminent:
+                            at = max(datetime.fromisoformat(at), imminent+timedelta(seconds=5)).isoformat()
+                            dispatched[row['id']] = at
                         desired.append(dict(id=row['id'],schedule_id=row['id'],schedule_version=1,at=at,
                                             route='reminders',reminder_id=row.get('reminder_id',''),portfolio_id=row['portfolio_id'],
                                             title='知行财富 · 分红提醒',body='有分红资料需要核对，点击打开提醒中心核对。'))
@@ -262,7 +272,7 @@ class FamilyNotifications:
                     raise DomainError('最近一条业务提醒即将触发，请稍后重试测试通知，以免覆盖该提醒')
                 try:
                     result = self._helper('test')
-                    if 'family-test' not in set(result.get('pending_ids', [])) | set(result.get('delivered_ids', [])):
+                    if not result.get('test_id') or result['test_id'] not in set(result.get('pending_ids', [])) | set(result.get('delivered_ids', [])):
                         raise DomainError('测试通知未出现在系统队列中，请检查通知权限后重试')
                 except DomainError:
                     # The helper may have removed the former request before an

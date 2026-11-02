@@ -30,8 +30,9 @@ final class NotificationAgent: NSObject, NSApplicationDelegate, UNUserNotificati
                 let removed = pending.map { $0.identifier }
                 self.center.removePendingNotificationRequests(withIdentifiers: removed)
                 let content = UNMutableNotificationContent(); content.title = "知行财富 · 通知测试"; content.body = "系统通知测试，请回到页面确认是否看到此消息。"; content.sound = .default
-                self.center.add(UNNotificationRequest(identifier: "family-test", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false))) { error in
-                    if let error = error { self.finish(["error": error.localizedDescription]) } else { self.status(removedPendingIDs: removed) }
+                let testID = "family-test-" + UUID().uuidString
+                self.center.add(UNNotificationRequest(identifier: testID, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false))) { error in
+                    if let error = error { self.finish(["error": error.localizedDescription]) } else { self.status(removedPendingIDs: removed, testID: testID) }
                 }
             }
         default: status()
@@ -75,13 +76,15 @@ final class NotificationAgent: NSObject, NSApplicationDelegate, UNUserNotificati
         }
     }
 
-    func status(_ failures: [String] = [], requestErrors: [[String: Any]] = [], removedPendingIDs: [String] = []) {
+    func status(_ failures: [String] = [], requestErrors: [[String: Any]] = [], removedPendingIDs: [String] = [], testID: String? = nil) {
         center.getNotificationSettings { settings in
             self.center.getPendingNotificationRequests { pending in
                 self.center.getDeliveredNotifications { delivered in
                 let names: [UNAuthorizationStatus: String] = [.notDetermined: "not_requested", .denied: "denied", .authorized: "authorized", .provisional: "provisional"]
-                self.finish(["authorization": names[settings.authorizationStatus] ?? "unknown", "alerts": settings.alertSetting.rawValue,
-                             "pending_ids": pending.map { $0.identifier }, "delivered_ids": delivered.map { $0.request.identifier }, "failures": failures, "request_errors": requestErrors, "removed_pending_ids": removedPendingIDs])
+                var result: [String: Any] = ["authorization": names[settings.authorizationStatus] ?? "unknown", "alerts": settings.alertSetting.rawValue,
+                             "pending_ids": pending.map { $0.identifier }, "delivered_ids": delivered.map { $0.request.identifier }, "failures": failures, "request_errors": requestErrors, "removed_pending_ids": removedPendingIDs]
+                if let testID = testID { result["test_id"] = testID }
+                self.finish(result)
                 }
             }
         }

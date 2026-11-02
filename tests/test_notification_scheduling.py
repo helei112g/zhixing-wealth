@@ -54,8 +54,10 @@ class NotificationSchedulingTests(unittest.TestCase):
                 self.delivered.add(identity)
                 del self.pending[identity]
         self.calls.append((command, copy.deepcopy(requests), copy.deepcopy(active)))
+        test_id = None
         if command == 'test':
-            requests = [dict(id='family-test', at=(self.current+timedelta(seconds=3)).isoformat())]
+            test_id = 'family-test-'+str(len(self.calls))
+            requests = [dict(id=test_id, at=(self.current+timedelta(seconds=3)).isoformat())]
         requests = requests or []
         self.assertLessEqual(len(requests), 1, 'production must never submit a batch to the one-slot OS')
         desired_ids = {r['id'] for r in requests}
@@ -71,7 +73,7 @@ class NotificationSchedulingTests(unittest.TestCase):
                 self.pending = {request['id']: copy.deepcopy(request)}
         return dict(authorization='authorized' if self.authorized else 'denied', alerts=2,
                     pending_ids=list(self.pending), delivered_ids=sorted(self.delivered),
-                    removed_pending_ids=removed, request_errors=failures)
+                    removed_pending_ids=removed, request_errors=failures, test_id=test_id)
 
     def row(self, identity='schedule', due='2026-11-09', **extra):
         return dict(id=identity, item_id='item-'+identity, name='合成事项', kind='debt',
@@ -194,7 +196,8 @@ class NotificationSchedulingTests(unittest.TestCase):
         original = self.reconcile()['queued_request']['id']
         result = self.native.action('test')
         self.assertTrue(result['test_scheduled'])
-        self.assertEqual(set(self.pending), {'family-test'})
+        test_id = result['test_id']
+        self.assertEqual(set(self.pending), {test_id})
         self.assertEqual(result['dividend_dispatches'], {})
         calls = len(self.calls)
         self.current += timedelta(seconds=5)
@@ -202,7 +205,7 @@ class NotificationSchedulingTests(unittest.TestCase):
         self.assertEqual(len(self.calls), calls)
         self.current += timedelta(seconds=6)
         result = self.reconcile()
-        self.assertIn('family-test', self.delivered)
+        self.assertIn(test_id, self.delivered)
         self.assertEqual(set(self.pending), {original})
         self.assertNotIn('test_pending_until', result)
 
@@ -222,7 +225,8 @@ class NotificationSchedulingTests(unittest.TestCase):
         def rejected_test(command, *args):
             if command == 'test':
                 self.pending.clear()
-                return dict(authorization='authorized', pending_ids=[], delivered_ids=[])
+                return dict(authorization='authorized', test_id='family-test-new',
+                            pending_ids=[], delivered_ids=['family-test-old'])
             return self.os_call(command, *args)
 
         with patch.object(self.native, '_helper', side_effect=rejected_test):
@@ -232,7 +236,7 @@ class NotificationSchedulingTests(unittest.TestCase):
         self.assertNotIn('test_pending_until', self.native.status())
 
     def test_restarted_service_resumes_next_slot_and_keeps_dividend_deduplication(self):
-        self.rows = [self.row()]
+        self.rows = [self.row(due='2026-11-10')]
         self.dividends = [self.dividend()]
         self.reconcile()
         self.current += timedelta(seconds=15)
@@ -241,7 +245,47 @@ class NotificationSchedulingTests(unittest.TestCase):
         with patch.object(restarted, 'dividend_rows', return_value=self.dividends), patch.object(restarted, '_helper', side_effect=self.os_call):
             result = restarted.reconcile(True)
         self.assertEqual(set(result['dividend_dispatches']), {'dividend'})
-        self.assertEqual(result['next_notification_at'], '2026-11-08T09:00:00+08:00')
+        self.assertEqual(result['next_notification_at'], '2026-11-03T09:00:00+08:00')
+
+    def test_new_dividend_cannot_preempt_imminent_family_reminder(self):
+        self.current = self.current.replace(second=54)
+        self.rows = [self.row()]
+        original = self.reconcile()['queued_request']['id']
+        self.dividends = [self.dividend()]
+        result = self.reconcile()
+        self.assertEqual(set(self.pending), {original})
+        self.assertNotIn('dividend', result['dividend_dispatches'])
+        self.current += timedelta(seconds=7)
+        result = self.reconcile()
+        self.assertIn(original, self.delivered)
+        self.assertEqual(set(self.pending), {'dividend'})
+        self.assertGreater(datetime.fromisoformat(result['dividend_dispatches']['dividend']), self.current)
+
+    def test_new_imminent_family_reminder_interrupts_test_slot(self):
+        self.current = self.current.replace(second=55)
+        self.reconcile()
+        test_id = self.native.action('test')['test_id']
+        self.current += timedelta(seconds=1)
+        self.rows = [self.row()]
+        result = self.reconcile()
+        self.assertNotIn('test_pending_until', result)
+        original = result['queued_request']['id']
+        self.assertEqual(set(self.pending), {original})
+        self.assertNotIn(test_id, self.pending)
+        self.current += timedelta(seconds=10)
+        self.reconcile()
+        self.assertIn(original, self.delivered)
+
+    def test_immediate_dividend_time_is_calculated_after_slow_build(self):
+        self.native.prepared = False
+        self.dividends = [self.dividend()]
+
+        def build():
+            self.current += timedelta(seconds=20)
+
+        with patch.object(self.native, '_build', side_effect=build):
+            result = self.reconcile()
+        self.assertEqual(datetime.fromisoformat(result['next_notification_at']), self.current+timedelta(seconds=5))
 
     def test_revision_race_keeps_accepted_dividend_identity_for_next_reconcile(self):
         self.dividends = [self.dividend()]

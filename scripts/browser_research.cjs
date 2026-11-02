@@ -54,9 +54,10 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
  check(await page.evaluate(()=>window.__overviewFlashes)===0,'same-query background revisions no longer flash the overview loading state');await page.evaluate(()=>window.__observer.disconnect());await shot('overview-refresh-stable');
  // Newly supported families keep exact official pairing and explicit module gaps.
  await nav('指数资料库','研究工具');await add('000688');await page.getByRole('button',{name:'全收益指数 000688CNY01',exact:true}).waitFor();check(true,'STAR 50 UI exposes the exact official total-return code');
- await page.waitForFunction(async()=>!(await (await fetch('/api/data-updates/jobs')).json()).jobs.some(j=>['pending','running'].includes(j.state)),null,{timeout:20000});
+ const idleDeadline=Date.now()+20000;
+ while((await api('/data-updates/jobs')).jobs.some(j=>['pending','running'].includes(j.state))){assert.ok(Date.now()<idleDeadline,'index update job finishes before the next identity preview');await page.waitForTimeout(100);}
  await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();await add('H11136');await page.getByRole('button',{name:'全收益指数 H01136',exact:true}).waitFor();
- await page.getByRole('heading',{name:'数据覆盖情况',exact:true}).waitFor();check(await page.getByText('暂不支持',{exact:true}).count()===5,'overseas index shows five unsupported modules explicitly');await shot('overseas-index-module-coverage');
+ await page.getByRole('heading',{name:'数据覆盖情况',exact:true}).waitFor();for(const label of ['价格指数','全收益指数','成分名单与权重'])await page.getByRole('row').filter({has:page.getByRole('cell',{name:label,exact:true})}).getByRole('cell',{name:'可查看',exact:true}).waitFor({timeout:20000});check(await page.getByText('暂不支持',{exact:true}).count()===5,'overseas index shows five unsupported modules explicitly');await shot('overseas-index-module-coverage');
  await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('cell',{name:/合成境外公司甲/}).waitFor({timeout:20000});
  check((await page.locator('.research-page').innerText()).includes('00999.HK')&&(await page.locator('.research-page').innerText()).includes('SYN.O'),'overseas member table keeps HK and US identities');await shot('overseas-index-members');
  check(errors.length===0,'no browser exceptions');fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({checks,errors,synthetic:true},null,2));

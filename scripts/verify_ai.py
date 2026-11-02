@@ -34,6 +34,12 @@ def main():
     cap=client.request('/api/capabilities')
     check(set(cap['skills'])=={'zhixing-assets','zhixing-portfolios','zhixing-notes','zhixing-research'},'all four project skills are discoverable')
     check(cap['family']['comparison']['history_curve']=='previous','AI history default agrees with UI and endpoint')
+    check(cap['family']['notification_scheduling']==dict(mode='single_next',max_pending=1,same_time='combined',continuation_requires_service=True),
+          'AI discovers one-slot scheduling and its service requirement')
+    before_notifications=revision()
+    notification=client.notification_status()
+    check(notification['enabled'] is False and revision()==before_notifications,
+          'AI notification status is read-only and never enables real OS notifications')
     schema=client.request(cap['family']['command_schema'])
     check(set(schema['operations'])=={'item','valuation','links','unlink','income','archive','restore'},'recommended asset commands discoverable')
     check('/api/family/command-schema' in client.request(cap['openapi'])['paths'],'OpenAPI discovers asset contract')

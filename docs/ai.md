@@ -14,6 +14,8 @@ Codex 查找当前目录和向上的技能目录，不递归搜索任意子项�
 
 同步与存储：capabilities.storage 提供保留策略。jobs仅返回最近20条，默认最多保存20条（含运行中），不清理运行中任务，不作为完整审计；相同行情不重复写入，修正版本保留，交易锁定汇率不变。AI与界面使用同一同步入口，不直接写库或执行文件清理。
 
+系统通知从 `Client.notification_status()` 或 `GET /api/notifications` 读取，能力见 `capabilities.family.notification_scheduling`。系统每次只登记最近一条，同一时刻合并；`deferred_count` 是等待后续排程数，不是失败，`missing_count` 只计本次选中的缺失提醒。`next_notification_at` 为已受理时刻，后续接续需本机服务运行。不能把系统受理等同于用户看到、分红确认或已付款；不得用确认业务、删除通知状态文件来消除排程提示。
+
 企业行动数据同步失败不表示发现送转计划。完整纯现金方案（含中小股东／大股东差异化金额）可确认无送转，现金金额差异另存 jobs.items[].notes 及分红候选 note；基础金额可能为平均值，确认分红前须按公告和实际到账核对。重试 `/api/sync` 后检查同标的最新 corporate_actions 子项与 `/api/reminders`：成功会自然消除旧失败提醒，不能删除同步历史或新增 SPLIT 来消除消息。
 
 先 `GET /api/health` 确认 environment 和目标账本，再读 `/api/capabilities`、`/api/openapi.json`、`/api/guide`。资产读 `/api/family/catalog` 获取真实 ID、revision、日期范围，再读 `/api/family/command-schema` 获取推荐命令 JSON Schema 与语义规则。schema 描述当前推荐入口；条件约束由服务端执行，旧兼容字段仍见 [API 文档](api.md)。

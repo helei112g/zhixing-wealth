@@ -26,22 +26,31 @@ final class NotificationAgent: NSObject, NSApplicationDelegate, UNUserNotificati
         case "cancel": center.removeAllPendingNotificationRequests(); center.removeAllDeliveredNotifications(); status()
         case "sync": sync(command["requests"] as? [[String: Any]] ?? [], activeSchedules: command["active_schedules"] as? [String] ?? [])
         case "test":
-            let content = UNMutableNotificationContent(); content.title = "知行财富 · 通知测试"; content.body = "系统通知测试，请回到页面确认是否看到此消息。"; content.sound = .default
-            center.add(UNNotificationRequest(identifier: "family-test", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false))) { error in
-                if let error = error { self.finish(["error": error.localizedDescription]) } else { self.status() }
+            center.getPendingNotificationRequests { pending in
+                let removed = pending.map { $0.identifier }
+                self.center.removePendingNotificationRequests(withIdentifiers: removed)
+                let content = UNMutableNotificationContent(); content.title = "知行财富 · 通知测试"; content.body = "系统通知测试，请回到页面确认是否看到此消息。"; content.sound = .default
+                self.center.add(UNNotificationRequest(identifier: "family-test", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false))) { error in
+                    if let error = error { self.finish(["error": error.localizedDescription]) } else { self.status(removedPendingIDs: removed) }
+                }
             }
         default: status()
         }
     }
 
     func sync(_ requests: [[String: Any]], activeSchedules: [String]) {
+        guard requests.count <= 1 else {
+            finish(["error": "每次只能安排一条系统通知，请更新排程组件后重试"]); return
+        }
         center.getPendingNotificationRequests { pending in
             let ids = Set(requests.compactMap { $0["id"] as? String })
-            self.center.removePendingNotificationRequests(withIdentifiers: pending.map { $0.identifier }.filter { !ids.contains($0) })
+            let removed = pending.map { $0.identifier }.filter { !ids.contains($0) }
+            self.center.removePendingNotificationRequests(withIdentifiers: removed)
             self.center.getDeliveredNotifications { delivered in
                 self.center.removeDeliveredNotifications(withIdentifiers: delivered.filter { notification in
                     let info = notification.request.content.userInfo
-                    return !activeSchedules.contains((info["schedule_id"] as? String ?? "") + ":" + String(info["schedule_version"] as? Int ?? 0))
+                    let keys = info["schedule_keys"] as? [String] ?? [(info["schedule_id"] as? String ?? "") + ":" + String(info["schedule_version"] as? Int ?? 0)]
+                    return !keys.contains { activeSchedules.contains($0) }
                 }.map { $0.request.identifier })
             }
             let existing = Set(pending.map { $0.identifier }); let group = DispatchGroup()
@@ -50,7 +59,7 @@ final class NotificationAgent: NSObject, NSApplicationDelegate, UNUserNotificati
                 guard let id = row["id"] as? String, !existing.contains(id), let stamp = row["at"] as? String,
                       let date = ISO8601DateFormatter().date(from: stamp) else { continue }
                 let content = UNMutableNotificationContent(); content.title = row["title"] as? String ?? "知行财富"; content.body = row["body"] as? String ?? "资产提醒"; content.sound = .default
-                content.userInfo = ["schedule_id": row["schedule_id"] as? String ?? "", "schedule_version": row["schedule_version"] as? Int ?? 1, "reminder_id": row["reminder_id"] as? String ?? "", "route": row["route"] as? String ?? "family", "portfolio_id": row["portfolio_id"] as? String ?? ""]
+                content.userInfo = ["schedule_id": row["schedule_id"] as? String ?? "", "schedule_version": row["schedule_version"] as? Int ?? 1, "schedule_keys": row["schedule_keys"] as? [String] ?? [], "reminder_id": row["reminder_id"] as? String ?? "", "route": row["route"] as? String ?? "family", "portfolio_id": row["portfolio_id"] as? String ?? ""]
                 var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
                 var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date); components.timeZone = calendar.timeZone
                 group.enter()
@@ -62,17 +71,17 @@ final class NotificationAgent: NSObject, NSApplicationDelegate, UNUserNotificati
                     }; group.leave()
                 }
             }
-            group.notify(queue: .main) { self.status(failures, requestErrors: requestErrors) }
+            group.notify(queue: .main) { self.status(failures, requestErrors: requestErrors, removedPendingIDs: removed) }
         }
     }
 
-    func status(_ failures: [String] = [], requestErrors: [[String: Any]] = []) {
+    func status(_ failures: [String] = [], requestErrors: [[String: Any]] = [], removedPendingIDs: [String] = []) {
         center.getNotificationSettings { settings in
             self.center.getPendingNotificationRequests { pending in
                 self.center.getDeliveredNotifications { delivered in
                 let names: [UNAuthorizationStatus: String] = [.notDetermined: "not_requested", .denied: "denied", .authorized: "authorized", .provisional: "provisional"]
                 self.finish(["authorization": names[settings.authorizationStatus] ?? "unknown", "alerts": settings.alertSetting.rawValue,
-                             "pending_ids": pending.map { $0.identifier }, "delivered_ids": delivered.map { $0.request.identifier }, "failures": failures, "request_errors": requestErrors])
+                             "pending_ids": pending.map { $0.identifier }, "delivered_ids": delivered.map { $0.request.identifier }, "failures": failures, "request_errors": requestErrors, "removed_pending_ids": removedPendingIDs])
                 }
             }
         }

@@ -52,7 +52,7 @@ overview.known_assets 为已知小计；有金额／汇率缺失时 total_assets
 
 macOS 原生计划提前登记未来366天，到期事项提前7天、1天及当天09:00（上海时区）提醒；页面只显示未来35天。分红候选出现 pending/needs_review 时发送一次泛化通知；相同候选重复刷新不重发，确认／忽略后取消，资料实质变化后重新提醒。所有通知点击使用 `?reminders=1&focus=reminder_id` 定位全局提醒中心；旧分红 URL 保留兼容。
 
-通知授权是本机 OS 状态，不是付款状态。pending_count 是系统待发数量，missing_count/error 表示安排有缺失；不能据此声称用户已收到或已付款。开发／测试默认关闭真实通知，须显式 enable；所有写操作要求本地会话和CSRF。
+通知授权是本机 OS 状态，不是付款状态。排程模式 `scheduling_mode=single_next`：系统仅登记最近一条，同一时刻的事项合并。`pending_count` 是系统回读的待发通知数，`desired_count` 是未来候选提醒数，`selected_count` 是本次选择的提醒数（合并后只提交一条），`deferred_count` 是等待后续排程的提醒数，不计为失败。`missing_count/error` 只检查本次选中的提醒；`missing_requests` 保留合并通知内各事项的错误详情。`next_notification_at` 和兼容字段 `coverage_until` 只表示已受理的最近一条通知时刻，未受理时为null，不代表未来一年全部覆盖。`test_pending_until` 仅在测试通知临时占位时返回，后台随后恢复业务提醒。后续排程需要本机服务运行。不能据此声称用户已看到或已付款。开发／测试默认关闭真实通知，须显式 enable；所有写操作要求本地会话和CSRF。
 
 ## 发现与安全
 

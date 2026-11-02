@@ -142,6 +142,14 @@ class Client:
     def update_settings(self):
         return self.request('/api/settings/data-updates')
 
+    def notification_status(self):
+        """One pending OS request; deferred_count is waiting work, not a failure.
+
+        Subsequent requests require the local service to keep running. Neither
+        pending nor delivered IDs establish that the person saw the reminder.
+        """
+        return self.request('/api/notifications')
+
     def research_scenario(self,index_id,payload):
         """Read-only calculation against the caller's original analysis version."""
         if not isinstance(payload,dict):raise ValueError('Scenario must be a JSON object')

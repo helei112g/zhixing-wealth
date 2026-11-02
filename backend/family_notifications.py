@@ -41,6 +41,35 @@ def notification_plan(rows, current=None):
     return sorted(plan, key=lambda r: (r['at'], r['id']))
 
 
+def next_notification(desired):
+    """One OS slot; combine simultaneous reminders without losing their identities."""
+    if not desired:
+        return [], []
+    ordered = sorted(desired, key=lambda r: (r['at'], r['id']))
+    members = [r for r in ordered if r['at'] == ordered[0]['at']]
+    request = dict(members[0])
+    if len(members) > 1:
+        identity = 'batch:' + json_dumps([r['id'] for r in members])
+        request = dict(id=hashlib.sha256(identity.encode()).hexdigest(), at=members[0]['at'],
+                       schedule_id='', schedule_version=1, reminder_id='', route='reminders',
+                       title='知行财富 · 事项提醒', body='有多项事项需要关注，点击打开提醒中心。')
+    request['schedule_keys'] = [r['schedule_id'] + ':' + str(r['schedule_version']) for r in members]
+    return [request], members
+
+
+def batch_result(result, queued, members):
+    """Map the OS request's acceptance/error back to each business reminder."""
+    if not queued:
+        return result
+    identity = queued[0]['id']
+    mapped = dict(result)
+    for key in ('pending_ids', 'delivered_ids'):
+        mapped[key] = [r['id'] for r in members] if identity in result.get(key, []) else []
+    errors = [e for e in result.get('request_errors', []) if e['id'] == identity]
+    mapped['request_errors'] = [dict(e, id=r['id']) for e in errors for r in members]
+    return mapped
+
+
 def missing_details(desired, rows, result, current):
     accepted = set(result.get('pending_ids', [])) | set(result.get('delivered_ids', []))
     sources = {r['id']: r for r in rows}
@@ -89,7 +118,7 @@ class FamilyNotifications:
         return dict(result, enabled=enabled, supported=platform.system() == 'Darwin',
                     environment=self.environment, authorization=result.get('authorization', 'not_requested'),
                     pending_count=len(result.get('pending_ids', [])),
-                    note='勿扰或关机可能影响系统通知；页面只显示未来35天的到期提醒。分红仍需在组合中核对。')
+                    note='每次仅安排最近一条，同一时刻的事项合并提醒；后续排程需要本机服务运行。服务停止后仅保留已登记的一条。勿扰或关机可能影响通知；页面显示未来35天的到期提醒，分红仍需在组合中核对。')
 
     def _helper(self, command, requests=None, active_schedules=None):
         if platform.system() != 'Darwin': raise DomainError('系统通知当前仅支持 macOS')
@@ -134,6 +163,12 @@ class FamilyNotifications:
     def reconcile(self, force=False):
         with self.lock:
             if not self._read(self.preferences).get('enabled'): return self.status()
+            old = self._read(self.result_path)
+            current = datetime.now(TZ)
+            # A requested test temporarily owns the one OS slot. Do not cancel it
+            # on the five-second background tick or on a concurrent ledger change.
+            if old.get('test_pending_until') and current < datetime.fromisoformat(old['test_pending_until']):
+                return self.status()
             try:
                 if not self.prepared:
                     self._build(); self.prepared = True
@@ -142,9 +177,7 @@ class FamilyNotifications:
                     state = self.store.state(db)
                     rows += self.dividend_rows(state)
                     source_revision = state['revision']
-                desired = notification_plan(rows)
-                old = self._read(self.result_path)
-                current = datetime.now(TZ)
+                desired = notification_plan(rows, current)
                 dispatched = old.get('dividend_dispatches', {})
                 active_dividends = {r['id'] for r in rows if r.get('kind') == 'dividend'}
                 dispatched = {k:v for k,v in dispatched.items() if k in active_dividends}
@@ -155,34 +188,44 @@ class FamilyNotifications:
                         desired.append(dict(id=row['id'],schedule_id=row['id'],schedule_version=1,at=at,
                                             route='reminders',reminder_id=row.get('reminder_id',''),portfolio_id=row['portfolio_id'],
                                             title='知行财富 · 分红提醒',body='有分红资料需要核对，点击打开提醒中心核对。'))
+                queued, members = next_notification(desired)
                 fingerprint = hashlib.sha256(json_dumps(desired).encode()).hexdigest()
                 if not force and not self.dirty and old.get('fingerprint') == fingerprint and old.get('checked_at') and (datetime.now(TZ) - datetime.fromisoformat(old['checked_at'])).total_seconds() < 45:
                     return self.status()
                 # Requery the OS even without mutations: permissions may change in System Settings.
                 active_schedules = [r['id'] + ':' + str(r['version']) for r in rows if r['status'] == 'pending']
-                result = self._helper('sync', desired, active_schedules)
+                result = self._helper('sync', queued, active_schedules)
                 with self.store.connection() as db:
                     latest_revision = int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0])
-                if latest_revision != source_revision:
-                    self.dirty = True
-                    result.update(error='计划在排程期间发生变化，正在重新核对', checked_at=now())
-                    self._save(self.result_path, result)
-                    return self.status()
-                accepted = set(result.get('pending_ids', [])) | set(result.get('delivered_ids', []))
-                missing = missing_details(desired, rows, result, datetime.now(TZ))
-                covered = [r['at'] for r in desired if r['id'] in accepted]
-                result.update(checked_at=now(), desired_count=len(desired), missing_count=len(missing), missing_requests=missing,
+                mapped = batch_result(result, queued, members)
+                accepted = set(mapped.get('pending_ids', [])) | set(mapped.get('delivered_ids', []))
+                missing = missing_details(members, rows, mapped, datetime.now(TZ))
+                covered = [r['at'] for r in members if r['id'] in accepted]
+                previous = old.get('queued_request') or {}
+                replaced = (set(previous.get('dividend_ids', []))
+                            if previous.get('id') in result.get('removed_pending_ids', []) else set())
+                # Only selected/accepted dividends are dispatched. Future entries
+                # replaced by an earlier reminder must be eligible again.
+                dispatches = {k:v for k,v in dispatched.items()
+                              if k in accepted or (k in old.get('dividend_dispatches', {})
+                                  and datetime.fromisoformat(v) <= current and k not in replaced)}
+                result.update(checked_at=now(), scheduling_mode='single_next', desired_count=len(desired),
+                              selected_count=len(members), deferred_count=len(desired)-len(members),
+                              next_notification_at=covered[0] if covered else None,
+                              missing_count=len(missing), missing_requests=missing,
                               coverage_until=max(covered) if covered else None, fingerprint=fingerprint,
-                              # Failed / denied submissions must be retried after permission
-                              # recovery, even after their proposed fire date has passed.
-                              dividend_dispatches={k:v for k,v in dispatched.items()
-                                                   if k in accepted or k in old.get('dividend_dispatches', {})},
+                              queued_request=(dict(id=queued[0]['id'], at=queued[0]['at'],
+                                                   dividend_ids=sorted(accepted & active_dividends)) if covered else None),
+                              dividend_dispatches=dispatches,
                               error=(f'{len(missing)} 条提醒未成功排入系统通知队列，请查看下方事项并重试排程' if missing else None))
                 if result.get('authorization') != 'authorized':
                     result['error'] = 'macOS 通知未授权；请在系统设置中允许知行财富通知'
                 elif result.get('alerts') == 1:
                     result['error'] = 'macOS 已关闭通知横幅；请在系统设置中检查提醒方式'
-                self._save(self.result_path, result); self.dirty = False
+                self.dirty = latest_revision != source_revision
+                if self.dirty:
+                    result['error'] = '计划在排程期间发生变化，正在重新核对'
+                self._save(self.result_path, result)
             except DomainError as exc:
                 result = self._read(self.result_path)
                 result.update(error=str(exc), checked_at=now())
@@ -212,6 +255,29 @@ class FamilyNotifications:
             if action == 'refresh': return self.reconcile(True)
             if action == 'test':
                 if not self._read(self.preferences).get('enabled'): raise DomainError('请先启用系统通知')
-                self._helper('test')
+                old = self._read(self.result_path)
+                previous = old.get('queued_request') or {}
+                current = datetime.now(TZ)
+                if previous.get('at') and current <= datetime.fromisoformat(previous['at']) <= current+timedelta(seconds=45):
+                    raise DomainError('最近一条业务提醒即将触发，请稍后重试测试通知，以免覆盖该提醒')
+                try:
+                    result = self._helper('test')
+                    if 'family-test' not in set(result.get('pending_ids', [])) | set(result.get('delivered_ids', [])):
+                        raise DomainError('测试通知未出现在系统队列中，请检查通知权限后重试')
+                except DomainError:
+                    # The helper may have removed the former request before an
+                    # add failure. Restore business scheduling, then report it.
+                    self.dirty = True
+                    self.reconcile(True)
+                    raise
+                revoked = (set(previous.get('dividend_ids', []))
+                           if previous.get('id') in result.get('removed_pending_ids', []) else set())
+                old.update(result, queued_request=None, error=None, missing_count=0, missing_requests=[],
+                           selected_count=0, deferred_count=old.get('desired_count', 0),
+                           coverage_until=None, next_notification_at=None,
+                           dividend_dispatches={k:v for k,v in old.get('dividend_dispatches', {}).items() if k not in revoked},
+                           test_pending_until=(datetime.now(TZ)+timedelta(seconds=10)).isoformat())
+                self._save(self.result_path, old)
+                self.dirty = True
                 return dict(self.status(), test_scheduled=True)
             raise DomainError('未知通知操作')

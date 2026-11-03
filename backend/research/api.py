@@ -10,8 +10,33 @@ class ResolveRequest(BaseModel):
 class AddRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     resolve_token:str
+    valuation_token:str=Field(min_length=1,max_length=4096,description='估值预验证返回的原token；同时验证PE/PB成功，或显式选择暂不接入')
     request_id:str=Field(min_length=1,max_length=160)
     expected_research_revision:int=Field(ge=0,strict=True)
+
+
+class ValuationPreviewRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    code:str=Field(min_length=1,max_length=16)
+    valuation_suffix:Literal['CSI','SH','SZ','LG']|None=Field(description='显式选择后缀；null表示暂不接入估值，不自动推断')
+
+
+class ValuationMetricPreview(BaseModel):
+    status:Literal['available','error']
+    count:int|None=None
+    start_date:str|None=None
+    date:str|None=None
+    current:str|None=Field(None,description='整体法最新有效观测，十进制字符串；失败为null')
+    reason:str|None=None
+
+
+class ValuationPreviewResponse(BaseModel):
+    code:str|None
+    status:Literal['available','unavailable','skipped']
+    metrics:dict[str,ValuationMetricPreview]
+    valuation_token:str|None=Field(description='PE和PB均验证成功或显式不接入时返回；失败为null')
+    expires_at:int
+    reason:str|None=None
 
 
 Scope=Literal['quotes','fx','index_prices','memberships','valuations','financials']
@@ -128,6 +153,9 @@ def router(service):
     def listing(kind:str|None=None,page:int=Query(1,ge=1)):return service.listing(kind,page)
     @api.post('/api/research/indices/resolve')
     def resolve(body:ResolveRequest):return service.resolve(body.code)
+    @api.post('/api/research/indices/valuation-preview',response_model=ValuationPreviewResponse,
+              summary='只读验证所选来源的PE和PB；不建档、不保存快照或更新任务')
+    def valuation_preview(body:ValuationPreviewRequest):return service.valuation_preview(body.code,body.valuation_suffix)
     @api.post('/api/research/indices')
     def add(body:AddRequest):return service.add(body.model_dump())
     @api.get('/api/research/indices/{index_id}')

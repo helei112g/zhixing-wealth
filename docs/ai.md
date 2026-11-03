@@ -112,7 +112,7 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 ## 指数研究
 
-通过 [zhixing-research](../.agents/skills/zhixing-research/SKILL.md) 与 [研究合同](research.md) 操作。客户端新增resolve_index、research_index、update_settings、research_scenario；CLI preview支持 `/api/research/indices/resolve`，scenario支持只读条件试算，write支持建档、更新策略及显式更新任务。研究建档用expected_research_revision，设置用expected_settings_revision，计划/标签继续用expected_revision，不能混用。
+通过 [zhixing-research](../.agents/skills/zhixing-research/SKILL.md) 与 [研究合同](research.md) 操作。客户端新增resolve_index、validate_index_valuation、research_index、update_settings、research_scenario；CLI preview支持 `/api/research/indices/resolve` 和 `/api/research/indices/valuation-preview`，scenario支持只读条件试算，write支持建档、更新策略及显式更新任务。研究建档用expected_research_revision，设置用expected_settings_revision，计划/标签继续用expected_revision，不能混用。
 
 建档与更新需稳定request_id，未知结果保留原ID先回读，不盲目重试。研究GET不联网抓取；analysis_id变更后重新读取全部分页。接口null不补零，区分来源日期、财报期、权重日与当前重述版本。应用不运行时不承诺更新。
 
@@ -126,3 +126,5 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 标的近期行情可用客户端 `instrument_detail(P,I)` 读取 `market_changes`，返回最近交易日及本自然周涨跌幅、取价日期、同一序列口径与缺失原因；不把它当作个人收益。计划试算用 `plan_check(P,I,target_pct)`：同时核对 `total_target_pct`、`unallocated_target_pct/amount`（负值为超配）及独立的 `shortfall`。尚可分配预算不等于可用现金；读取与预览不写入，保存仍使用原revision。
 
 月度收支 `Client.cashflow(year)` 默认包含全部收入（含公积金）。`income_summary` 为全年已录入收入，不依赖开支确认；`summary` 仅包含同组已核对月份的实际收支及储蓄率，不能混用两者分母。
+
+指数建档先`resolve_index(code)`读取后缀列表与明确默认值，再按用户核对的选择调用`validate_index_valuation(code, valuation_suffix)`。CSI/SH/SZ/LG只表示估值来源编码，不改变官方指数身份；不得按编制方或代码前缀推断。两项PE/PB验证通过才可使用返回的原valuation_token；无法取数时展示逐项原因，可由用户明确选择None暂不接入估值，不能自动降级为None。提交同时携带原resolve_token、valuation_token、expected_research_revision、稳定request_id；token过期或选择改变后重新验证并核对。所有后续正常采集只读取明确保存/注册的完整来源代码，不尝试其他后缀。

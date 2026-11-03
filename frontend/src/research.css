@@ -24,3 +24,7 @@ html.nav-collapsed .app-shell{grid-template-columns:76px minmax(0,1fr)}.compact-
 .research-current-finance table{min-width:760px}
 
 .scenario-update-state{min-height:18px;margin:6px 0}
+.research-resolved .modal-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+.research-valuation-validation{margin-top:16px;padding:12px;border:1px solid var(--line);border-radius:8px;font-size:13px;overflow-wrap:anywhere}
+.research-valuation-validation p{margin:0 0 8px}
+.research-valuation-validation p:last-child{margin-bottom:0}

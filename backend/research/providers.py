@@ -13,21 +13,27 @@ CSI = 'https://www.csindex.com.cn'
 CNI = 'https://www.cnindex.com.cn'
 # Explicitly paired official identities; unknown codes are never prefix-matched.
 CATALOG = [
-    dict(code='000688', return_code='000688CNY01', name='科创50', provider='csi', kind='宽基', launch='2020-07-23', exposure='CN'),
+    dict(code='000688', return_code='000688CNY01', name='科创50', provider='csi', kind='宽基', launch='2020-07-23', exposure='CN', valuation_code='000688.SH'),
     dict(code='H11136', return_code='H01136', name='中国互联网', provider='csi', kind='行业', launch='2011-09-20', exposure='overseas'),
-    dict(code='000300', return_code='H00300', name='沪深300', provider='csi', kind='宽基', launch='2005-04-08'),
-    dict(code='000905', return_code='H00905', name='中证500', provider='csi', kind='宽基', launch='2007-01-15'),
+    dict(code='000300', return_code='H00300', name='沪深300', provider='csi', kind='宽基', launch='2005-04-08', valuation_code='000300.SH'),
+    dict(code='000905', return_code='H00905', name='中证500', provider='csi', kind='宽基', launch='2007-01-15', valuation_code='000905.SH'),
     dict(code='000985', return_code='H00985', name='中证全指', provider='csi', kind='宽基', launch='2011-08-02'),
-    dict(code='399006', return_code='399606', name='创业板指', provider='cni', kind='宽基', launch='2010-06-01',return_launch='2010-06-01',identity_source='https://www.cnindex.com.cn/zh_information/notices_news/2010/201206/P020191213351661589949.pdf'),
+    dict(code='399006', return_code='399606', name='创业板指', provider='cni', kind='宽基', launch='2010-06-01',return_launch='2010-06-01',identity_source='https://www.cnindex.com.cn/zh_information/notices_news/2010/201206/P020191213351661589949.pdf', valuation_code='399006.SZ'),
     dict(code='000922', return_code='H00922', name='中证红利', provider='csi', kind='策略', launch='2008-05-26', valuation_code='000922.CSI'),
-    dict(code='000819', return_code='H00819', name='有色金属', provider='csi', kind='行业', launch='2009-07-03'),
-    dict(code='000510', return_code='000510CNY010', name='中证A500', provider='csi', kind='宽基', launch='2024-09-23'),
-    dict(code='000993', return_code='H00993', name='全指信息', provider='csi', kind='行业', launch='2011-08-02'),
+    dict(code='000819', return_code='H00819', name='有色金属', provider='csi', kind='行业', launch='2009-07-03', valuation_code='000819.SH'),
+    dict(code='000510', return_code='000510CNY010', name='中证A500', provider='csi', kind='宽基', launch='2024-09-23', valuation_code='000510.SH'),
+    dict(code='000993', return_code='H00993', name='全指信息', provider='csi', kind='行业', launch='2011-08-02', valuation_code='000993.SH'),
     dict(code='930955', return_code='H20955', name='红利低波100', provider='csi', kind='策略', launch='2017-05-26'),
     dict(code='399998', return_code='H20596', name='中证煤炭', provider='csi', kind='行业', launch='2015-02-13', valuation_code='399998.SZ'),
-    dict(code='000991', return_code='H00991', name='全指医药', provider='csi', kind='行业', launch='2011-08-02'),
+    dict(code='000991', return_code='H00991', name='全指医药', provider='csi', kind='行业', launch='2011-08-02', valuation_code='000991.SH'),
 ]
 SOURCE_LOCK = threading.Lock()
+VALUATION_SUFFIXES = ('CSI','SH','SZ','LG')
+
+
+def valuation_code(profile):
+    # A saved explicit choice (including None = no valuation) takes precedence.
+    return profile['valuation_code'] if 'valuation_code' in profile else identity(profile['code']).get('valuation_code')
 
 
 def identity(code):
@@ -44,8 +50,10 @@ def identity(code):
 def module_capabilities(profile):
     modules = ('price','total_return','memberships','historical_memberships','valuations','stock_valuations','financials','historical_financials')
     result = {m:dict(supported=True,reason=None) for m in modules}
+    if not valuation_code(profile):
+        result['valuations'] = dict(supported=False, reason='尚未配置已核验的指数估值代码；录入时选择后缀并验证PE、PB，或暂不接入估值')
     if profile['code'] == '930955':
-        result['valuations'] = dict(supported=False, reason='现有估值源未覆盖红利低波100；不使用相似指数或官方单日估值拼接历史')
+        if not valuation_code(profile): result['valuations'] = dict(supported=False, reason='现有估值源未覆盖红利低波100；不使用相似指数或官方单日估值拼接历史')
     if profile['code'] == 'H11136':
         for m in ('valuations','stock_valuations'):
             result[m] = dict(supported=False, reason='现有估值源未覆盖中国互联网指数；不使用A股或相似指数估值替代')
@@ -107,17 +115,22 @@ def prices(profile, basis, asof):
 def valuations(profile, asof):
     capability = module_capabilities(profile)['valuations']
     if not capability['supported']: raise market.ProviderError(capability['reason'])
+    return fetch_valuations(profile, asof)
+
+
+def fetch_valuations(profile, asof, metrics=('pe','pb')):
+    code = valuation_code(profile)
+    if not code or code not in {profile['code']+'.'+suffix for suffix in VALUATION_SUFFIXES}:
+        raise market.ProviderError('未配置有效的完整估值来源代码；不自动猜测后缀')
     out = {}; evidence = []
     with SOURCE_LOCK:
-        for metric, fields in {'pe': {'overall': 'addTtmPe', 'median': 'middleTtmPe', 'arithmetic': 'ttmPe'},
-                               'pb': {'overall': 'addPb', 'median': 'middlePb', 'arithmetic': 'pb'}}.items():
+        for metric in metrics:
+            fields = {'pe': {'overall': 'addTtmPe', 'median': 'middleTtmPe', 'arithmetic': 'ttmPe'},
+                      'pb': {'overall': 'addPb', 'median': 'middlePb', 'arithmetic': 'pb'}}[metric]
             token=hashlib.md5(today().isoformat().encode(),usedforsecurity=False).hexdigest()
             options=legu_session('https://legulegu.com/stockdata/sz50-'+('ttm-lyr' if metric=='pe' else 'pb'))
             # Cookies and token stay in memory; sanitized provenance contains no secrets.
             import requests
-            # Existing saved profiles predate some verified supplier mappings.
-            # Resolve those mappings at fetch time without rewriting the profile.
-            code = profile.get('valuation_code') or identity(profile['code']).get('valuation_code') or profile['code'] + ('.SZ' if profile['provider'] == 'cni' else '.SH')
             url = 'https://legulegu.com/api/stockdata/index-basic-' + metric
             try:
                 r = requests.get(url, params={'token': token, 'indexCode': code}, timeout=20, **options)
@@ -139,6 +152,24 @@ def valuations(profile, asof):
             evidence.append(dict(url=url, parameters={'indexCode': code}, fetched_at=now(), sha256=hashlib.sha256(r.content).hexdigest()))
     return dict(series=out, evidence=evidence, effective_date=min(v['overall']['rows'][-1]['date'] for v in out.values()),
                 methodology_note='供应商整体法亏损剔除与加权细节未独立复原；历史为当前可得版本')
+
+
+def probe_valuations(profile, suffix):
+    if suffix not in VALUATION_SUFFIXES: raise market.ProviderError('估值后缀不在候选列表中')
+    code=profile['code']+'.'+suffix
+    result=dict(code=code,metrics={});asof=cutoff()
+    for metric in ('pe','pb'):
+        try:
+            value=fetch_valuations(dict(profile,valuation_code=code),asof,(metric,))
+            rows=value['series'][metric]['overall']['rows']
+            dates=[day(r['date']).isoformat() for r in rows]
+            if dates!=sorted(set(dates)):raise market.ProviderError('估值历史日期重复或未排序')
+            dec(rows[-1]['value'],positive=True)
+            result['metrics'][metric]=dict(status='available',count=len(rows),start_date=rows[0]['date'],date=rows[-1]['date'],current=rows[-1]['value'])
+        except Exception as exc:
+            result['metrics'][metric]=dict(status='error',reason=str(exc)[:300])
+    result['status']='available' if all(v['status']=='available' for v in result['metrics'].values()) else 'unavailable'
+    return result
 
 
 def excel_rows(raw):

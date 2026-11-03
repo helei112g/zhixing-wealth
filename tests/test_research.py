@@ -20,7 +20,7 @@ from backend.research.service import ResearchService,validate_backup
 from backend.research.snapshots import encode,decode,MAX_PAYLOAD
 from backend.service import Service
 from backend.store import Store
-from tests.research_fixtures import ASOF,price_payload,valuation_payload,member_payload,stock_payload,finance_payload
+from tests.research_fixtures import ASOF,price_payload,valuation_payload,valuation_probe_payload,member_payload,stock_payload,finance_payload
 
 
 class MetricTests(unittest.TestCase):
@@ -101,7 +101,10 @@ class ResearchTests(unittest.TestCase):
         self.no_start=patch.object(self.r.updates,'start');self.no_start.start()
     def tearDown(self):self.no_start.stop();self.r.shutdown();self.temp.cleanup()
     def add(self,code='000905',request='synthetic-add'):
-        p=self.r.resolve(code);body=dict(resolve_token=p['resolve_token'],expected_research_revision=p['research_revision'],request_id=request)
+        p=self.r.resolve(code)
+        with patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload):
+            validated=self.r.valuation_preview(code,p['default_valuation_suffix'])
+        body=dict(resolve_token=p['resolve_token'],valuation_token=validated['valuation_token'],expected_research_revision=p['research_revision'],request_id=request)
         return self.r.add(body),body
     def populate(self):
         added,_=self.add();p=self.r.profile(added['id'])
@@ -165,7 +168,9 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(self.store.state()['revision'],ledger_revision)
         self.assertEqual(self.r.revision(),research_revision+1)
     def test_resolve_tamper_expiry_identity_drift_and_cas(self):
-        preview=self.r.resolve('000905');body=dict(resolve_token=preview['resolve_token']+'x',expected_research_revision=0,request_id='bad')
+        preview=self.r.resolve('000905')
+        with patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload):validation=self.r.valuation_preview('000905','SH')
+        body=dict(resolve_token=preview['resolve_token']+'x',valuation_token=validation['valuation_token'],expected_research_revision=0,request_id='bad')
         with self.assertRaises(DomainError):self.r.add(body)
         with patch('backend.research.service.time.time',return_value=preview['expires_at']+1):
             with self.assertRaises(DomainError):self.r.add(dict(body,resolve_token=preview['resolve_token']))
@@ -338,11 +343,12 @@ class ResearchApiTests(unittest.TestCase):
     def test_authenticated_api_revision_projection_scenario_and_readonly_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
             app=create_app(tmp,testing=True,auto_sync=False)
-            with patch.object(app.state.research.updates,'start'),TestClient(app) as c:
+            with patch.object(app.state.research.updates,'start'),patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload),TestClient(app) as c:
                 b=c.get('/api/bootstrap').json();h={'X-CSRF-Token':b['csrf_token']}
                 self.assertEqual(c.post('/api/research/indices/resolve',json={'code':'000905'}).status_code,403)
                 preview=c.post('/api/research/indices/resolve',headers=h,json={'code':'000905'}).json()
-                a=c.post('/api/research/indices',headers=h,json=dict(resolve_token=preview['resolve_token'],expected_research_revision=0,request_id='api-add'));self.assertEqual(a.status_code,200,a.text)
+                validated=c.post('/api/research/indices/valuation-preview',headers=h,json=dict(code='000905',valuation_suffix='SH')).json()
+                a=c.post('/api/research/indices',headers=h,json=dict(resolve_token=preview['resolve_token'],valuation_token=validated['valuation_token'],expected_research_revision=0,request_id='api-add'));self.assertEqual(a.status_code,200,a.text)
                 iid=a.json()['id'];r=app.state.research;p=r.profile(iid)
                 r.publish(iid,'price',price_payload(p,'price'));r.publish(iid,'valuations',valuation_payload(p));r.publish(iid,'memberships',member_payload(p))
                 d=c.get('/api/research/indices/'+iid).json();self.assertEqual(c.get('/api/research/indices/'+iid+'/constituents?page_size=1&analysis_id='+d['analysis_id']).json()['total'],2)
@@ -554,3 +560,101 @@ class RegisteredIdentityTests(unittest.TestCase):
         with patch.object(providers,'request',return_value=(dict(result=dict(data=[],pages=1)),{})) as request:
             value=providers.financials([member],ASOF)
         self.assertEqual(request.call_count,2);self.assertEqual(value['rows'],[])
+
+
+class ValuationSelectionTests(unittest.TestCase):
+    setUp=ResearchTests.setUp
+    tearDown=ResearchTests.tearDown
+    add=ResearchTests.add
+
+    def validated(self,code='000922',suffix='CSI'):
+        with patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload):
+            return self.r.valuation_preview(code,suffix)
+
+    def command(self,code,validation,request='synthetic-selected'):
+        resolved=self.r.resolve(code)
+        return dict(resolve_token=resolved['resolve_token'],valuation_token=validation['valuation_token'],
+                    expected_research_revision=resolved['research_revision'],request_id=request)
+
+    def test_unmapped_identity_does_not_guess_or_fetch(self):
+        p=providers.identity('000985')
+        self.assertIsNone(self.r.resolve('000985')['default_valuation_suffix'])
+        self.assertEqual(self.r.resolve('000985')['valuation_options'],['CSI','SH','SZ','LG'])
+        with patch('requests.get') as get:
+            with self.assertRaises(providers.market.ProviderError):providers.valuations(p,ASOF)
+            get.assert_not_called()
+        # An explicit saved None also prevents falling back to a registered default.
+        with patch('requests.get') as get:
+            with self.assertRaises(providers.market.ProviderError):providers.valuations(dict(providers.identity('000922'),valuation_code=None),ASOF)
+            get.assert_not_called()
+
+    def test_validation_is_read_only_and_selected_code_persists(self):
+        before=capture(self.path);validation=self.validated()
+        self.assertEqual(capture(self.path),before)
+        self.assertEqual(validation['status'],'available')
+        command=self.command('000922',validation);saved=self.r.add(command)
+        self.assertEqual(self.r.profile(saved['id'])['valuation_code'],'000922.CSI')
+        self.assertEqual(self.r.add(command),saved)
+
+    def test_missing_tampered_expired_and_cross_identity_proof_are_rejected(self):
+        valid=self.validated();body=self.command('000922',valid)
+        for token in (None,'fake',valid['valuation_token']+'x'):
+            with self.assertRaises(DomainError):self.r.add(dict(body,valuation_token=token))
+        for code in ('000905','H00922'):
+            with self.assertRaises(DomainError):self.r.add(self.command(code,valid))
+        with patch('backend.research.service.time.time',return_value=valid['expires_at']+1):
+            with self.assertRaises(DomainError):self.r.add(self.command('000922',valid))
+        self.assertEqual(self.r.profiles(),[])
+
+    def test_explicit_opt_out_never_probes_and_keeps_valuation_unsupported(self):
+        with patch.object(providers,'probe_valuations') as probe:
+            validation=self.r.valuation_preview('000922',None)
+        probe.assert_not_called()
+        saved=self.r.add(self.command('000922',validation))
+        self.assertIsNone(self.r.profile(saved['id'])['valuation_code'])
+        with patch.object(providers,'valuations') as fetch:
+            outcome=self.r.updates.execute(dict(scope='valuations',target=saved['id'],module='valuations'))
+        fetch.assert_not_called();self.assertEqual(outcome[0]['status'],'unsupported')
+
+    def test_existing_configuration_is_not_silently_replaced(self):
+        saved,_=self.add('000922');before=self.r.profile(saved['id'])
+        with self.assertRaises(ConflictError):self.r.add(self.command('000922',self.r.valuation_preview('000922',None)))
+        self.assertEqual(self.r.profile(saved['id']),before)
+
+    def test_probes_both_metrics_and_partial_or_zero_data_cannot_authorize_save(self):
+        profile=providers.identity('000922');payload=valuation_payload(profile)
+        for failed_metric in ('pe','pb'):
+            def fetch(p,asof,metrics):
+                if metrics[0]==failed_metric:raise providers.market.ProviderError('synthetic missing metric')
+                return payload
+            with patch.object(providers,'fetch_valuations',side_effect=fetch) as call:
+                validation=self.r.valuation_preview('000922','SH')
+            self.assertEqual(call.call_count,2)
+            self.assertEqual(validation['status'],'unavailable');self.assertIsNone(validation['valuation_token'])
+            self.assertTrue(all(c.args[0]['valuation_code']=='000922.SH' for c in call.call_args_list))
+        zero=copy.deepcopy(payload)
+        zero['series']['pb']['overall']['rows'][-1]['value']='0'
+        with patch.object(providers,'fetch_valuations',return_value=zero):
+            self.assertIsNone(self.r.valuation_preview('000922','CSI')['valuation_token'])
+
+    def test_api_requires_explicit_choice_and_proof_and_preserves_preview_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app=create_app(tmp,testing=True,auto_sync=False)
+            with patch.object(app.state.research.updates,'start'),patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload),TestClient(app) as c:
+                boot=c.get('/api/bootstrap').json();headers={'X-CSRF-Token':boot['csrf_token']}
+                resolved=c.post('/api/research/indices/resolve',headers=headers,json={'code':'000922'}).json()
+                path='/api/research/indices/valuation-preview'
+                for body in ({'code':'000922'},{'code':'000922','valuation_suffix':'FAKE'}):
+                    self.assertEqual(c.post(path,headers=headers,json=body).status_code,422)
+                before=capture(app.state.store.directory)
+                bad=c.post(path,headers=headers,json=dict(code='000922',valuation_suffix='SH')).json()
+                self.assertIsNone(bad['valuation_token'])
+                good=c.post(path,headers=headers,json=dict(code='000922',valuation_suffix='CSI')).json()
+                self.assertEqual(capture(app.state.store.directory),before)
+                body=dict(resolve_token=resolved['resolve_token'],expected_research_revision=resolved['research_revision'],request_id='synthetic-api-proof')
+                self.assertEqual(c.post('/api/research/indices',headers=headers,json=body).status_code,422)
+                saved=c.post('/api/research/indices',headers=headers,json=dict(body,valuation_token=good['valuation_token']))
+                self.assertEqual(saved.status_code,200,saved.text)
+                read=c.get('/api/research/indices/'+saved.json()['id']).json()
+                self.assertEqual(read['profile']['valuation_code'],'000922.CSI')
+                self.assertEqual(c.get('/api/bootstrap').json()['revision'],boot['revision'])

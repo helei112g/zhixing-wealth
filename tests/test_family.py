@@ -164,7 +164,11 @@ class FamilyTests(unittest.TestCase):
     def test_notification_os_acceptance_verified_not_assumed(self):
         n=FamilyNotifications(self.store,self.family,'test');n.prepared=True;n._save(n.preferences,{'enabled':True})
         self.item('insurance','0',policy_end='2026-11-10')
-        with patch.object(n,'_helper',return_value={'authorization':'authorized','pending_ids':[]}):r=n.reconcile(True)
+        with patch('backend.family_notifications.datetime',wraps=datetime) as clock, \
+             patch('backend.family_notifications.now',return_value='2026-10-27T09:00:00+08:00'), \
+             patch.object(n,'_helper',return_value={'authorization':'authorized','pending_ids':[]}):
+            clock.now.return_value=datetime(2026,10,27,9,tzinfo=ZoneInfo('Asia/Shanghai'))
+            r=n.reconcile(True)
         self.assertEqual(r['missing_count'],1);self.assertEqual(r['deferred_count'],2)
         self.assertTrue(r['error']);self.assertIsNone(r['coverage_until'])
     def test_family_api_requires_csrf_revision_and_preserves_nulls(self):

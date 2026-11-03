@@ -74,6 +74,18 @@ def main():
     except RuntimeError as e:check('409' in str(e),'cross-version page rejected')
     else:raise AssertionError('stale analysis page accepted')
     check(all((Path(__file__).resolve().parents[1]/'.agents/skills'/name/'SKILL.md').is_file() for name in ('zhixing-research','zhixing-portfolios')),'project skill paths exist')
+    for code,tr in [('930955','H20955'),('399998','H20596'),('000991','H00991')]:
+        count=c.request('/api/research/indices')['total']
+        for identity,basis in ((code,'price'),(tr,'total_return')):
+            preview=c.resolve_index(identity)
+            check(preview['profile']['provider']=='csi' and preview['profile']['input_basis']==basis,'exact CSI identity and basis through HTTP '+identity)
+            added=c.write('/api/research/indices',dict(resolve_token=preview['resolve_token'],expected_research_revision=preview['research_revision'],request_id='synthetic-ai-csi-'+identity),'POST')
+            check(added['id']=='csi:'+code and added['existing'],'both CSI codes reuse the browser-created family '+identity)
+            value=c.research_index(added['id'],basis=basis)
+            check(value['series_code']==identity and value['latest'] is not None,'new CSI series reads back through standard client '+identity)
+        check(c.request('/api/research/indices')['total']==count,'duplicate CSI additions do not add a family '+code)
+    check(c.research_index('csi:930955')['module_status']['valuations']['status']=='unsupported','AI reads the same dividend valuation gap as UI')
+    check(any(m['market']=='BJ' for m in c.research_index('csi:000991')['companies']),'AI preserves Beijing member identity')
     Path(os.environ['PORTFOLIO_TEST_OUTPUT'],'research-ai-checks.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2))
 
 

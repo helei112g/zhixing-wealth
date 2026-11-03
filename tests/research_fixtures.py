@@ -32,6 +32,12 @@ def valuation_payload(profile,asof=ASOF):
     return dict(series=series,effective_date=ASOF,evidence=[])
 
 
+def valuation_probe_payload(profile,suffix):
+    code=profile['code']+'.'+suffix
+    good=code==profile.get('valuation_code')
+    return dict(code=code,status='available' if good else 'unavailable',metrics={m:(dict(status='available',count=120,start_date='2016-10-31',date=ASOF,current='10' if m=='pe' else '1') if good else dict(status='error',reason='合成来源未覆盖所选代码')) for m in ('pe','pb')})
+
+
 def member_payload(profile,asof=ASOF):
     return dict(rows=[dict(code='600201',name='合成科技',weight='60',market='SH',industry='信息技术',date='2026-09-30'),dict(code='000201',name='合成银行',weight='40',market='SZ',industry='银行',date='2026-09-30')],effective_date='2026-09-30',evidence=[],source='synthetic')
 
@@ -48,7 +54,7 @@ def finance_payload(members,asof=ASOF):
 
 
 def install_providers():
-    providers.prices=price_payload;providers.valuations=valuation_payload;providers.constituents=member_payload;providers.stock_valuations=stock_payload;providers.financials=finance_payload;providers.cutoff=lambda:ASOF
+    providers.prices=price_payload;providers.valuations=valuation_payload;providers.probe_valuations=valuation_probe_payload;providers.constituents=member_payload;providers.stock_valuations=stock_payload;providers.financials=finance_payload;providers.cutoff=lambda:ASOF
 
 
 def historical_memberships(profile,asof=ASOF):

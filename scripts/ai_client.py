@@ -96,7 +96,7 @@ class Client:
     def preview(self, payload, path='/api/events/preview'):
         """Return the full preview, including split_changes after historical backfills."""
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
-        if path not in ('/api/events/preview', '/api/family/preview', '/api/research/indices/resolve') and not re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans/preview', path):
+        if path not in ('/api/events/preview', '/api/family/preview', '/api/research/indices/resolve', '/api/research/indices/valuation-preview') and not re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans/preview', path):
             raise ValueError('Use a documented preview endpoint')
         if (path == '/api/family/preview' or path.endswith('/purchase-plans/preview')) and (type(payload.get('expected_revision')) is not int or payload['expected_revision'] < 0):
             raise ValueError('Preview requires the original ledger revision')
@@ -119,6 +119,7 @@ class Client:
         settings=method=='PUT' and path=='/api/settings/data-updates'
         update=method=='POST' and path=='/api/data-updates/run'
         if research:revision_field='expected_research_revision'
+        if research and not isinstance(payload.get('valuation_token'),str):raise ValueError('Include the original valuation_token from the reviewed PE/PB validation or explicit opt-out')
         if settings:revision_field='expected_settings_revision'
         if not (core or notes or assets or research or settings or update):raise ValueError('Use a documented mutation')
         if not update and (type(payload.get(revision_field)) is not int or payload[revision_field]<0):
@@ -139,6 +140,10 @@ class Client:
 
     def resolve_index(self,code):
         return self.preview({'code':code},'/api/research/indices/resolve')
+
+    def validate_index_valuation(self,code,valuation_suffix):
+        """Read-only PE/PB validation; None explicitly opts out of index valuation."""
+        return self.preview({'code':code,'valuation_suffix':valuation_suffix},'/api/research/indices/valuation-preview')
 
     def research_index(self,index_id,basis='price',window=3,method='overall'):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))

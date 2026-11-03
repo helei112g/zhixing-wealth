@@ -1,4 +1,5 @@
 """Independent research revisions and durable single-worker update planning."""
+import base64
 import hashlib
 import hmac
 import json
@@ -54,7 +55,41 @@ class ResearchService:
         digest = hashlib.sha256(json_dumps(p).encode()).hexdigest()
         message = f'{p["code"]}:{p["input_basis"]}:{expires}:{digest}'
         token = message+':'+hmac.new(self.secret,message.encode(),'sha256').hexdigest()
-        return dict(profile=p, resolve_token=token, expires_at=expires, research_revision=self.revision())
+        saved=next((v for v in self.profiles() if v['id']==p['provider']+':'+p['code']),None)
+        default=providers.valuation_code(saved or p)
+        return dict(profile=p, resolve_token=token, expires_at=expires, research_revision=self.revision(),
+                    valuation_options=list(providers.VALUATION_SUFFIXES),
+                    default_valuation_suffix=default.rsplit('.',1)[-1] if default else None,
+                    valuation_disabled=bool(saved is not None and 'valuation_code' in saved and saved['valuation_code'] is None))
+
+    def valuation_preview(self, code, suffix):
+        p=providers.identity(code)
+        if suffix is None:
+            result=dict(code=None,status='skipped',metrics={})
+        elif suffix not in providers.VALUATION_SUFFIXES:
+            raise DomainError('估值后缀不在候选列表中')
+        elif p['code']=='H11136':
+            result=dict(code=p['code']+'.'+suffix,status='unavailable',metrics={},reason='境外指数估值口径尚未支持，请选择暂不接入估值')
+        else:
+            result=providers.probe_valuations(p,suffix)
+        token=None;expires=int(time.time())+600
+        if result['status'] in ('available','skipped'):
+            payload=dict(profile=hashlib.sha256(json_dumps(p).encode()).hexdigest(),suffix=suffix,expires=expires)
+            content=base64.urlsafe_b64encode(json_dumps(payload).encode()).decode()
+            token=content+':'+hmac.new(self.secret,('valuation:'+content).encode(),'sha256').hexdigest()
+        return dict(result,valuation_token=token,expires_at=expires)
+
+    def _valuation_selection(self, token, profile):
+        try:
+            if not isinstance(token,str) or len(token)>4096:raise ValueError()
+            content,signature=token.split(':')
+            if not hmac.compare_digest(signature,hmac.new(self.secret,('valuation:'+content).encode(),'sha256').hexdigest()):raise ValueError()
+            value=json.loads(base64.urlsafe_b64decode(content))
+            if value['expires']<time.time() or value['profile']!=hashlib.sha256(json_dumps(profile).encode()).hexdigest():raise ValueError()
+            suffix=value['suffix']
+            if suffix is not None and suffix not in providers.VALUATION_SUFFIXES:raise ValueError()
+        except (ValueError,KeyError,TypeError):raise DomainError('估值验证缺失、已过期或与指数不匹配，请重新选择并验证PE、PB') from None
+        return profile['code']+'.'+suffix if suffix else None
 
     def add(self, body):
         request_id=body.get('request_id')
@@ -74,9 +109,14 @@ class ResearchService:
                     p=providers.identity(code);p['input_basis']=basis
                     if hashlib.sha256(json_dumps(p).encode()).hexdigest()!=identity_digest:raise ValueError()
                 except (ValueError,TypeError):raise DomainError('身份预览已失效，请重新识别') from None
+                selected_code=self._valuation_selection(body.get('valuation_token'),p)
                 row=db.execute("SELECT value FROM research_meta WHERE key='revision'").fetchone();revision=int(row[0]) if row else 0
                 if type(body.get('expected_research_revision')) is not int or body['expected_research_revision']!=revision:raise ConflictError('资料已变化，请重新识别并核对')
                 iid=p['provider']+':'+p['code']
+                existing=db.execute('SELECT data FROM research_indices WHERE id=?',(iid,)).fetchone()
+                if existing and providers.valuation_code(json.loads(existing[0]))!=selected_code:
+                    raise ConflictError('该指数已建档，估值配置与已有档案不同；本次未覆盖配置，请保留原选择')
+                p['valuation_code']=selected_code
                 inserted=db.execute('INSERT OR IGNORE INTO research_indices VALUES (?,?)',(iid,json_dumps(dict(p,id=iid,created_at=now())))).rowcount
                 if inserted:
                     revision+=1

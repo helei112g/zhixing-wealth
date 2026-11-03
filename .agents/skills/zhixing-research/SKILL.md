@@ -9,7 +9,7 @@ description: 在知行财富本机系统读取指数资料、核对代码配对�
 
 1. 读取 `/api/capabilities` 和 `/api/research/indices`。指数在独立研究工具中，不依赖组合。支持范围与缺口见 [研究合同](../../../docs/research.md) 和 [接口](../../../docs/api.md)。
 2. 通过 `resolve_index(code)` 或 preview 的 `/api/research/indices/resolve` 识别。展示名称、机构、价格/全收益代码、输入口径和研究版本；未知代码不能猜前缀、改成同名指数。
-3. 获得建档授权后，POST `/api/research/indices`，原样携带 resolve_token、expected_research_revision、稳定 request_id。建档和首次补齐意图原子保存。回读返回的正式 ID 与 job_id。受理不等于采集完成。
+3. 从resolve响应读取valuation_options与default_valuation_suffix；后缀仅在明确登记时默认选中，不按编制方/代码猜测。调用validate_index_valuation(code, valuation_suffix)验证所选代码的PE、PB，展示各自状态、数量和实际日期。两项通过才有valuation_token；无法取数时保留缺口，由用户明确选择None才可暂不接入估值，不能自动放弃估值。验证只读，不发布快照或更新任务。获得建档授权后，POST `/api/research/indices`，原样携带 resolve_token、valuation_token、expected_research_revision、稳定 request_id（两种token均绑定本次输入；有效期10分钟）。建档和首次补齐意图原子保存。回读返回的正式 ID 与 job_id。受理不等于采集完成。
 4. 409 重新读取并展示差异；未知结果先回读，保留原 request_id，不能换版本强制提交。重复添加只保留一个指数档案。
 5. 估值、价格、成分和财报日期分别解释。3/5/10 年不足为 null，不能补零。高点日期是各自窗口内最高收盘最近出现日；不称为“本轮高点”。PE/PB不按价格与全收益点位比例缩放。
 6. 分页/图表使用同一个 analysis_id；快照变化后重读，不拼接不同版本。财务当前篮子与历史有效名单分开；当前可得重述财报不冒充严格 PIT，缺年份与行业未知保留缺口。

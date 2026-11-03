@@ -376,8 +376,9 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 | 接口 | 合同 |
 |---|---|
-| POST `/api/research/indices/resolve` | `{code}`；返回 profile、resolve_token、research_revision、expires_at。只读身份预览。 |
-| POST `/api/research/indices` | `{resolve_token, expected_research_revision, request_id}`；短期签名绑定精确配对，CAS建档及首次补齐意图同事务持久化；返回 id、basis、job_id、research_revision、existing。原 request_id 重放返回原结果，变更负载409。 |
+| POST `/api/research/indices/resolve` | `{code}`；返回 profile、resolve_token、research_revision、expires_at、valuation_options（CSI/SH/SZ/LG）、default_valuation_suffix、valuation_disabled。只读身份预览；仅明确登记或已保存的映射可作为默认值。 |
+| POST `/api/research/indices/valuation-preview` | `{code,valuation_suffix}`；后缀必须显式传CSI/SH/SZ/LG，或null表示暂不接入估值。只读联网验证，返回code/status、metrics.pe/pb的状态、观测数量、首末日期及最新值；两项均有效才返回valuation_token，缺失或请求失败时token为null。显式null返回skipped及token，不访问供应商。 |
+| POST `/api/research/indices` | `{resolve_token, valuation_token, expected_research_revision, request_id}`；短期签名绑定精确配对及已验证的来源选择（含显式不接入），CAS建档及首次补齐意图同事务持久化；返回 id、basis、job_id、research_revision、existing。原 request_id 重放返回原结果，变更负载409。 |
 | GET `/api/research/indices?kind=宽基&page=1` | 固定每页20；价格摘要、PE/PB 3/5/10年分位和独立高点日期。无搜索、关注及组合关联。 |
 | GET `/api/research/indices/{id}?basis=price&method=overall&window=3` | basis为price/total_return；method为overall/median/arithmetic；窗口3/5/10。返回analysis_id、独立research_revision及四页签投影。当前可得版本；历史asof参数明确拒绝，避免冒充PIT。 |
 | GET `.../{id}/series` | basis、window、可选analysis_id；返回抽样曲线与完整日线计算的高点/最大回撤。 |
@@ -444,3 +445,6 @@ UpdateRequest.resources按scope区分六种结构，OpenAPI同时公开各模块
 - 实际开支总额替代预算，不相加。confirmed表示整月收入和开支已经完整核对，无收入记录时明确确认零收入；收入记录改变后needs_review为true并退出实际年度统计。已确认月份保存预算快照，之后改计划不改写该月。上述两类操作不产生现金流水、证券事件或资产快照；超时先回读，不自动重试。
 - 指数详情新增 `module_status`，逐模块包含supported/status/reason/date。科创50价格/全收益代码000688/000688CNY01，中证海外中国互联网H11136/H01136；后者估值及财务模块明确unsupported，不调用A股财务适配器。
 - 注册表另支持红利低波100（930955/H20955）、中证煤炭（399998/H20596）、全指医药（000991/H00991），均为csi家族；任一代码可识别，保留输入basis，重复建档返回同一id。红利低波100的指数估值模块为unsupported，其余模块分别报告实际状态；全指医药的北交所成分使用market=BJ。399998的profile含valuation_code=399998.SZ，行情仍使用中证接口。接口、研究CAS及幂等契约不变。
+- 中证红利000922/H00922的身份预览profile包含`valuation_code=000922.CSI`；此前没有该字段的既有档案无需重建，估值采集时回查当前注册表，仍保留原档案响应。修复不自动更新正式数据，正常估值更新后详情返回PE/PB及对应来源参数。930955的候选等权历史与认证API核验见[研究来源说明](research.md)，当前接口支持状态不变。
+
+估值验证凭证有效期10分钟，绑定完整输入身份及所选来源；缺失、篡改、过期或跨指数/口径使用均拒绝。验证不写研究快照、revision或更新任务。原request_id成功重放仍返回原结果，不受凭证随后过期影响；未知结果先用原负载回读。重复建档保留既有估值配置，不同选择返回409，不静默覆盖。请求字段/枚举无效返回422，预验证的来源缺失或请求失败则200返回逐指标原因及null token。读取缺少valuation_code的旧档案，只回查明确注册映射；显式valuation_code=null不回退，尚无明确映射则估值unsupported。正式同步仍按原策略与任务流程执行。

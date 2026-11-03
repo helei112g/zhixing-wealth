@@ -17,7 +17,12 @@ def main():
         checks.append(label);print('PASS research AI',len(checks),label,flush=True)
     cap=c.request('/api/capabilities');check(cap['research']['windows']==[3,5,10],'capability discovery')
     before=c.connect()['revision'];preview=c.resolve_index('H00300');check(c.connect()['revision']==before,'resolve does not change ledger')
-    body=dict(resolve_token=preview['resolve_token'],expected_research_revision=preview['research_revision'],request_id='synthetic-ai-add')
+    original=(c.request('/api/research/revision'),c.request('/api/data-updates/jobs'))
+    validation=c.validate_index_valuation('H00300',preview['default_valuation_suffix'])
+    check(validation['status']=='available' and set(validation['metrics'])=={'pe','pb'},'AI validates both selected valuation metrics')
+    check((c.request('/api/research/revision'),c.request('/api/data-updates/jobs'))==original,'valuation validation does not publish snapshots or jobs')
+    check(cap['research']['valuation_preview']['suffixes']==['CSI','SH','SZ','LG'],'AI discovers explicit suffix list')
+    body=dict(resolve_token=preview['resolve_token'],valuation_token=validation['valuation_token'],expected_research_revision=preview['research_revision'],request_id='synthetic-ai-add')
     saved=c.write('/api/research/indices',body,'POST');check(c.write('/api/research/indices',body,'POST')==saved,'replayed add returns original result')
     end=time.monotonic()+20
     while time.monotonic()<end:
@@ -78,8 +83,9 @@ def main():
         count=c.request('/api/research/indices')['total']
         for identity,basis in ((code,'price'),(tr,'total_return')):
             preview=c.resolve_index(identity)
+            validation=c.validate_index_valuation(identity,preview['default_valuation_suffix'])
             check(preview['profile']['provider']=='csi' and preview['profile']['input_basis']==basis,'exact CSI identity and basis through HTTP '+identity)
-            added=c.write('/api/research/indices',dict(resolve_token=preview['resolve_token'],expected_research_revision=preview['research_revision'],request_id='synthetic-ai-csi-'+identity),'POST')
+            added=c.write('/api/research/indices',dict(resolve_token=preview['resolve_token'],valuation_token=validation['valuation_token'],expected_research_revision=preview['research_revision'],request_id='synthetic-ai-csi-'+identity),'POST')
             check(added['id']=='csi:'+code and added['existing'],'both CSI codes reuse the browser-created family '+identity)
             value=c.research_index(added['id'],basis=basis)
             check(value['series_code']==identity and value['latest'] is not None,'new CSI series reads back through standard client '+identity)

@@ -6,7 +6,7 @@ import json
 import tempfile
 import unittest
 import zipfile
-from datetime import date,timedelta
+from datetime import date,datetime,timedelta
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
@@ -118,6 +118,33 @@ class ResearchTests(unittest.TestCase):
     def test_unknown_and_similar_code_never_guessed(self):
         for code in ('000906','399999','中证500','399005'):
             with self.assertRaises(DomainError):self.r.resolve(code)
+    def test_added_csi_families_deduplicate_both_bases_and_preserve_backup_identity(self):
+        ledger_revision=self.store.state()['revision']
+        for code,tr in [('930955','H20955'),('399998','H20596'),('000991','H00991')]:
+            with self.subTest(code=code):
+                preview=self.r.resolve(tr.lower())
+                self.assertEqual(preview['profile']['input_basis'],'total_return')
+                saved,_=self.add(tr,'new-'+code)
+                duplicate,_=self.add(code,'duplicate-'+code)
+                self.assertEqual(saved['id'],'csi:'+code)
+                self.assertEqual(duplicate['id'],saved['id']);self.assertTrue(duplicate['existing'])
+                profile=self.r.profile(saved['id'])
+                for basis in ('price','total_return'):
+                    self.r.publish(saved['id'],basis,price_payload(profile,basis))
+                self.assertEqual(self.r.detail(saved['id'],'total_return')['series_code'],tr)
+        self.assertEqual(len(self.r.profiles()),3)
+        self.assertEqual(self.store.state()['revision'],ledger_revision)
+        with self.store.connection() as db:validate_backup(db)
+    def test_dividend_low_volatility_valuation_gap_is_reported_without_fetching(self):
+        added,_=self.add('930955')
+        with patch.object(providers,'valuations') as fetch:
+            outcome=self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
+        fetch.assert_not_called()
+        self.assertEqual(outcome[0]['status'],'unsupported')
+        status=self.r.detail(added['id'])['module_status']
+        self.assertFalse(status['valuations']['supported'])
+        self.assertIn('未覆盖',status['valuations']['reason'])
+        self.assertTrue(status['stock_valuations']['supported'])
     def test_resolve_tamper_expiry_identity_drift_and_cas(self):
         preview=self.r.resolve('000905');body=dict(resolve_token=preview['resolve_token']+'x',expected_research_revision=0,request_id='bad')
         with self.assertRaises(DomainError):self.r.add(body)
@@ -435,8 +462,9 @@ if __name__=='__main__':unittest.main()
 
 
 class RegisteredIdentityTests(unittest.TestCase):
-    def test_a500_and_information_pairs_resolve_bidirectionally(self):
-        for code,tr,name in [('000510','000510CNY010','中证A500'),('000993','H00993','全指信息')]:
+    def test_registered_csi_pairs_resolve_bidirectionally(self):
+        for code,tr,name in [('000510','000510CNY010','中证A500'),('000993','H00993','全指信息'),
+                             ('930955','H20955','红利低波100'),('399998','H20596','中证煤炭'),('000991','H00991','全指医药')]:
             with self.subTest(code=code):
                 price=providers.identity(code);total=providers.identity(tr.lower())
                 self.assertEqual((price['code'],price['return_code'],price['name']),(code,tr,name))
@@ -444,7 +472,7 @@ class RegisteredIdentityTests(unittest.TestCase):
                 self.assertEqual(price['input_basis'],'price');self.assertEqual(total['input_basis'],'total_return')
                 self.assertIn(code+'factsheet.pdf',price['method_url'])
     def test_unknown_variants_are_not_guessed_from_prefix(self):
-        for code in ('H00510','00051','H993','000993FAKE'):
+        for code in ('H00510','00051','H993','000993FAKE','H30955','H399998','H00998','DJUSDIV'):
             with self.subTest(code=code),self.assertRaises(providers.market.ProviderError):providers.identity(code)
     def test_a500_official_return_code_and_publication_boundary_reach_adapter(self):
         profile=providers.identity('000510CNY010')
@@ -454,3 +482,43 @@ class RegisteredIdentityTests(unittest.TestCase):
         self.assertIn('indexCode=000510CNY010',request.call_args.args[0])
         self.assertEqual([r['date'] for r in result['rows']],['2024-09-23','2026-10-30'])
         self.assertIsNotNone(result['theoretical_history_note'])
+    def test_new_csi_daily_series_use_exact_codes_and_launch_boundaries(self):
+        for code in ('930955','399998','000991'):
+            profile=providers.identity(code)
+            self.assertEqual(profile['provider'],'csi')
+            for basis in ('price','total_return'):
+                series=profile['return_code'] if basis=='total_return' else code
+                raw=[dict(indexCode=series,tradeDate=d,close='100') for d in ('1999-01-01','2010-01-04',profile['launch'],ASOF,'2026-11-03')]
+                with self.subTest(code=code,basis=basis),patch.object(providers,'request',return_value=(dict(data=raw),{})) as request:
+                    result=providers.prices(profile,basis,ASOF)
+                    self.assertIn(providers.CSI+'/csindex-home/perf/index-perf?',request.call_args.args[0])
+                    self.assertIn('indexCode='+series,request.call_args.args[0])
+                    self.assertEqual(result['series_code'],series)
+                    self.assertEqual([r['date'] for r in result['rows']],[profile['launch'],ASOF])
+                with patch.object(providers,'request',return_value=(dict(data=[dict(indexCode='WRONG',tradeDate=ASOF,close='100')]),{})):
+                    with self.assertRaises(providers.market.ProviderError):providers.prices(profile,basis,ASOF)
+    def test_coal_valuation_uses_verified_sz_code_with_csi_price_provider(self):
+        profile=providers.identity('399998')
+        data=[dict(date=ASOF,addTtmPe=12,middleTtmPe=13,ttmPe=14,addPb=1,middlePb=2,pb=3)]
+        with patch.object(providers,'legu_session',return_value={}),patch('requests.get') as get:
+            get.return_value.json.return_value=dict(data=data);get.return_value.content=b'synthetic valuation'
+            result=providers.valuations(profile,ASOF)
+        self.assertEqual([call.kwargs['params']['indexCode'] for call in get.call_args_list],['399998.SZ','399998.SZ'])
+        self.assertEqual(result['series']['pe']['overall']['rows'][0]['value'],'12')
+        self.assertEqual(result['series']['pb']['overall']['rows'][0]['value'],'1')
+    def test_beijing_member_preserves_official_exchange_and_uses_a_share_adapters(self):
+        profile=providers.identity('000991')
+        row=[ASOF,profile['code'],'合成医药指数',None,'920201','合成北交所公司',None,'北京证券交易所',None,'100']
+        with patch('requests.get') as get,patch.object(providers,'excel_rows',return_value=[[],row]):
+            get.return_value.content=b'synthetic weights'
+            member=providers.constituents(profile,ASOF)['rows'][0]
+        self.assertEqual((member['code'],member['market'],member['exchange']),('920201','BJ','北京证券交易所'))
+        stamp=int(datetime.fromisoformat(ASOF+'T15:00:00+08:00').timestamp())
+        quote=dict(data=dict(diff=[dict(f12='920201',f124=stamp,f115=20,f23=2,f100='医药')]))
+        with patch.object(providers,'request',return_value=(quote,{})) as request:
+            value=providers.stock_valuations([member],ASOF)
+        self.assertIn('secids=0.920201',request.call_args.args[0])
+        self.assertEqual(value['rows'][0]['code'],'920201')
+        with patch.object(providers,'request',return_value=(dict(result=dict(data=[],pages=1)),{})) as request:
+            value=providers.financials([member],ASOF)
+        self.assertEqual(request.call_count,2);self.assertEqual(value['rows'],[])

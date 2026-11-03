@@ -443,3 +443,4 @@ UpdateRequest.resources按scope区分六种结构，OpenAPI同时公开各模块
 - `expense_plan`、`expense_month` 加入 `/api/family/preview` 和 `/api/family/commands`，沿用expected_revision、record_id。`command-schema`版本3提供完整JSON Schema。expense_plan包含name、amount或source_item_id、effective_month、end_month；编辑原ID追加版本。expense_month包含month、extra_plan、actual_amount、confirmed、note，record_id为YYYY-MM；未来月份只允许预算。
 - 实际开支总额替代预算，不相加。confirmed表示整月收入和开支已经完整核对，无收入记录时明确确认零收入；收入记录改变后needs_review为true并退出实际年度统计。已确认月份保存预算快照，之后改计划不改写该月。上述两类操作不产生现金流水、证券事件或资产快照；超时先回读，不自动重试。
 - 指数详情新增 `module_status`，逐模块包含supported/status/reason/date。科创50价格/全收益代码000688/000688CNY01，中证海外中国互联网H11136/H01136；后者估值及财务模块明确unsupported，不调用A股财务适配器。
+- 注册表另支持红利低波100（930955/H20955）、中证煤炭（399998/H20596）、全指医药（000991/H00991），均为csi家族；任一代码可识别，保留输入basis，重复建档返回同一id。红利低波100的指数估值模块为unsupported，其余模块分别报告实际状态；全指医药的北交所成分使用market=BJ。399998的profile含valuation_code=399998.SZ，行情仍使用中证接口。接口、研究CAS及幂等契约不变。

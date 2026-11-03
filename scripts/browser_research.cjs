@@ -60,6 +60,18 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
  await page.getByRole('heading',{name:'数据覆盖情况',exact:true}).waitFor();for(const label of ['价格指数','全收益指数','成分名单与权重'])await page.getByRole('row').filter({has:page.getByRole('cell',{name:label,exact:true})}).getByRole('cell',{name:'可查看',exact:true}).waitFor({timeout:20000});check(await page.getByText('暂不支持',{exact:true}).count()===5,'overseas index shows five unsupported modules explicitly');await shot('overseas-index-module-coverage');
  await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('cell',{name:/合成境外公司甲/}).waitFor({timeout:20000});
  check((await page.locator('.research-page').innerText()).includes('00999.HK')&&(await page.locator('.research-page').innerText()).includes('SYN.O'),'overseas member table keeps HK and US identities');await shot('overseas-index-members');
+ for(const [code,tr,name] of [['930955','H20955','红利低波100'],['399998','H20596','中证煤炭'],['000991','H00991','全指医药']]){
+  const deadline=Date.now()+20000;
+  while((await api('/data-updates/jobs')).jobs.some(j=>['pending','running'].includes(j.state))){assert.ok(Date.now()<deadline,'previous update finishes before adding '+code);await page.waitForTimeout(100);}
+  await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();await add(code);
+  await page.getByRole('button',{name:'全收益指数 '+tr,exact:true}).waitFor();await page.getByRole('heading',{name:name+' '+code,exact:true}).waitFor();
+  for(const label of ['价格指数','全收益指数','成分名单与权重'])await page.getByRole('row').filter({has:page.getByRole('cell',{name:label,exact:true})}).getByRole('cell',{name:'可查看',exact:true}).waitFor({timeout:20000});
+  check((await page.locator('.research-detail-header').innerText()).includes('中证指数'),'new CSI family uses CSI identity '+code);
+  if(code==='930955'){check(await page.getByText('暂不支持',{exact:true}).count()===1,'low-volatility dividend index exposes the valuation source gap');await shot('dividend-low-volatility-coverage');}
+  await page.getByRole('button',{name:'全收益指数 '+tr,exact:true}).click();await page.waitForFunction(()=>document.querySelector('.research-metrics .drawdown-window time')?.textContent==='2024-07-01');
+  check(await page.locator('.research-basis button[aria-pressed=true]').innerText()==='全收益指数 '+tr,'new family can load its exact total-return series '+code);
+  if(code==='000991'){await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('cell',{name:/合成北交所公司/}).waitFor();check((await page.locator('.research-companies').innerText()).includes('920201 · BJ'),'healthcare preserves Beijing member identity');await shot('healthcare-beijing-member');}
+ }
  check(errors.length===0,'no browser exceptions');fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({checks,errors,synthetic:true},null,2));
  }catch(e){console.error('PAGE ERRORS',errors);console.error((await page.locator('body').innerText()).slice(-4000));await shot('failure');throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

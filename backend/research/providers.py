@@ -23,6 +23,9 @@ CATALOG = [
     dict(code='000819', return_code='H00819', name='有色金属', provider='csi', kind='行业', launch='2009-07-03'),
     dict(code='000510', return_code='000510CNY010', name='中证A500', provider='csi', kind='宽基', launch='2024-09-23'),
     dict(code='000993', return_code='H00993', name='全指信息', provider='csi', kind='行业', launch='2011-08-02'),
+    dict(code='930955', return_code='H20955', name='红利低波100', provider='csi', kind='策略', launch='2017-05-26'),
+    dict(code='399998', return_code='H20596', name='中证煤炭', provider='csi', kind='行业', launch='2015-02-13', valuation_code='399998.SZ'),
+    dict(code='000991', return_code='H00991', name='全指医药', provider='csi', kind='行业', launch='2011-08-02'),
 ]
 SOURCE_LOCK = threading.Lock()
 
@@ -41,6 +44,8 @@ def identity(code):
 def module_capabilities(profile):
     modules = ('price','total_return','memberships','historical_memberships','valuations','stock_valuations','financials','historical_financials')
     result = {m:dict(supported=True,reason=None) for m in modules}
+    if profile['code'] == '930955':
+        result['valuations'] = dict(supported=False, reason='现有估值源未覆盖红利低波100；不使用相似指数或官方单日估值拼接历史')
     if profile['code'] == 'H11136':
         for m in ('valuations','stock_valuations'):
             result[m] = dict(supported=False, reason='现有估值源未覆盖中国互联网指数；不使用A股或相似指数估值替代')
@@ -60,7 +65,7 @@ def constituent_identity(code, exchange, overseas=False):
         raise market.ProviderError('境外成分代码与官方交易所无法匹配；拒绝按A股代码推断')
     normalized = cell_code(code)
     if not re.fullmatch(r'\d{6}', normalized): raise market.ProviderError('境内成分代码无效')
-    venue = 'SH' if exchange == '上海证券交易所' else 'SZ' if exchange == '深圳证券交易所' else 'SH' if normalized.startswith('6') else 'SZ'
+    venue = {'上海证券交易所':'SH','深圳证券交易所':'SZ','北京证券交易所':'BJ'}.get(exchange) or ('SH' if normalized.startswith('6') else 'SZ')
     return dict(code=normalized,market=venue,exchange=exchange)
 
 
@@ -110,7 +115,7 @@ def valuations(profile, asof):
             options=legu_session('https://legulegu.com/stockdata/sz50-'+('ttm-lyr' if metric=='pe' else 'pb'))
             # Cookies and token stay in memory; sanitized provenance contains no secrets.
             import requests
-            code = profile['code'] + ('.SZ' if profile['provider'] == 'cni' else '.SH')
+            code = profile.get('valuation_code') or profile['code'] + ('.SZ' if profile['provider'] == 'cni' else '.SH')
             url = 'https://legulegu.com/api/stockdata/index-basic-' + metric
             try:
                 r = requests.get(url, params={'token': token, 'indexCode': code}, timeout=20, **options)
@@ -193,7 +198,7 @@ def constituents(profile, asof):
 
 
 def stock_valuations(members, asof):
-    if any(r['market'] not in ('SH','SZ') for r in members): raise market.ProviderError('境外成分估值尚无核验适配，不调用A股接口')
+    if any(r['market'] not in ('SH','SZ','BJ') for r in members): raise market.ProviderError('境外成分估值尚无核验适配，不调用A股接口')
     rows = []; evidence = []
     for pos in range(0, len(members), 50):
         group = members[pos:pos+50]
@@ -217,7 +222,7 @@ def stock_valuations(members, asof):
 
 
 def financials(members, asof):
-    if any(r['market'] not in ('SH','SZ') for r in members): raise market.ProviderError('境外成分财报口径尚未核验，不调用A股财务接口')
+    if any(r['market'] not in ('SH','SZ','BJ') for r in members): raise market.ProviderError('境外成分财报口径尚未核验，不调用A股财务接口')
     # Official availability is conservative: supplier notice date is used unless separately verified.
     periods = sorted({f'{int(asof[:4])-y}-12-31' for y in range(1,11)} | {asof[:4]+'-'+m for m in ('03-31','06-30','09-30') if asof[:4]+'-'+m <= asof})
     periods = sorted(set(periods) | {str(int(p[:4])-1)+p[4:] for p in periods})

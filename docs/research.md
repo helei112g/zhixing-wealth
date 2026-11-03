@@ -87,3 +87,17 @@ AI功能无需浏览器：capabilities可发现完整选择，客户端覆盖全
 代码及发布日期依据中证官方单张：[红利低波100](https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/930955factsheet.pdf)、[中证煤炭](https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/399998factsheet.pdf)、[全指医药](https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000991factsheet.pdf)。价格发布日期分别为2017-05-26、2015-02-13、2011-08-02；全收益独立发布日期仍待核验，沿用回算序列说明。399998由中证编制，其价格和全收益不走国证接口；乐咕估值的独立供应商代码为`399998.SZ`，不由编制方推断后缀。
 
 三家族的价格、全收益及当前成分支持独立更新。中证煤炭、全指医药使用现有乐咕PE/PB整体法、中位数和算术平均历史；红利低波100的现有估值源未覆盖，指数估值模块标注unsupported，不用相似指数或官方单日估值拼接历史，公司估值及财务仍独立采集。全指医药的北京证券交易所成分保留`BJ`市场身份，与沪深成分一同使用A股公司估值及财报适配器；不把北交所识别为深市。三家族均无已核验的逐年历史有效成分，不以当前篮子回填历史指数。
+
+### 中证红利估值映射与红利低波100候选源核验（2026.11.03）
+
+中证红利的[乐咕页面](https://legulegu.com/stockdata/index-basic?indexCode=000922.CSI)使用供应商代码`000922.CSI`，不是`000922.SH`。前者PE/PB接口各返回263条原始观测；后者返回空数组。按2008-05-26发布日期截断后，现有适配器保留2008-05-30至2026-11-02的223条观测，各自包含整体法、中位数和算术平均。注册表显式记录独立估值代码；没有该字段的既有档案在采集时读取当前注册表映射，无须删除重建、迁移或重写旧档案。价格及全收益仍使用000922/H00922。既有档案通过正常估值更新获取新快照；本次修复本身不触发正式同步。
+
+930955的历史PE/PB并非所有外部来源都没有。以下为本日只读核验结果；候选源尚未接入，`module_status.valuations`继续为unsupported：
+
+| 来源 | 实际核验 | 接入边界 |
+|---|---|---|
+| [乐咕930955页面](https://legulegu.com/stockdata/index-basic?indexCode=930955.CSI)及现有PE/PB接口 | 页面能识别指数，但精确代码930955.CSI的两个接口均返回空数组 | 页面存在不等于有估值历史；不使用页面的0.0占位值。 |
+| [ETF.run红利低波100](https://www.etf.run/index/CSI/930955) | 无登录公开HTML包含`compressedIndexDaily`，有2020-02-04至2026-11-02共1637条日频记录；`equalWeightedPeTtm`、`equalWeightedPbTtm`均无空值，日期升序、无重复。与同区间中证930955官方日线逐日核对，日期完全相同，收盘差异均不超过0.01点。 | 已确认可读取的等权历史候选，尚无10年历史。官方收盘交叉核验只能确认日期及指数身份，不能证明PE/PB计算正确；亏损剔除、成分变更及复权细节未独立复原，也未确认稳定批量API。不将其冒充现有整体法、中位数或算术平均。 |
+| [理杏仁指数基本面API](https://www.lixinger.com/api/open-api/html-doc/cn/index/fundamental) | 官方文档提供PE-TTM、PB日频和日期范围查询（单次跨度不超过10年），必填用户token；930955的[PE页面](https://www.lixinger.com/equity/index/detail/csi/930955/930955/fundamental/valuation/pe-ttm?metrics-type=ewpvo)与[PB页面](https://www.lixinger.com/equity/index/detail/csi/930955/930955/fundamental/valuation/pb?metrics-type=ewpvo)存在公开检索记录，但本机未登录直取返回403 | 候选认证API；尚未以有效token验证930955的实际历史范围、权限、完整性和口径，不能宣称已经可自动接入。 |
+
+结论：已找到可实际读取的930955等权PE/PB历史；如后续接入，须先定义独立估值口径并验证计算细节、稳定获取方式和历史覆盖，不能替换或拼接当前整体法序列。本次PR仅修复000922映射并记录上述证据边界。

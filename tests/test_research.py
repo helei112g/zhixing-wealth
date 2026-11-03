@@ -145,6 +145,25 @@ class ResearchTests(unittest.TestCase):
         self.assertFalse(status['valuations']['supported'])
         self.assertIn('未覆盖',status['valuations']['reason'])
         self.assertTrue(status['stock_valuations']['supported'])
+    def test_existing_dividend_profile_fetches_verified_valuation_mapping_without_rewrite(self):
+        added,_=self.add('000922')
+        old=self.r.profile(added['id']);old.pop('valuation_code')
+        with self.r.transaction() as db:
+            db.execute('UPDATE research_indices SET data=? WHERE id=?',(json_dumps(old),added['id']))
+        self.r.publish(added['id'],'price',price_payload(old,'price'))
+        ledger_revision=self.store.state()['revision'];research_revision=self.r.revision()
+        data=[dict(date=ASOF,addTtmPe=12,middleTtmPe=13,ttmPe=14,addPb=1,middlePb=2,pb=3)]
+        with patch.object(providers,'legu_session',return_value={}),patch('requests.get') as get:
+            get.return_value.json.return_value=dict(data=data);get.return_value.content=b'synthetic dividend valuation'
+            outcome=self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
+        self.assertEqual([call.kwargs['params']['indexCode'] for call in get.call_args_list],['000922.CSI','000922.CSI'])
+        self.assertEqual(outcome[0]['status'],'complete')
+        detail=self.r.detail(added['id'])
+        self.assertEqual(detail['module_status']['valuations']['status'],'available')
+        self.assertEqual((detail['valuation']['pe']['current'],detail['valuation']['pb']['current']),('12','1'))
+        self.assertEqual(self.r.profile(added['id']),old)
+        self.assertEqual(self.store.state()['revision'],ledger_revision)
+        self.assertEqual(self.r.revision(),research_revision+1)
     def test_resolve_tamper_expiry_identity_drift_and_cas(self):
         preview=self.r.resolve('000905');body=dict(resolve_token=preview['resolve_token']+'x',expected_research_revision=0,request_id='bad')
         with self.assertRaises(DomainError):self.r.add(body)
@@ -462,6 +481,19 @@ if __name__=='__main__':unittest.main()
 
 
 class RegisteredIdentityTests(unittest.TestCase):
+    def test_dividend_mapping_is_shared_by_price_and_total_return_inputs(self):
+        for code in ('000922','H00922'):
+            profile=providers.identity(code)
+            self.assertEqual(profile['valuation_code'],'000922.CSI')
+            self.assertEqual(profile['provider'],'csi')
+            data=[dict(date=ASOF,addTtmPe=12,middleTtmPe=13,ttmPe=14,addPb=1,middlePb=2,pb=3)]
+            with patch.object(providers,'legu_session',return_value={}),patch('requests.get') as get:
+                get.return_value.json.return_value=dict(data=data);get.return_value.content=b'synthetic valuation'
+                result=providers.valuations(profile,ASOF)
+            self.assertEqual([call.kwargs['params']['indexCode'] for call in get.call_args_list],['000922.CSI','000922.CSI'])
+            self.assertTrue(all(e['parameters']['indexCode']=='000922.CSI' for e in result['evidence']))
+            self.assertEqual(set(result['series']['pe']),{'overall','median','arithmetic'})
+            self.assertEqual(set(result['series']['pb']),{'overall','median','arithmetic'})
     def test_registered_csi_pairs_resolve_bidirectionally(self):
         for code,tr,name in [('000510','000510CNY010','中证A500'),('000993','H00993','全指信息'),
                              ('930955','H20955','红利低波100'),('399998','H20596','中证煤炭'),('000991','H00991','全指医药')]:

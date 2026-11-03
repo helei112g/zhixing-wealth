@@ -19,7 +19,7 @@ CATALOG = [
     dict(code='000905', return_code='H00905', name='中证500', provider='csi', kind='宽基', launch='2007-01-15'),
     dict(code='000985', return_code='H00985', name='中证全指', provider='csi', kind='宽基', launch='2011-08-02'),
     dict(code='399006', return_code='399606', name='创业板指', provider='cni', kind='宽基', launch='2010-06-01',return_launch='2010-06-01',identity_source='https://www.cnindex.com.cn/zh_information/notices_news/2010/201206/P020191213351661589949.pdf'),
-    dict(code='000922', return_code='H00922', name='中证红利', provider='csi', kind='策略', launch='2008-05-26'),
+    dict(code='000922', return_code='H00922', name='中证红利', provider='csi', kind='策略', launch='2008-05-26', valuation_code='000922.CSI'),
     dict(code='000819', return_code='H00819', name='有色金属', provider='csi', kind='行业', launch='2009-07-03'),
     dict(code='000510', return_code='000510CNY010', name='中证A500', provider='csi', kind='宽基', launch='2024-09-23'),
     dict(code='000993', return_code='H00993', name='全指信息', provider='csi', kind='行业', launch='2011-08-02'),
@@ -115,7 +115,9 @@ def valuations(profile, asof):
             options=legu_session('https://legulegu.com/stockdata/sz50-'+('ttm-lyr' if metric=='pe' else 'pb'))
             # Cookies and token stay in memory; sanitized provenance contains no secrets.
             import requests
-            code = profile.get('valuation_code') or profile['code'] + ('.SZ' if profile['provider'] == 'cni' else '.SH')
+            # Existing saved profiles predate some verified supplier mappings.
+            # Resolve those mappings at fetch time without rewriting the profile.
+            code = profile.get('valuation_code') or identity(profile['code']).get('valuation_code') or profile['code'] + ('.SZ' if profile['provider'] == 'cni' else '.SH')
             url = 'https://legulegu.com/api/stockdata/index-basic-' + metric
             try:
                 r = requests.get(url, params={'token': token, 'indexCode': code}, timeout=20, **options)

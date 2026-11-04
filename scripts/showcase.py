@@ -39,7 +39,8 @@ def seed(directory):
             'instrument':{'market':market,'code':code,'name':name},'quantity':str(quantity),
             'gross_amount':str(round(quantity*price,2)),'fee':'5','fx_rate':str(fx),'reason':'合成展示交易，不是真实投资记录'})
         iid=event['instrument_id'];instruments.append(iid)
-        service.attach_instrument(p['id'],iid,{'target_pct':target,'asset_class':category,'region':region})
+        service.attach_instrument(p['id'],iid,{'target_pct':target,'asset_class':category,'region':region,'expected_revision':service.store.state()['revision'],
+            'holding_labels':dict(scope=['A股','A股','海外权益','国内债券'][n],direction=['宽基','红利','宽基','纯债'][n],detail='示例配置')})
         rows=[];length=max(1,(end-start).days)
         for offset in range(length+1):
             growth=[.125,.078,-.025,.032][n]*offset/length + math.sin(offset/16+n)*(.012 if n!=3 else .001)
@@ -63,6 +64,20 @@ def seed(directory):
     for month in range(1,end.month+1):
         for kind,amount in [('salary',24000+month*200),('rent',3500),('fund',4800),('custom',1200+(month%3)*500)]:
             command('income',{'kind':kind,**({'name':'稿费 · 示例'} if kind=='custom' else {}),'month':f'{end.year}-{month:02d}','amount':str(amount),'currency':'CNY'})
+    command('expense_plan',dict(name='生活预算 · 示例',amount='15000',effective_month=f'{end.year}-01'))
+    for month in range(1,end.month+1):
+        command('expense_month',dict(month=f'{end.year}-{month:02d}',actual_amount=str(13000+month*120),confirmed=True,note='合成整月核对，不是真实支出'))
+    from backend.common import json_dumps
+    from backend.research.service import ResearchService
+    from backend.research import providers
+    from tests.research_fixtures import price_payload,valuation_payload,member_payload,stock_payload,finance_payload,historical_memberships
+    research=ResearchService(service.store,service)
+    profile=dict(providers.identity('000905'),id='csi:000905',name='中证500 · 合成示例')
+    with service.store.connection() as db:
+        db.execute('INSERT INTO research_indices VALUES (?,?)',(profile['id'],json_dumps(profile)));db.commit()
+    members=member_payload(profile)
+    for module,value in [('price',price_payload(profile,'price')),('total_return',price_payload(profile,'total_return')),('valuations',valuation_payload(profile)),('memberships',members),('stock_valuations',stock_payload(members['rows'])),('financials',finance_payload(members['rows'])),('historical_memberships',historical_memberships(profile))]:
+        research.publish(profile['id'],module,value)
     for title,body in [
         ('建立计划：先写下持有理由','## 这笔配置的角色\n\n作为长期组合的一部分，先确定投入计划，再持续核对记录。\n\n## 待观察\n\n1. 组合集中度是否符合计划。\n2. 剩余可投金额是否足够。\n3. 下一次调整有哪些依据。'),
         ('季度复盘：把判断留在当时','## 本次观察\n\n示例组合的持仓、投入计划和收益已经归到同一份账本。**先核对事实，再决定行动。**\n\n## 下一步\n\n1. 核对本季度交易与分红。\n2. 对照投入计划，确认资金安排。\n3. 保留本次记录，下一季度再回看。\n\n以上为产品截图使用的虚构笔记，不代表真实持仓或投资建议。'),

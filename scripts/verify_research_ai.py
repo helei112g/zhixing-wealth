@@ -78,6 +78,12 @@ def main():
     try:c.request('/api/research/indices/'+saved['id']+'/constituents?analysis_id=old')
     except RuntimeError as e:check('409' in str(e),'cross-version page rejected')
     else:raise AssertionError('stale analysis page accepted')
+    queued=c.refresh_index(saved['id'],'synthetic-ai-current-index')
+    full_job=c.request('/api/data-updates/jobs/'+queued['job_id'])
+    check({r['target'] for r in full_job['resources']}=={saved['id']} and len(full_job['resources'])==8,'current-index client updates exactly eight index modules')
+    check(c.refresh_index(saved['id'],'synthetic-ai-current-index')['job_id']==queued['job_id'],'current-index update retains idempotent receipt')
+    check(c.update_history()['limit']==5 and len(c.update_history()['jobs'])<=5,'unified history contract')
+    check('bounds' in c.family_bounds(),'lightweight family date navigation through HTTP')
     check(all((Path(__file__).resolve().parents[1]/'.agents/skills'/name/'SKILL.md').is_file() for name in ('zhixing-research','zhixing-portfolios')),'project skill paths exist')
     for code,tr in [('930955','H20955'),('399998','H20596'),('000991','H00991')]:
         count=c.request('/api/research/indices')['total']

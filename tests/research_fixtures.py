@@ -53,33 +53,20 @@ def finance_payload(members,asof=ASOF):
     return dict(rows=rows,periods=[str(y)+'-12-31' for y in range(2016,2026)],effective_date='2026-04-30',evidence=[],history_status='unavailable',history_reason='合成样例未提供核验历史成分')
 
 
-def install_providers():
-    providers.prices=price_payload;providers.valuations=valuation_payload;providers.probe_valuations=valuation_probe_payload;providers.constituents=member_payload;providers.stock_valuations=stock_payload;providers.financials=finance_payload;providers.cutoff=lambda:ASOF
-
 
 def historical_memberships(profile,asof=ASOF):
     return dict(baskets=[dict(period=str(y)+'-12-31',status='official' if y>=2020 else 'unavailable',members=[dict(m,weight=None) for m in member_payload(profile)['rows']] if y>=2020 else [],reason='合成历史缺口' if y<2020 else None) for y in range(2015,2026)],effective_date=ASOF,evidence=[])
 
 
-_base_price=price_payload
 _attempts={}
 
 def browser_prices(profile,basis,asof=ASOF):
     if profile['code']=='000819' and basis=='total_return' and not _attempts.get('short_return'):
         _attempts['short_return']=True
         raise TimeoutError('合成全收益源暂时不可用')
-    value=_base_price(profile,basis,asof)
+    value=price_payload(profile,basis,asof)
     if profile['code']=='000819':value['rows']=value['rows'][-1000:]
     return value
-
-
-_original_install=install_providers
-
-def install_providers():
-    _original_install()
-    from backend.research import history
-    history.memberships=historical_memberships
-    providers.prices=browser_prices
 
 
 # A richer synthetic browser basket verifies top10 boundaries and fixed weight ordering.
@@ -91,20 +78,21 @@ def browser_members(profile,asof=ASOF):
     if profile['code']=='000991':rows[-1].update(code='920201',name='合成北交所公司',market='BJ',industry='医药卫生')
     return dict(rows=rows,effective_date='2026-09-30',source='synthetic',evidence=[])
 
-_install_small=install_providers
-def install_providers():
-    _install_small();providers.constituents=browser_members
-
-
-_base_finance_payload=finance_payload
 def browser_finance(members,asof=ASOF):
-    value=_base_finance_payload(members,asof)
+    value=finance_payload(members,asof)
     for r in value['rows']:
         for field in ('revenue','profit','operating_cf'):
             r[field]=str(int(r[field])*1000000)
             r[field+'_published_at']=str(int(r['period'][:4])+1)+'-04-30'
     return value
 
-_install_rich=install_providers
 def install_providers():
-    _install_rich();providers.financials=browser_finance
+    from backend.research import history
+    providers.prices=browser_prices
+    providers.valuations=valuation_payload
+    providers.probe_valuations=valuation_probe_payload
+    providers.constituents=browser_members
+    providers.stock_valuations=stock_payload
+    providers.financials=browser_finance
+    providers.cutoff=lambda:ASOF
+    history.memberships=historical_memberships

@@ -3,6 +3,7 @@
 import argparse
 import cProfile
 import hashlib
+import gzip
 import inspect
 import json
 import os
@@ -56,6 +57,20 @@ def seed(directory):
         family.command('link', dict(portfolio_id=p['id'], effective_on=str(start), share='1'), service.store.state()['revision'])
     family.command('item', dict(category='cash', currency='CNY', name='合成现金', effective_on=str(start), household_amount='100000'), service.store.state()['revision'])
 
+    from backend.common import json_dumps
+    from backend.research.service import ResearchService
+    from backend.research import providers
+    from tests.research_fixtures import price_payload,valuation_payload
+    research=ResearchService(service.store,service)
+    with service.store.connection() as db:
+        for entry in providers.CATALOG:
+            profile=dict(providers.identity(entry['code']),id=entry['provider']+':'+entry['code'])
+            db.execute('INSERT INTO research_indices VALUES (?,?)',(profile['id'],json_dumps(profile)))
+        db.commit()
+    for profile in research.profiles():
+        research.publish(profile['id'],'price',price_payload(profile,'price'))
+        research.publish(profile['id'],'valuations',valuation_payload(profile))
+
 
 def worker(source, directory):
     sys.path.insert(0, str(source))
@@ -66,6 +81,8 @@ def worker(source, directory):
     from backend.store import Store
     assert json.loads((directory/'.environment.json').read_text())['environment'] == 'test'
     service = Service(Store(directory)); family = FamilyService(service.store)
+    from backend.research.service import ResearchService
+    research=ResearchService(service.store,service)
     state = service.store.state(); revision = state['revision']; pid = state['portfolios'][0]['id']
     end = str(today()); start = end[:4]+'-01-01'
     tasks = {
@@ -77,17 +94,25 @@ def worker(source, directory):
     }
     if 'view' in inspect.signature(Service.dashboard).parameters:
         tasks['portfolio_summary'] = lambda: service.dashboard(pid, end=end, view='summary')
+    def asset_page():
+        if hasattr(family,'bounds'):bounds=family.bounds()['bounds']
+        else:family.read(end);bounds=family.catalog()['bounds']
+        return dict(bounds=bounds,summary=family.summary('month',end[:7]))
+    from backend.allocation_planning import allocation_report
+    tasks.update(asset_page_initial=asset_page,holding_distribution=lambda:service.holding_analysis.report(pid),
+                 allocation_analysis=lambda:service.allocation_analysis(pid) if hasattr(service,'allocation_analysis') else allocation_report(service,pid),
+                 index_listing=lambda:research.listing())
     result = {}
     for name, load in tasks.items():
         cold, warm = [], []
         for _ in range(3):
-            service.store.cache.clear(); tick = time.perf_counter(); value = load()
+            service.store.cache.clear(); research.cache.clear(); tick = time.perf_counter(); value = load()
             cold.append((time.perf_counter()-tick)*1000)
         for _ in range(5):
             tick = time.perf_counter(); value = load(); warm.append((time.perf_counter()-tick)*1000)
         data = json.dumps(comparable(wire(value)), sort_keys=True, ensure_ascii=False).encode()
         result[name] = dict(cold_ms=round(statistics.median(cold),2), warm_ms=round(statistics.median(warm),2),
-                            response_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                            response_bytes=len(data), gzip_bytes=len(gzip.compress(data,compresslevel=4)), sha256=hashlib.sha256(data).hexdigest())
     service.store.cache.clear(); profiler = cProfile.Profile(); profiler.runcall(tasks['asset_summary'])
     code = Market.__init__.__code__
     result['asset_summary_market_builds'] = pstats.Stats(profiler).stats[(code.co_filename,code.co_firstlineno,'__init__')][1]

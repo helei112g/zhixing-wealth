@@ -157,6 +157,19 @@ class Client:
     def update_settings(self):
         return self.request('/api/settings/data-updates')
 
+    def family_bounds(self):
+        return self.request('/api/family/bounds')
+
+    def update_history(self):
+        """Five unified display records; use the job endpoint for durable outcomes."""
+        return self.request('/api/data-updates/history')
+
+    def refresh_index(self, index_id, request_id):
+        """Authorized current-index refresh; caller retains the stable request_id."""
+        if not isinstance(index_id,str) or not index_id:raise ValueError('An exact index ID is required')
+        return self.write('/api/data-updates/run',dict(targets=[index_id],
+            scopes=['index_prices','memberships','valuations','financials'],request_id=request_id),'POST')
+
     def notification_status(self):
         """One pending OS request; deferred_count is waiting work, not a failure.
 

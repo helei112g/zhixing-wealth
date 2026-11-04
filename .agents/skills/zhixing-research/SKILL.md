@@ -23,9 +23,6 @@ description: 在知行财富本机系统读取指数资料、核对代码配对�
 
 客户端完整读取：research_index支持basis、window、method；research_part读取四种投影。跨页显式携带同一analysis_id；从capabilities发现主口径、方法、均线周期及情景参考窗口，不能只根据UI默认值推断。
 
-已核验注册范围新增中证A500（000510/000510CNY010）及全指信息（000993/H00993），配对证据见研究合同的官方单张。A500不能拼成H00510；不足3／5／10年窗口保留null，不以当前成份制造指数长历史。
+支持的代码配对、估值来源和覆盖边界统一查阅[研究合同](../../../docs/research.md)，并读取当前resolve与module_status；不能从旧技能中的名称或代码推断最新支持范围。
 
-
-另支持科创50（000688/000688CNY01）及中证海外中国互联网（H11136/H01136）。读module_status逐模块确认覆盖；H11136支持行情、全收益和当前成分，估值和跨市场财务尚未支持，不能套用A股财务或补零。未知指数仍不猜配对；同一档案输入两种代码不能重复建档。
-
-另支持红利低波100（930955/H20955）、中证煤炭（399998/H20596）、全指医药（000991/H00991），均为中证csi家族。红利低波100的指数估值源未覆盖，module_status.valuations为unsupported；公司估值和财务单独核对，不把缺失当0。全指医药的北交所成分保留BJ身份。三家族的年度历史有效名单仍有缺口；不足10年的行情不补造完整窗口。DJUSDIV尚未加入注册表。
+当前指数全模块更新：先回读精确index_id，展示拟更新范围；在已有明确授权下调用`refresh_index(index_id, request_id)`。固定提交该ID与index_prices/memberships/valuations/financials四个scopes，省略resources覆盖八个模块；不顺带更新其他指数、持仓或汇率。自动策略关闭不阻止明确手动请求。保留request_id，回读job_id至终态后重新读取详情；解释market_cutoff、information_cutoff与各模块实际日期。`update_history()`只是最近5条合并展示，任务未出现在其中不代表失败或未执行，应按job_id查询。

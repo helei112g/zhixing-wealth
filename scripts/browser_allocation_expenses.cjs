@@ -45,12 +45,13 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'allocation-expenses-resul
   check(await plannedRow.locator('.holding-status').evaluate(e=>getComputedStyle(e).borderTopWidth==='0px'&&getComputedStyle(e).fontWeight==='500'),'status badge uses a light label without heavy border');
   const after=await api('/portfolios/'+p.id+'/dashboard?view=summary');
   check(after.cash_total===before.cash_total&&after.total_assets===before.total_assets&&after.capital_summary.pnl===before.capital_summary.pnl,'plan save leaves real cash, asset value and profit unchanged');
-  await shot('holdings-plans-desktop');await nav('持仓分析');await page.locator('.holding-sunburst-node').first().waitFor();
+  await shot('holdings-plans-desktop');await nav('持仓分析');check(await page.getByRole('tab',{name:'配置进度',exact:true}).getAttribute('aria-selected')==='true','allocation is the default analysis tab');await page.getByRole('tab',{name:'持仓分布',exact:true}).click();await page.locator('.holding-sunburst-node').first().waitFor();
   await page.locator('.holding-sunburst-node').first().dispatchEvent('mouseover');
   await page.getByRole('tooltip').waitFor({timeout:500});
   check((await page.getByRole('tooltip').innerText()).includes('计划占预算')&&(await page.getByRole('tooltip').innerText()).includes('已投占预算'),'sunburst tooltip appears without native hover delay and shows plan vs actual');
   check(await page.locator('.holding-sunburst-node title').count()===0,'no delayed native SVG title tooltip');await shot('sunburst-immediate-tooltip');
-  await page.getByRole('tab',{name:'配置进度',exact:true}).click();await ready();
+  await page.getByRole('tab',{name:'配置进度',exact:true}).click();
+  assert.deepEqual(await page.getByRole('tablist',{name:'持仓分析内容'}).getByRole('tab').allTextContents(),['配置进度','持仓分布','收益排行榜']);await ready();
   check(await page.locator('[data-allocation-row]').count()===5-1,'first-level groups cover all synthetic exposures');
   const a=page.locator('[data-allocation-row="A股"]');check((await a.innerText()).includes('9,000.00')&&(await a.innerText()).includes('超投 2,000.00'),'group preserves positive gaps and overshoot separately');
   await shot('allocation-scope-desktop');

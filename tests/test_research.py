@@ -106,6 +106,48 @@ class ResearchTests(unittest.TestCase):
             validated=self.r.valuation_preview(code,p['default_valuation_suffix'])
         body=dict(resolve_token=p['resolve_token'],valuation_token=validated['valuation_token'],expected_research_revision=p['research_revision'],request_id=request)
         return self.r.add(body),body
+    def test_listing_reuses_all_thirteen_summaries_without_loading_company_history(self):
+        for p in providers.CATALOG:self.add(p['code'],'synthetic-'+p['code'])
+        with patch.object(self.r,'module',wraps=self.r.module) as load:
+            first=self.r.listing()
+            self.assertEqual(len(first['items']),13)
+            self.assertEqual(load.call_count,26)
+            self.assertTrue(all(call.args[1] in ('price','valuations') for call in load.call_args_list))
+            load.reset_mock()
+            self.assertEqual(first,self.r.listing())
+            self.assertEqual(load.call_count,0)
+        first['items'][0]['profile']['name']='caller edit'
+        self.assertNotEqual(self.r.listing()['items'][0]['profile']['name'],'caller edit')
+        iid=self.r.profiles()[0]['id']
+        full=self.r.detail(iid)
+        summary=next(x for x in self.r.listing()['items'] if x['id']==iid)
+        self.assertEqual(summary,{k:full[k] for k in summary})
+
+    def test_update_history_collapses_active_children_and_limits_total_to_five(self):
+        added,_=self.add()
+        job=self.r.updates.get(added['job_id'])
+        job.update(started_at='2026-01-02T10:00:00+08:00',legacy_job_ids=['synthetic-child'])
+        self.r.updates.save(job,'running')
+        self.store.save_job(dict(id='synthetic-child',status='running',started_at='2026-01-02T10:00:01+08:00',items=[]))
+        for n in range(6):self.store.save_job(dict(id='standalone-'+str(n),status='complete',started_at='2026-01-01T10:00:0'+str(n)+'+08:00',items=[]))
+        rows=self.r.updates.history()['jobs']
+        self.assertEqual(len(rows),5)
+        self.assertEqual(rows[0]['id'],job['id'])
+        self.assertEqual(rows[0]['trigger_label'],'指数建档')
+        self.assertNotIn('synthetic-child',[x['id'] for x in rows])
+        self.assertEqual([r['id'] for r in rows[1:]],['standalone-'+str(n) for n in (5,4,3,2)])
+        self.r.updates.save(dict(job,finished_at='2026-01-03T10:00:00+08:00'),'complete')
+        self.assertEqual([r['id'] for r in rows],[r['id'] for r in self.r.updates.history()['jobs']])
+
+    def test_update_uses_completed_prices_and_today_announcements(self):
+        p=self.populate()
+        self.r.updates.current_job={'market_cutoff':'2026-10-30','information_cutoff':'2026-11-04'}
+        with patch.object(providers,'prices',side_effect=price_payload) as prices,patch.object(providers,'financials',side_effect=finance_payload) as finance:
+            self.r.updates.execute(dict(scope='index_prices',target=p['id'],module='price'))
+            self.r.updates.execute(dict(scope='financials',target=p['id'],module='financials'))
+            self.assertEqual(prices.call_args.args[-1],'2026-10-30')
+            self.assertEqual(finance.call_args.args[-1],'2026-11-04')
+
     def populate(self):
         added,_=self.add();p=self.r.profile(added['id'])
         for module,v in [('price',price_payload(p,'price')),('total_return',price_payload(p,'total_return')),('valuations',valuation_payload(p)),('memberships',member_payload(p)),('stock_valuations',stock_payload(member_payload(p)['rows'])),('financials',finance_payload(member_payload(p)['rows']))]:self.r.publish(p['id'],module,v)
@@ -425,6 +467,28 @@ class ReviewRegressions(unittest.TestCase):
         with self.assertRaises(ConflictError):self.r.save_settings(dict(policies=policies,expected_settings_revision=1))
 
 class ProviderContractTests(unittest.TestCase):
+    def test_financial_batches_are_bounded_and_merge_both_reports_per_company(self):
+        import re,threading,time
+        from urllib.parse import urlparse,parse_qs
+        members=[dict(code=str(600000+n),market='SH') for n in range(101)]
+        lock=threading.Lock();active=0;maximum=0
+        def fetch(url):
+            nonlocal active,maximum
+            with lock:active+=1;maximum=max(maximum,active)
+            try:
+                time.sleep(.02)
+                params=parse_qs(urlparse(url).query);codes=re.findall(r'"(\d{6})"',params['filter'][0]);cash=params['reportName'][0]=='RPT_DMSK_FN_CASHFLOW'
+                rows=[dict(SECURITY_CODE=c,REPORT_DATE='2025-12-31',NOTICE_DATE='2026-04-01',NETCASH_OPERATE='8') if cash else dict(SECURITY_CODE=c,REPORTDATE='2025-12-31',NOTICE_DATE='2026-04-01',TOTAL_OPERATE_INCOME='100',PARENT_NETPROFIT='10') for c in codes]
+                return dict(result=dict(data=rows,pages=1)),dict(url=url)
+            finally:
+                with lock:active-=1
+        with patch.object(providers,'request',side_effect=fetch):value=providers.financials(members,'2026-11-04')
+        self.assertGreater(maximum,1);self.assertLessEqual(maximum,3)
+        self.assertEqual([r['code'] for r in value['rows']],[m['code'] for m in members])
+        self.assertTrue(all((r['revenue'],r['profit'],r['operating_cf'])==('100','10','8') for r in value['rows']))
+        with patch.object(providers,'request',side_effect=TimeoutError('synthetic failure')):
+            with self.assertRaises(TimeoutError):providers.financials(members,'2026-11-04')
+
     def test_xlsx_wrong_declared_dimension_does_not_drop_official_rows(self):
         import openpyxl,re
         from backend.research.providers import excel_rows

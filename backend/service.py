@@ -8,6 +8,7 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 import zipfile
 from datetime import timedelta
@@ -473,6 +474,11 @@ class Service:
 
     def save_reservation(self, payload, reservation_id=None):
         raise DomainError('预留资金功能已移除，可投入预算直接等于预算余额')
+
+    @cached_query
+    def allocation_analysis(self, portfolio_id, level='scope', scope='', direction='', detail='', asset_class='', status='all', sort='gap', *, instrument_id=''):
+        from .allocation_planning import allocation_report
+        return allocation_report(self, portfolio_id, level, scope, direction, detail, asset_class, status, sort, instrument_id=instrument_id)
 
     @cached_query
     def dashboard(self, portfolio_id, *, start=None, end=None, grain='month', view='full'):
@@ -1197,7 +1203,7 @@ class Service:
                 pending['fx_currencies'].update(fx_currencies)
                 return {'already_running': True,'queued':True}
             self.syncing = True
-        job = {'id': uid(), 'status': 'running', 'started_at': now(), 'items': [], 'message': '正在更新本地缓存',
+        job = {'id': uid(), 'created_order': time.time_ns(), 'status': 'running', 'started_at': now(), 'items': [], 'message': '正在更新本地缓存',
                'instrument_id':instrument_id,'full':full,'scopes':sorted(scopes),**trigger_metadata(causes,_queued)}
         self.store.save_job(job)
         def work():

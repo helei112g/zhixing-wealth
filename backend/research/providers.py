@@ -5,6 +5,7 @@ import re
 import threading
 from datetime import datetime, timedelta
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode
 from .. import market
 from ..common import ZONE, day, dec, ds, now, today
@@ -259,9 +260,9 @@ def financials(members, asof):
     # Official availability is conservative: supplier notice date is used unless separately verified.
     periods = sorted({f'{int(asof[:4])-y}-12-31' for y in range(1,11)} | {asof[:4]+'-'+m for m in ('03-31','06-30','09-30') if asof[:4]+'-'+m <= asof})
     periods = sorted(set(periods) | {str(int(p[:4])-1)+p[4:] for p in periods})
-    rows = []; evidence = []
-    for start in range(0,len(members),50):
-        group = members[start:start+50]; codes = ','.join('"'+r['code']+'"' for r in group)
+    def fetch_group(group):
+        indexed={};evidence=[];allowed={r['code'] for r in group}
+        codes=','.join('"'+r['code']+'"' for r in group)
         for kind, report, cols in [('profit','RPT_LICO_FN_CPD','SECURITY_CODE,REPORTDATE,NOTICE_DATE,TOTAL_OPERATE_INCOME,PARENT_NETPROFIT'),
                                     ('cash','RPT_DMSK_FN_CASHFLOW','SECURITY_CODE,REPORT_DATE,NOTICE_DATE,NETCASH_OPERATE')]:
             params = dict(reportName=report, columns=cols, pageSize=500, pageNumber=1, filter=f'(SECURITY_CODE in ({codes}))(REPORT_DATE>=\'{periods[0]}\')', source='WEB', client='WEB')
@@ -276,12 +277,19 @@ def financials(members, asof):
                 for r in result['data']:
                     p=str(r.get('REPORTDATE') or r.get('REPORT_DATE'))[:10]; published=str(r.get('NOTICE_DATE') or '')[:10]
                     if p not in periods or not published or published>asof: continue
-                    item=next((x for x in rows if x['code']==r['SECURITY_CODE'] and x['period']==p),None)
-                    if item is None: item=dict(code=r['SECURITY_CODE'],period=p);rows.append(item)
+                    if r['SECURITY_CODE'] not in allowed:raise market.ProviderError('财务源返回非请求代码')
+                    item=indexed.setdefault((r['SECURITY_CODE'],p),dict(code=r['SECURITY_CODE'],period=p))
                     for field, col in ({'revenue':'TOTAL_OPERATE_INCOME','profit':'PARENT_NETPROFIT'} if kind=='profit' else {'operating_cf':'NETCASH_OPERATE'}).items():
                         item[field]=None if r.get(col) is None else ds(dec(r[col]));item[field+'_published_at']=published
                 if page>=int(result.get('pages',1)): break
                 page+=1
                 if page>100: raise market.ProviderError('财务分页超过安全上限')
+        return list(indexed.values()),evidence
+    groups=[members[n:n+50] for n in range(0,len(members),50)]
+    # Parallelize independent batches only; each report's pagination stays ordered.
+    # A failed batch fails the module, preserving the last published snapshot.
+    with ThreadPoolExecutor(max_workers=3,thread_name_prefix='index-financials') as pool:
+        results=list(pool.map(fetch_group,groups))
+    rows=[r for batch,_ in results for r in batch];evidence=[e for _,sources in results for e in sources]
     return dict(rows=rows,evidence=evidence, effective_date=max((r[k] for r in rows for k in r if k.endswith('_published_at')),default=None), periods=periods,
                 history_status='unavailable',history_reason='未取得逐年核验的历史有效成分；不以当前篮子回填历史指数', version_basis='current_restated')

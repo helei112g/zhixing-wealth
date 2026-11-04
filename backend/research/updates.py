@@ -3,8 +3,9 @@ import hashlib
 import json
 import secrets
 import threading
+import time
 from datetime import datetime,timedelta
-from ..common import ConflictError,DomainError,day,json_dumps,now
+from ..common import ConflictError,DomainError,day,json_dumps,now,today
 from . import providers,history
 from .snapshots import encode,decode
 
@@ -33,12 +34,25 @@ class UpdateJobs:
     def __init__(self,research):
         self.research=research;self.store=research.store;self.legacy=research.legacy
         self.worker_lock=threading.Lock();self.worker=None;self.stopping=threading.Event();self.owner=secrets.token_hex(16);self.current_trigger='manual';self.current_slot=None
+        self.current_job=None
 
     def active(self):
         with self.store.connection() as db:return bool(db.execute("SELECT 1 FROM data_update_tasks WHERE state IN ('pending','running') LIMIT 1").fetchone())
 
     def jobs(self):
         with self.store.connection() as db:return [dict(load_job(r[1]),state=r[0]) for r in db.execute('SELECT state,data FROM data_update_tasks ORDER BY rowid DESC LIMIT 20')]
+
+    def history(self):
+        """One display row per user task, including standalone legacy syncs."""
+        from ..sync_meta import TRIGGERS
+        public=self.jobs()
+        children={jid for j in public for jid in j.get('legacy_job_ids',[])}
+        children.update(i['legacy_job_id'] for j in public for i in j.get('items',[]) if i.get('legacy_job_id'))
+        rows=[dict(j,kind='public',trigger_label=j.get('trigger_label') or TRIGGERS.get(j.get('trigger'),{'manual':'手动更新','index_create':'指数建档'}.get(j.get('trigger'),'历史记录未记录'))) for j in public]
+        rows.extend(dict(j,kind='legacy',state=j.get('status','error'),scopes=j.get('scopes',[])) for j in self.store.jobs() if j['id'] not in children)
+        # Stable start order; changing status or finishing an old task cannot move it up.
+        rows.sort(key=lambda j:(j.get('started_at',''),j.get('created_order',0)),reverse=True)
+        return dict(jobs=rows[:5],limit=5)
 
     def get(self,jid):
         with self.store.connection() as db:r=db.execute('SELECT state,data FROM data_update_tasks WHERE id=?',(jid,)).fetchone()
@@ -90,7 +104,7 @@ class UpdateJobs:
                 match=next((r for r in pending if json.loads(r[1])['digest']==digest),None)
                 jid=match[0] if match else secrets.token_hex(16)
                 if not match:
-                    job=dict(id=jid,digest=digest,generation=generation,resources=resources,scopes=list(dict.fromkeys(r['scope'] for r in resources)),trigger=trigger,slot_at=body.get('slot_at'),started_at=now(),items=[],completed_resources=[])
+                    job=dict(id=jid,created_order=time.time_ns(),digest=digest,generation=generation,resources=resources,scopes=list(dict.fromkeys(r['scope'] for r in resources)),trigger=trigger,slot_at=body.get('slot_at'),started_at=now(),items=[],completed_resources=[])
                     db.execute('INSERT INTO data_update_tasks VALUES (?,?,?)',(jid,'pending',json_dumps(job)))
                 db.execute('INSERT INTO data_update_receipts VALUES (?,?,?,?)',(receipt,request_digest,jid,json_dumps(dict(job_id=jid,status='accepted'))))
         self.start()
@@ -116,6 +130,9 @@ class UpdateJobs:
         if r['scope']=='fx':args['fx_currencies']=[r['currency']]
         from ..sync_meta import TRIGGERS
         result=self.legacy.start_sync(r.get('instrument_id'),trigger=self.current_trigger if self.current_trigger in TRIGGERS else 'manual_update',**args)
+        if self.current_job is not None and result.get('job_id'):
+            self.current_job.setdefault('legacy_job_ids',[]).append(result['job_id'])
+            self.save(self.current_job,'running')
         while self.legacy.syncing:
             if self.stopping.wait(.1):raise DomainError('更新已中断')
         j=next((j for j in self.store.jobs() if j['id']==result.get('job_id')),None)
@@ -131,7 +148,10 @@ class UpdateJobs:
     def execute(self,r):
         if r['scope'] in ('quotes','fx'):return self._legacy(r)
         iid,module=r['target'],r['module']
-        p=self.research.profile(iid);asof=providers.cutoff()
+        p=self.research.profile(iid)
+        # Prices keep completed-day semantics; announcements may be published today.
+        cutoffs=self.current_job or {}
+        asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','stock_valuations') else (cutoffs.get('information_cutoff') or str(today()))
         capability=providers.module_capabilities(p)[module]
         if not capability['supported']:
             return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='unsupported',error=capability['reason'])]
@@ -167,7 +187,9 @@ class UpdateJobs:
                     if not r:
                         self.worker=None
                         return
-                job=json.loads(r[0]);self.current_trigger=job['trigger'];self.current_slot=job.get('slot_at');self.save(job,'running')
+                job=json.loads(r[0]);self.current_trigger=job['trigger'];self.current_slot=job.get('slot_at')
+                job.setdefault('market_cutoff',providers.cutoff());job.setdefault('information_cutoff',str(today()))
+                self.current_job=job;self.save(job,'running')
                 for resource in job['resources']:
                     if key(resource) in job['completed_resources']:continue
                     if self.stopping.is_set() or not self.research.writes_allowed():break
@@ -178,6 +200,7 @@ class UpdateJobs:
                     job['items'].extend(items);job['completed_resources'].append(key(resource));self.save(job,'running')
                 interrupted=self.stopping.is_set() or len(job['completed_resources'])!=len(job['resources'])
                 job['finished_at']=now();job['resume_on_start']=interrupted;self.save(job,'interrupted' if interrupted else 'partial' if any(i['status']=='error' for i in job['items']) else 'complete')
+                self.current_job=None
         except DomainError:
             # Stop guard changed in flight. The durable lease is recovered on next writable startup.
             return

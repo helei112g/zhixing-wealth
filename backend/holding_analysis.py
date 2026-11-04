@@ -1,5 +1,6 @@
 """Optional portfolio-scoped labels and a non-overlapping current holding tree."""
 from .common import DomainError, ZERO, dec, json_dumps, now, ratio, wire
+from .store import cached_query
 
 SCOPES = ('A股', '港股', '美股', '海外权益', '国内债券', '海外债券', '大宗商品', '货币', '混合 / 其他')
 EQUITY_DIRECTIONS = ('红利', '宽基', '行业', '价值', '成长', '其他')
@@ -104,6 +105,7 @@ class HoldingAnalysis:
         self.store.audit(db, 'holding_labels', portfolio_id + ':' + instrument['id'], old, item, '设置当前持仓标签；不修改历史流水或投入计划')
         return item
 
+    @cached_query
     def report(self, portfolio_id, basis='holdings'):
         if basis not in ('holdings', 'assets'):
             raise DomainError('统计口径须为holdings或assets')

@@ -30,6 +30,11 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
   assert.deepEqual(seen,expected);check(new Set(seen).size===expected.length,'pagination visits all instruments once in original order');
   const allRefreshed=page.waitForResponse(r=>r.url()===base+'/api/bootstrap'&&r.ok());await page.getByRole('button',{name:'同步全部历史',exact:true}).click();await allRefreshed;await page.waitForFunction(()=>!document.querySelector('[data-cache-instrument] button').disabled);
   check(requests[1].full&&!requests[1].instrument_id,'sync all remains independent of visible page');
+  check(await page.getByRole('heading',{name:'macOS 系统通知',exact:true}).count()===0,'native notifications moved out of settings');
+  await page.route('**/api/data-updates/history',route=>route.fulfill({json:{limit:5,jobs:Array.from({length:5},(_,n)=>({id:'synthetic-history-'+n,kind:n%2?'legacy':'public',state:'complete',started_at:'2026-01-01T10:00:0'+n+'+08:00',scopes:['index_prices'],items:[],trigger:'manual'}))}}));
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.locator('[data-update-job]').nth(4).waitFor();
+  check(await page.getByRole('heading',{name:'更新记录',exact:true}).count()===1&&await page.locator('[data-update-job]').count()===5,'single combined history shows five total records');
+  check(await page.getByRole('heading',{name:'公共数据更新任务',exact:true}).count()===0,'no second task panel');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(output,'settings-pagination.png'),fullPage:true});
   // Simulate refreshed list sizes to verify clamping without deleting ledger rows.
   let visible=7;

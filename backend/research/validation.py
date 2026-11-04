@@ -5,7 +5,7 @@ from ..common import DomainError,day,dec
 from .metrics import clean_prices
 
 MODULES={'price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials'}
-HOSTS={'www.csindex.com.cn','oss-ch.csindex.com.cn','hq.cnindex.com.cn','www.cnindex.com.cn','legulegu.com','push2.eastmoney.com','datacenter-web.eastmoney.com'}
+HOSTS={'www.csindex.com.cn','oss-ch.csindex.com.cn','hq.cnindex.com.cn','www.cnindex.com.cn','legulegu.com','push2.eastmoney.com','datacenter-web.eastmoney.com','ai2.jiucaishuo.com'}
 
 
 def public_url(value):

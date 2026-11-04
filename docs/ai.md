@@ -137,3 +137,6 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 在用户授权更新当前指数后，调用 `Client.refresh_index(index_id, request_id)`；ID来自指数读取，request_id由调用方保留。该方法提交当前指数八个模块，不修改自动策略，也不涉及其他指数或组合行情。随后按返回job_id轮询到终态，并回读指数详情；分别报告市场截止、公告查询日和实际来源日期。`Client.update_history()` 返回统一的最近5条展示记录，不能代替按ID确认较早任务结果。未知结果先查证，不换request_id扩大或重复执行。
 
 macOS 通知设置位于提醒中心。Yahoo微小参考值变化可能继续更新来源，但已确认流水保持原值；查看review_changes确认是否发生实质变化，不能删除确认决定或原流水来消除提醒。
+
+
+930955估值使用韭圈儿（`resolve.valuation_source_label`），其候选仅CSI；不要将全局后缀集合当作每个指数的实际可选来源，也不调用ETF.run。读取`available_valuation_methods`，该指数只支持overall。三/五/十年分位先看`windows.*.status`：partial_history可展示rank，但必须注明实际from/to，coverage.start/end包含当前观测日；不能称完整十年。日频分位排除当前日、等值半权重。中证`valuation_cross_check`只验证同日PE，差异绝对值达10%提示，PB未校验。条件试算同样解释reference_coverage。来源失败保留旧值并报告实际日期，不把“未校验”说成“一致”。

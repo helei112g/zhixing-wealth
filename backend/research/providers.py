@@ -24,7 +24,7 @@ CATALOG = [
     dict(code='000819', return_code='H00819', name='有色金属', provider='csi', kind='行业', launch='2009-07-03', valuation_code='000819.SH'),
     dict(code='000510', return_code='000510CNY010', name='中证A500', provider='csi', kind='宽基', launch='2024-09-23', valuation_code='000510.SH'),
     dict(code='000993', return_code='H00993', name='全指信息', provider='csi', kind='行业', launch='2011-08-02', valuation_code='000993.SH'),
-    dict(code='930955', return_code='H20955', name='红利低波100', provider='csi', kind='策略', launch='2017-05-26'),
+    dict(code='930955', return_code='H20955', name='红利低波100', provider='csi', kind='策略', launch='2017-05-26', valuation_code='930955.CSI', valuation_source='jiucai'),
     dict(code='399998', return_code='H20596', name='中证煤炭', provider='csi', kind='行业', launch='2015-02-13', valuation_code='399998.SZ'),
     dict(code='000991', return_code='H00991', name='全指医药', provider='csi', kind='行业', launch='2011-08-02', valuation_code='000991.SH'),
 ]
@@ -35,6 +35,18 @@ VALUATION_SUFFIXES = ('CSI','SH','SZ','LG')
 def valuation_code(profile):
     # A saved explicit choice (including None = no valuation) takes precedence.
     return profile['valuation_code'] if 'valuation_code' in profile else identity(profile['code']).get('valuation_code')
+
+
+def valuation_source(profile):
+    return identity(profile['code']).get('valuation_source', 'legu')
+
+
+def valuation_options(profile):
+    return ('CSI',) if valuation_source(profile) == 'jiucai' else VALUATION_SUFFIXES
+
+
+def valuation_source_label(profile):
+    return '韭圈儿' if valuation_source(profile) == 'jiucai' else '乐咕乐股'
 
 
 def identity(code):
@@ -53,8 +65,6 @@ def module_capabilities(profile):
     result = {m:dict(supported=True,reason=None) for m in modules}
     if not valuation_code(profile):
         result['valuations'] = dict(supported=False, reason='尚未配置已核验的指数估值代码；录入时选择后缀并验证PE、PB，或暂不接入估值')
-    if profile['code'] == '930955':
-        if not valuation_code(profile): result['valuations'] = dict(supported=False, reason='现有估值源未覆盖红利低波100；不使用相似指数或官方单日估值拼接历史')
     if profile['code'] == 'H11136':
         for m in ('valuations','stock_valuations'):
             result[m] = dict(supported=False, reason='现有估值源未覆盖中国互联网指数；不使用A股或相似指数估值替代')
@@ -121,8 +131,11 @@ def valuations(profile, asof):
 
 def fetch_valuations(profile, asof, metrics=('pe','pb')):
     code = valuation_code(profile)
-    if not code or code not in {profile['code']+'.'+suffix for suffix in VALUATION_SUFFIXES}:
+    if not code or code not in {profile['code']+'.'+suffix for suffix in valuation_options(profile)}:
         raise market.ProviderError('未配置有效的完整估值来源代码；不自动猜测后缀')
+    if valuation_source(profile) == 'jiucai':
+        from .jiucai import fetch
+        return fetch(profile, code, asof, metrics, request)
     out = {}; evidence = []
     with SOURCE_LOCK:
         for metric in metrics:
@@ -156,7 +169,7 @@ def fetch_valuations(profile, asof, metrics=('pe','pb')):
 
 
 def probe_valuations(profile, suffix):
-    if suffix not in VALUATION_SUFFIXES: raise market.ProviderError('估值后缀不在候选列表中')
+    if suffix not in valuation_options(profile): raise market.ProviderError('估值后缀不在该指数候选列表中')
     code=profile['code']+'.'+suffix
     result=dict(code=code,metrics={});asof=cutoff()
     for metric in ('pe','pb'):
@@ -170,6 +183,9 @@ def probe_valuations(profile, suffix):
         except Exception as exc:
             result['metrics'][metric]=dict(status='error',reason=str(exc)[:300])
     result['status']='available' if all(v['status']=='available' for v in result['metrics'].values()) else 'unavailable'
+    if valuation_source(profile)=='jiucai' and result['status']=='available' and len({v['date'] for v in result['metrics'].values()})!=1:
+        result['status']='unavailable'
+        result['metrics']={m:dict(status='error',reason='韭圈儿 PE、PB 最新日期不一致，请稍后重试') for m in ('pe','pb')}
     return result
 
 

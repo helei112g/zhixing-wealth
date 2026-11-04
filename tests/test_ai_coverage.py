@@ -46,6 +46,8 @@ class AICoverageTests(unittest.TestCase):
         self.assertEqual(params['window']['enum'], [3, 5, 10])
         self.assertIn('409', paths['/api/research/indices/{index_id}/scenarios']['post']['responses'])
         self.assertIn('ScenarioResult', models)
+        self.assertIn('reference_coverage', models['ScenarioResult']['properties'])
+        self.assertIn('source', models['ValuationPreviewResponse']['properties'])
         self.assertIn('holding_profit', models['CapitalSummary']['properties'])
         self.assertIn('account_available_cash', models['CapitalSummary']['properties'])
         self.assertIn('unallocated_target_amount', models['PlanFunding']['properties'])

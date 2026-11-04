@@ -7,7 +7,7 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
  const api=async(url,body,method=body===undefined?'GET':'POST')=>{const r=await page.request.fetch(base+'/api'+url,{method,data:body,headers:{'X-CSRF-Token':csrf}});assert.ok(r.ok(),await r.text());return r.json();};
  const nav=async(name,group)=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:group,exact:true}).getByRole('button',{name,exact:true}).click();};
  const shot=name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true,animations:'disabled'});
- async function add(code){await page.getByRole('button',{name:'添加指数',exact:true}).first().click();const dialog=page.getByRole('dialog',{name:'添加指数',exact:true});await dialog.getByLabel('指数代码',{exact:true}).fill(code);await dialog.getByRole('button',{name:'识别指数',exact:true}).click();await dialog.getByLabel('估值来源后缀',{exact:true}).waitFor();check(await dialog.getByRole('button',{name:'确认添加并更新',exact:true}).isDisabled(),'save waits for valuation validation '+code);if(['930955','H20955','H11136','H01136'].includes(code)){await dialog.getByLabel('估值来源后缀',{exact:true}).selectOption('none');await dialog.getByRole('button',{name:'确认暂不接入估值',exact:true}).click();}else{await dialog.getByRole('button',{name:'验证 PE、PB',exact:true}).click();}await dialog.getByRole('button',{name:'确认添加并更新',exact:true}).click();await dialog.waitFor({state:'hidden'});}
+ async function add(code){await page.getByRole('button',{name:'添加指数',exact:true}).first().click();const dialog=page.getByRole('dialog',{name:'添加指数',exact:true});await dialog.getByLabel('指数代码',{exact:true}).fill(code);await dialog.getByRole('button',{name:'识别指数',exact:true}).click();await dialog.getByLabel('估值来源后缀',{exact:true}).waitFor();check(await dialog.getByRole('button',{name:'确认添加并更新',exact:true}).isDisabled(),'save waits for valuation validation '+code);if(['H11136','H01136'].includes(code)){await dialog.getByLabel('估值来源后缀',{exact:true}).selectOption('none');await dialog.getByRole('button',{name:'确认暂不接入估值',exact:true}).click();}else{await dialog.getByRole('button',{name:'验证 PE、PB',exact:true}).click();}await dialog.getByRole('button',{name:'确认添加并更新',exact:true}).click();await dialog.waitFor({state:'hidden'});}
  try{
  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);csrf=(await api('/bootstrap')).csrf_token;
  await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();await nav('指数资料库','研究工具');await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
@@ -88,7 +88,25 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByRole('button',{name:'全收益指数 '+tr,exact:true}).waitFor();await page.getByRole('heading',{name:name+' '+code,exact:true}).waitFor();
   for(const label of ['价格指数','全收益指数','成分名单与权重'])await page.getByRole('row').filter({has:page.getByRole('cell',{name:label,exact:true})}).getByRole('cell',{name:'可查看',exact:true}).waitFor({timeout:20000});
   check((await page.locator('.research-detail-header').innerText()).includes('中证指数'),'new CSI family uses CSI identity '+code);
-  if(code==='930955'){check(await page.getByText('暂不支持',{exact:true}).count()===1,'low-volatility dividend index exposes the valuation source gap');await shot('dividend-low-volatility-coverage');}
+  if(code==='930955'){
+   await page.getByRole('row').filter({has:page.getByRole('cell',{name:'指数及成分估值',exact:true})}).getByRole('cell',{name:'可查看',exact:true}).waitFor({timeout:20000});
+   check(await page.getByText('暂不支持',{exact:true}).count()===0,'dividend index has a supported valuation source');
+   check((await page.locator('.research-summary').innerText()).includes('日频历史样本')&&(await page.locator('.research-summary').innerText()).includes('2017-05-26 至 2026-10-30'),'summary shows daily data and actual shorter ten-year coverage');
+   await page.getByRole('alert').getByText('PE 差异较大，建议核对口径',{exact:true}).waitFor();
+   check((await page.locator('.research-valuation-check').innerText()).includes('PB 未校验'),'PE warning does not imply PB was checked');await shot('dividend-valuation-summary');
+   await page.getByRole('tab',{name:'估值与回撤',exact:true}).click();
+   check(await page.getByLabel('估值方法',{exact:true}).locator('option[value=median]').isDisabled(),'unavailable methods cannot replace overall Jiucai valuations');
+   check((await page.locator('#research-content').innerText()).includes('不足10年 · 实际样本'),'valuation table labels its partial window');
+   await page.getByLabel('历史参考窗口',{exact:true}).selectOption('10');await page.getByRole('checkbox',{name:'按固定成分、权重与除数的假设试算',exact:true}).check();
+   await page.waitForFunction(()=>document.querySelector('.scenario-reference-caption')?.textContent.includes('不足10年 · 实际 2017-05-26'));
+   await shot('dividend-valuation-desktop');
+   for(const width of [390,320]){await page.setViewportSize({width,height:900});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth+1);check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'dividend valuation coverage and warning fit mobile '+width);await shot('dividend-valuation-'+width);}
+   await page.setViewportSize({width:1500,height:1050});await page.getByRole('tab',{name:'基本资料',exact:true}).click();
+   await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();const dividendRow=page.locator('[data-index-code="930955"]');await dividendRow.waitFor();
+   check((await dividendRow.innerText()).includes('12.00 / 1.20')&&await dividendRow.locator('.research-partial-coverage').count()===2,'library shows both current multiples and partial PE/PB coverage');
+   check((await dividendRow.innerText()).includes('PE 与中证差异较大'),'library exposes the same PE alert as detail');await shot('dividend-valuation-library');
+   await dividendRow.getByRole('button',{name:'红利低波100',exact:true}).click();await page.locator('.research-summary').waitFor();
+  }
   await page.getByRole('button',{name:'全收益指数 '+tr,exact:true}).click();await page.waitForFunction(()=>document.querySelector('.research-metrics .drawdown-window time')?.textContent==='2024-07-01');
   check(await page.locator('.research-basis button[aria-pressed=true]').innerText()==='全收益指数 '+tr,'new family can load its exact total-return series '+code);
   if(code==='000991'){await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('cell',{name:/合成北交所公司/}).waitFor();check((await page.locator('.research-companies').innerText()).includes('920201 · BJ'),'healthcare preserves Beijing member identity');await shot('healthcare-beijing-member');}

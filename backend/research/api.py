@@ -34,6 +34,7 @@ class ValuationPreviewResponse(BaseModel):
     code:str|None
     status:Literal['available','unavailable','skipped']
     metrics:dict[str,ValuationMetricPreview]
+    source:str=Field(description='注册估值源名称；930955为韭圈儿，来源选择以resolve响应为准')
     valuation_token:str|None=Field(description='PE和PB均验证成功或显式不接入时返回；失败为null')
     expires_at:int
     reason:str|None=None
@@ -137,6 +138,7 @@ class ScenarioResult(BaseModel):
     change_ratio:str
     curve:list[ScenarioPoint]
     reference_window:Literal[3,5,10]
+    reference_coverage:dict[str,str]=Field(description='参考样本status/from/to/requested_from；partial_history须标明实际区间，不能称完整年限')
     reference_points:dict[str,ReferencePoint]=Field(description='有效窗口的估值分位参照；样本不足为空对象，不是预测概率')
     formula:str
     assumption:str

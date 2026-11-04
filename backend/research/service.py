@@ -14,6 +14,7 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from . import providers,price_chunks
 from .snapshots import encode,decode
 from .validation import validate as validate_snapshot,public_url
+from .jiucai import compare as compare_valuations
 from .updates import UpdateJobs,SCOPES,MODULES,key as resource_key
 from .metrics import WINDOWS, METHOD_VERSION, clean_prices, drawdown, valuation, financial_totals,price_changes,moving_averages
 
@@ -60,7 +61,8 @@ class ResearchService:
         saved=next((v for v in self.profiles() if v['id']==p['provider']+':'+p['code']),None)
         default=providers.valuation_code(saved or p)
         return dict(profile=p, resolve_token=token, expires_at=expires, research_revision=self.revision(),
-                    valuation_options=list(providers.VALUATION_SUFFIXES),
+                    valuation_options=list(providers.valuation_options(p)),
+                    valuation_source=providers.valuation_source(p), valuation_source_label=providers.valuation_source_label(p),
                     default_valuation_suffix=default.rsplit('.',1)[-1] if default else None,
                     valuation_disabled=bool(saved is not None and 'valuation_code' in saved and saved['valuation_code'] is None))
 
@@ -68,7 +70,7 @@ class ResearchService:
         p=providers.identity(code)
         if suffix is None:
             result=dict(code=None,status='skipped',metrics={})
-        elif suffix not in providers.VALUATION_SUFFIXES:
+        elif suffix not in providers.valuation_options(p):
             raise DomainError('估值后缀不在候选列表中')
         elif p['code']=='H11136':
             result=dict(code=p['code']+'.'+suffix,status='unavailable',metrics={},reason='境外指数估值口径尚未支持，请选择暂不接入估值')
@@ -79,7 +81,7 @@ class ResearchService:
             payload=dict(profile=hashlib.sha256(json_dumps(p).encode()).hexdigest(),suffix=suffix,expires=expires)
             content=base64.urlsafe_b64encode(json_dumps(payload).encode()).decode()
             token=content+':'+hmac.new(self.secret,('valuation:'+content).encode(),'sha256').hexdigest()
-        return dict(result,valuation_token=token,expires_at=expires)
+        return dict(result,valuation_token=token,expires_at=expires,source=providers.valuation_source_label(p))
 
     def _valuation_selection(self, token, profile):
         try:
@@ -89,7 +91,7 @@ class ResearchService:
             value=json.loads(base64.urlsafe_b64decode(content))
             if value['expires']<time.time() or value['profile']!=hashlib.sha256(json_dumps(profile).encode()).hexdigest():raise ValueError()
             suffix=value['suffix']
-            if suffix is not None and suffix not in providers.VALUATION_SUFFIXES:raise ValueError()
+            if suffix is not None and suffix not in providers.valuation_options(profile):raise ValueError()
         except (ValueError,KeyError,TypeError):raise DomainError('估值验证缺失、已过期或与指数不匹配，请重新选择并验证PE、PB') from None
         return profile['code']+'.'+suffix if suffix else None
 
@@ -191,8 +193,10 @@ class ResearchService:
         for metric in ('pe','pb'):
             series=(v or {}).get('series',{}).get(metric,{}).get(method)
             if series:
-                series=dict(series,rows=[r for r in series['rows'] if r['date'] in calendar])
+                series=dict(series,history_start=min((r['date'] for r in series['rows']),default=None),rows=[r for r in series['rows'] if r['date'] in calendar])
                 valuations[metric]=valuation(series,asof)
+        cross_check=compare_valuations(valuations,(v or {}).get('cross_check'),method)
+        available_methods=[m for m in ('overall','median','arithmetic') if all(m in (v or {}).get('series',{}).get(k,{}) for k in ('pe','pb'))]
         dd={str(w):drawdown(prices,asof,w) for w in WINDOWS}
         sample=dd[str(window)]
         curve=sample.get('curve',[])
@@ -202,7 +206,7 @@ class ResearchService:
         if curve and (not chart or chart[-1]!=curve[-1]):chart.append(curve[-1])
         for entry in dd.values():entry.pop('curve',None)
         if summary:
-            result=wire(dict(id=iid,profile=p,latest=prices[-1] if prices else None,asof=asof,valuation=valuations,drawdown=dd,
+            result=wire(dict(id=iid,profile=p,latest=prices[-1] if prices else None,asof=asof,valuation=valuations,valuation_cross_check=cross_check,drawdown=dd,
                              changes=price_changes(prices,calculation_date),status='available' if prices else 'missing'))
             return self._remember(key,result,revision)
         company_vals={r['code']:r for r in (stocks or {}).get('rows',[])}
@@ -227,7 +231,7 @@ class ResearchService:
                                        reason=capability['reason'] or (last.get('error') if last else None), date=snapshot.get('effective_date') if snapshot else None)
         result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=p['return_code'] if basis=='total_return' else p['code'],asof=asof,latest=prices[-1] if prices else None,
             research_revision=revision,method=method,window=window,method_version=METHOD_VERSION,analysis_id=hashlib.sha256(json_dumps([m['snapshot_id'] if m else None for m in resources.values()]+[basis,method,METHOD_VERSION]).encode()).hexdigest(),
-            valuation=valuations,drawdown=dd,curve=chart,daily_series=moving_averages(prices,window),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
+            valuation=valuations,valuation_cross_check=cross_check,available_valuation_methods=available_methods,drawdown=dd,curve=chart,daily_series=moving_averages(prices,window),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
             sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and method=='overall' and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb')))))
         return self._remember(key,result,revision)
@@ -253,18 +257,20 @@ class ResearchService:
         result=point*(1+change)*target/current
         reference_window=str(body.get('reference_window',5))
         if reference_window not in ('3','5','10'):raise DomainError('参考窗口无效')
-        references=d['valuation'][metric].get('windows',{}).get(reference_window,{}).get('quantiles',{})
+        reference=d['valuation'][metric].get('windows',{}).get(reference_window,{})
+        references=reference.get('quantiles',{})
+        reference_coverage={k:reference[k] for k in ('status','from','to','requested_from') if k in reference}
         reference_points={q:dict(multiple=value,point=ds(point*dec(value)/current)) for q,value in references.items()}
         low=min(dec('-.5'),change);high=max(dec('.5'),change)
         curve=[dict(change_pct=ds((low+(high-low)*i/20)*100),point=ds(point*(1+low+(high-low)*i/20)*target/current)) for i in range(21)]
-        return dict(curve=curve,reference_window=int(reference_window),reference_points=reference_points,point=ds(result),current_point=ds(point),metric=metric,target_multiple=ds(target),change_ratio=ds(change),analysis_id=d['analysis_id'],basis=basis,
+        return dict(curve=curve,reference_window=int(reference_window),reference_coverage=reference_coverage,reference_points=reference_points,point=ds(result),current_point=ds(point),metric=metric,target_multiple=ds(target),change_ratio=ds(change),analysis_id=d['analysis_id'],basis=basis,
             formula='P0*(1+change_ratio)*target_multiple/current_multiple',assumption='固定成分、权重及除数；忽略调样与融资变化；仅条件代数结果')
 
     def projection(self,iid,part,basis='price',window=3,analysis_id=None,page=1,page_size=20,method='overall'):
         d=self.detail(iid,basis,method,window)
         if analysis_id is not None and analysis_id!=d['analysis_id']:raise ConflictError('分析快照已变化，请重新读取，勿合并不同版本分页')
         if part=='series':value=dict(rows=d['curve'],drawdown=d['drawdown'][str(window)],window=window)
-        elif part=='sources':value=dict(items=d['sources'])
+        elif part=='sources':value=dict(items=d['sources'],valuation_cross_check=d['valuation_cross_check'])
         elif part=='constituents':value=dict(items=d['companies'][(page-1)*page_size:page*page_size],total=len(d['companies']),page=page,page_size=page_size)
         else:
             source=next((s for s in d['sources'] if s['module']=='financials'),None)
@@ -279,7 +285,7 @@ class ResearchService:
         if page<1:raise DomainError('页码无效')
         rows=[]
         for p in profiles[(page-1)*20:page*20]:
-            d=self.detail(p['id'],summary=True);rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')})
+            d=self.detail(p['id'],summary=True);rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','valuation_cross_check','drawdown','changes','status')})
         return dict(items=rows,total=len(profiles),page=page,page_size=20,research_revision=self.revision())
 
     def settings(self):

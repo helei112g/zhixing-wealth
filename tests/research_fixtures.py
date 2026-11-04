@@ -17,6 +17,8 @@ def price_payload(profile,basis,asof=ASOF):
 
 
 def valuation_payload(profile,asof=ASOF):
+    if profile['code']=='930955':
+        return jiucai_payload(profile,asof)
     series={}
     for metric in ('pe','pb'):
         methods={}
@@ -30,6 +32,18 @@ def valuation_payload(profile,asof=ASOF):
             methods[method]=dict(rows=rows,source='synthetic',field=field,frequency='monthly')
         series[metric]=methods
     return dict(series=series,effective_date=ASOF,evidence=[])
+
+
+def jiucai_payload(profile,asof=ASOF):
+    cursor=date(2017,5,26);end=date.fromisoformat(min(asof,ASOF));rows=[]
+    while cursor<=end:
+        if cursor.weekday()<5:rows.append(dict(date=str(cursor),value=str(8+cursor.toordinal()%5)))
+        cursor+=timedelta(days=1)
+    rows[-1]['value']='12'
+    return dict(series={m:dict(overall=dict(rows=[dict(r,value=r['value'] if m=='pe' else str(int(r['value'])/10)) for r in rows],
+                       source='韭圈儿（合成）',field='pe_ttm' if m=='pe' else 'pb_lf',frequency='daily',allow_partial_window=True)) for m in ('pe','pb')},
+                effective_date=rows[-1]['date'],evidence=[],methodology_note='完全合成的日频估值与中证比较样本',
+                cross_check=dict(status='available',rows=[dict(date=rows[-1]['date'],value='10')]))
 
 
 def valuation_probe_payload(profile,suffix):

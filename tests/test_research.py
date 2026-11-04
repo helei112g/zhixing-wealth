@@ -180,16 +180,43 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(len(self.r.profiles()),3)
         self.assertEqual(self.store.state()['revision'],ledger_revision)
         with self.store.connection() as db:validate_backup(db)
-    def test_dividend_low_volatility_valuation_gap_is_reported_without_fetching(self):
+    def test_dividend_low_volatility_uses_daily_valuation_and_partial_coverage(self):
         added,_=self.add('930955')
-        with patch.object(providers,'valuations') as fetch:
+        old=self.r.profile(added['id']);old.pop('valuation_code');old.pop('valuation_source')
+        with self.r.transaction() as db:
+            db.execute('UPDATE research_indices SET data=? WHERE id=?',(json_dumps(old),added['id']))
+        self.r.publish(added['id'],'price',price_payload(old,'price'))
+        ledger_revision=self.store.state()['revision']
+        with patch.object(providers,'valuations',side_effect=valuation_payload) as fetch:
             outcome=self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
-        fetch.assert_not_called()
-        self.assertEqual(outcome[0]['status'],'unsupported')
-        status=self.r.detail(added['id'])['module_status']
-        self.assertFalse(status['valuations']['supported'])
-        self.assertIn('未覆盖',status['valuations']['reason'])
-        self.assertTrue(status['stock_valuations']['supported'])
+        fetch.assert_called_once()
+        self.assertEqual(outcome[0]['status'],'complete')
+        d=self.r.detail(added['id'])
+        self.assertTrue(d['module_status']['valuations']['supported'])
+        self.assertEqual(d['valuation']['pe']['current'],'12')
+        self.assertEqual(d['valuation']['pe']['windows']['10']['status'],'partial_history')
+        self.assertEqual(d['valuation']['pb']['coverage'],dict(start='2017-05-26',end=ASOF))
+        self.assertEqual(d['available_valuation_methods'],['overall'])
+        self.assertEqual(d['valuation_cross_check']['pe']['status'],'warning')
+        self.assertEqual(d['valuation_cross_check'],self.r.listing()['items'][0]['valuation_cross_check'])
+        result=self.r.scenario(added['id'],dict(analysis_id=d['analysis_id'],metric='pe',target_multiple='12',change_ratio='0',reference_window=10,accept_fixed_basket_assumption=True))
+        self.assertEqual(result['reference_coverage']['status'],'partial_history')
+        self.assertEqual(result['reference_coverage']['from'],'2017-05-26')
+        self.assertEqual(self.r.profile(added['id']),old)
+        self.assertEqual(self.store.state()['revision'],ledger_revision)
+        snapshot=self.r.module(added['id'],'valuations')['snapshot_id']
+        with patch.object(providers,'valuations',side_effect=RuntimeError('合成来源失败')):
+            with self.assertRaisesRegex(RuntimeError,'合成来源失败'):
+                self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
+        self.assertEqual(self.r.module(added['id'],'valuations')['snapshot_id'],snapshot)
+    def test_jiucai_profile_explicit_opt_out_is_preserved(self):
+        p=self.r.resolve('930955');v=self.r.valuation_preview('930955',None)
+        added=self.r.add(dict(resolve_token=p['resolve_token'],valuation_token=v['valuation_token'],expected_research_revision=p['research_revision'],request_id='opt-out'))
+        self.assertIsNone(providers.valuation_code(self.r.profile(added['id'])))
+        with patch.object(providers,'valuations') as fetch:
+            result=self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
+        fetch.assert_not_called();self.assertEqual(result[0]['status'],'unsupported')
+        self.assertTrue(self.r.resolve('930955')['valuation_disabled'])
     def test_existing_dividend_profile_fetches_verified_valuation_mapping_without_rewrite(self):
         added,_=self.add('000922')
         old=self.r.profile(added['id']);old.pop('valuation_code')

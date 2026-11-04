@@ -142,10 +142,11 @@ class Client:
         return self.preview({'code':code},'/api/research/indices/resolve')
 
     def validate_index_valuation(self,code,valuation_suffix):
-        """Read-only PE/PB validation; None explicitly opts out of index valuation."""
+        """Use resolve's per-index source/options; None explicitly opts out. Read-only."""
         return self.preview({'code':code,'valuation_suffix':valuation_suffix},'/api/research/indices/valuation-preview')
 
     def research_index(self,index_id,basis='price',window=3,method='overall'):
+        """Inspect valuation coverage/partial_history and same-date valuation_cross_check."""
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))
 
     def research_part(self,index_id,part,*,basis='price',window=3,method='overall',analysis_id=None,page=1,page_size=20):

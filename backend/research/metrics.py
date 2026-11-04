@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'index-library-2'
+METHOD_VERSION = 'index-library-3'
 WINDOWS = (3, 5, 10)
 
 
@@ -58,22 +58,48 @@ def drawdown(rows, asof, years):
             'max_drawdown_ratio': ds(low), 'high_date_policy': 'latest_equal_high', 'curve': curve}
 
 
+def partial_window(rows, at, years):
+    """A genuinely shorter daily history, never a fallback for a gapped full window."""
+    start = years_before(at, years); end = day(at)
+    if not rows or day(rows[0]['date']) <= start + timedelta(days=7): return []
+    previous = [r for r in rows if start <= day(r['date']) < end]
+    if not previous: return []
+    first = day(previous[0]['date']); span = (end - first).days
+    if span < 365 or len(previous) * 365 < 180 * span: return []
+    if (end-day(previous[-1]['date'])).days > 45: return []
+    if any((day(b['date'])-day(a['date'])).days > 45 for a,b in zip(previous,previous[1:])): return []
+    for year in range(first.year + 1, end.year):
+        if sum(r['date'].startswith(str(year)) for r in previous) < 180: return []
+    return previous
+
+
 def valuation(series, asof):
     rows = sorted([r for r in series.get('rows', []) if r.get('value') is not None and day(r['date']) <= day(asof)], key=lambda r: r['date'])
     if len({r['date'] for r in rows}) != len(rows): raise ValueError('估值观测重复')
     current = rows[-1] if rows else None
     windows = {}
     for years in WINDOWS:
-        history = full_window([r for r in rows if dec(r['value'])>0], current['date'], years, series.get('frequency', 'daily')) if current else []
+        valid = [r for r in rows if dec(r['value'])>0]
+        history = full_window(valid, current['date'], years, series.get('frequency', 'daily')) if current else []
+        status = 'available'
+        if not history and current and series.get('allow_partial_window') and series.get('frequency') == 'daily':
+            # Use the original start to distinguish short coverage from invalid early values.
+            origin=series.get('history_start') or rows[0]['date']
+            if valid and day(origin) > years_before(current['date'],years) + timedelta(days=7) and day(valid[0]['date']) <= day(origin)+timedelta(days=7):
+                history = partial_window(valid, current['date'], years)
+                status = 'partial_history'
         if not history or dec(current['value']) <= 0:
             windows[str(years)] = {'status': 'insufficient_history', 'rank': None}; continue
         v = dec(current['value']); vals = [dec(r['value']) for r in history if dec(r['value']) > 0]
         rank = (sum(x < v for x in vals) + Decimal('.5') * sum(x == v for x in vals)) / len(vals) if vals else None
-        windows[str(years)] = {'status': 'available' if rank is not None else 'insufficient_history',
+        windows[str(years)] = {'status': status if rank is not None else 'insufficient_history',
                                'rank': ds(rank) if rank is not None else None, 'count': len(vals),
+                               'from': history[0]['date'], 'to': history[-1]['date'],
+                               'requested_from': years_before(current['date'], years).isoformat(),
                                'quantiles': quantiles(vals)}
     return dict(source=series.get('source'), field=series.get('field'), frequency=series.get('frequency'),
-                date=current['date'] if current else None, current=current['value'] if current else None, windows=windows)
+                date=current['date'] if current else None, current=current['value'] if current else None, windows=windows,
+                coverage=dict(start=rows[0]['date'], end=current['date']) if current else None)
 
 
 def financial_totals(rows, members, period):

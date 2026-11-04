@@ -376,8 +376,8 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 | 接口 | 合同 |
 |---|---|
-| POST `/api/research/indices/resolve` | `{code}`；返回 profile、resolve_token、research_revision、expires_at、valuation_options（CSI/SH/SZ/LG）、default_valuation_suffix、valuation_disabled。只读身份预览；仅明确登记或已保存的映射可作为默认值。 |
-| POST `/api/research/indices/valuation-preview` | `{code,valuation_suffix}`；后缀必须显式传CSI/SH/SZ/LG，或null表示暂不接入估值。只读联网验证，返回code/status、metrics.pe/pb的状态、观测数量、首末日期及最新值；两项均有效才返回valuation_token，缺失或请求失败时token为null。显式null返回skipped及token，不访问供应商。 |
+| POST `/api/research/indices/resolve` | `{code}`；返回 profile、resolve_token、research_revision、expires_at、valuation_options（按指数限定；930955仅CSI，其余CSI/SH/SZ/LG）、valuation_source、valuation_source_label、default_valuation_suffix、valuation_disabled。只读身份预览；仅明确登记或已保存的映射可作为默认值。 |
+| POST `/api/research/indices/valuation-preview` | `{code,valuation_suffix}`；后缀必须显式传CSI/SH/SZ/LG，或null表示暂不接入估值。只读联网验证，返回code/status/source、metrics.pe/pb的状态、观测数量、首末日期及最新值；两项均有效才返回valuation_token，缺失或请求失败时token为null。显式null返回skipped及token，不访问供应商。 |
 | POST `/api/research/indices` | `{resolve_token, valuation_token, expected_research_revision, request_id}`；短期签名绑定精确配对及已验证的来源选择（含显式不接入），CAS建档及首次补齐意图同事务持久化；返回 id、basis、job_id、research_revision、existing。原 request_id 重放返回原结果，变更负载409。 |
 | GET `/api/research/indices?kind=宽基&page=1` | 固定每页20；价格摘要、PE/PB 3/5/10年分位和独立高点日期。无搜索、关注及组合关联。 |
 | GET `/api/research/indices/{id}?basis=price&method=overall&window=3` | basis为price/total_return；method为overall/median/arithmetic；窗口3/5/10。返回analysis_id、独立research_revision及四页签投影。当前可得版本；历史asof参数明确拒绝，避免冒充PIT。 |
@@ -398,9 +398,9 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 公共更新的行情/汇率资源支持可选布尔`full`（默认false），用于历史补齐；精确重试须保留它。记账、基准与导入后的自动补齐进入同一队列，遵守全局scope开关及仅手动设置。
 
-指数增强（method_version `index-library-2`）：detail新增`changes.daily/weekly/ytd`（ratio/from_date/to_date或null）、`top10_weight`（百分数）、`daily_series`（完整显示日线及ma51/ma120/ma250/ma850，缺期null）、按权重降序的`companies[].weight_rank/financials[报告期]`与`financials.current_years`。`valuation.*.windows.*.quantiles`为有效同源历史样本的p10/p25/p50/p75/p90。list亦提供changes。旧字段保持兼容。
+指数增强（method_version `index-library-3`）：detail新增`changes.daily/weekly/ytd`（ratio/from_date/to_date或null）、`top10_weight`（百分数）、`daily_series`（完整显示日线及ma51/ma120/ma250/ma850，缺期null）、按权重降序的`companies[].weight_rank/financials[报告期]`与`financials.current_years`。`valuation.*.windows.*.quantiles`为有效同源历史样本的p10/p25/p50/p75/p90。list亦提供changes。旧字段保持兼容。
 
-`POST .../scenarios`可选`reference_window:3|5|10`（默认5），返回`curve`（change_pct、point）、`reference_points`（分位→multiple/point）和reference_window。曲线与所选结果均由后端Decimal计算；参考点固定分母不变，窗口不足则空对象。只接受同日整体法价格序列与明确固定篮子假设；所有结果仍绑定analysis_id。
+`POST .../scenarios`可选`reference_window:3|5|10`（默认5），返回`curve`（change_pct、point）、`reference_points`（分位→multiple/point）和reference_window。曲线与所选结果均由后端Decimal计算；参考点固定分母不变，样本不足则空对象；允许的短历史窗口返回partial_history及reference_coverage，调用者须显示实际区间。只接受同日整体法价格序列与明确固定篮子假设；所有结果仍绑定analysis_id。
 
 
 研究能力发现补充 `research.bases`、`valuation_methods`、`detail_fields`、`moving_averages`及`scenario_reference_windows`。标准库客户端的 `research_index(..., method='overall')`显式透传估值方法；`research_part(index_id, part, *, basis='price', window=3, method='overall', analysis_id=None, page=1, page_size=20)`覆盖四种资料投影，part限series／constituents／financials／sources。调用者在跨页读取时传入刚读取的analysis_id，遵守409版本冲突规则。
@@ -444,8 +444,8 @@ UpdateRequest.resources按scope区分六种结构，OpenAPI同时公开各模块
 - `expense_plan`、`expense_month` 加入 `/api/family/preview` 和 `/api/family/commands`，沿用expected_revision、record_id。`command-schema`版本3提供完整JSON Schema。expense_plan包含name、amount或source_item_id、effective_month、end_month；编辑原ID追加版本。expense_month包含month、extra_plan、actual_amount、confirmed、note，record_id为YYYY-MM；未来月份只允许预算。
 - 实际开支总额替代预算，不相加。confirmed表示整月收入和开支已经完整核对，无收入记录时明确确认零收入；收入记录改变后needs_review为true并退出实际年度统计。已确认月份保存预算快照，之后改计划不改写该月。上述两类操作不产生现金流水、证券事件或资产快照；超时先回读，不自动重试。
 - 指数详情新增 `module_status`，逐模块包含supported/status/reason/date。科创50价格/全收益代码000688/000688CNY01，中证海外中国互联网H11136/H01136；后者估值及财务模块明确unsupported，不调用A股财务适配器。
-- 注册表另支持红利低波100（930955/H20955）、中证煤炭（399998/H20596）、全指医药（000991/H00991），均为csi家族；任一代码可识别，保留输入basis，重复建档返回同一id。红利低波100的指数估值模块为unsupported，其余模块分别报告实际状态；全指医药的北交所成分使用market=BJ。399998的profile含valuation_code=399998.SZ，行情仍使用中证接口。接口、研究CAS及幂等契约不变。
-- 中证红利000922/H00922的身份预览profile包含`valuation_code=000922.CSI`；此前没有该字段的既有档案无需重建，估值采集时回查当前注册表，仍保留原档案响应。修复不自动更新正式数据，正常估值更新后详情返回PE/PB及对应来源参数。930955的候选等权历史与认证API核验见[研究来源说明](research.md)，当前接口支持状态不变。
+- 注册表另支持红利低波100（930955/H20955）、中证煤炭（399998/H20596）、全指医药（000991/H00991），均为csi家族；任一代码可识别，保留输入basis，重复建档返回同一id。红利低波100使用韭圈儿930955.CSI整体法日频估值，其余模块分别报告实际状态；全指医药的北交所成分使用market=BJ。399998的profile含valuation_code=399998.SZ，行情仍使用中证接口。接口、研究CAS及幂等契约不变。
+- 中证红利000922/H00922的身份预览profile包含`valuation_code=000922.CSI`；此前没有该字段的既有档案无需重建，估值采集时回查当前注册表，仍保留原档案响应。修复不自动更新正式数据，正常估值更新后详情返回PE/PB及对应来源参数。930955的韭圈儿日频接入、中证同日校验和覆盖规则见[研究来源说明](research.md)。
 
 估值验证凭证有效期10分钟，绑定完整输入身份及所选来源；缺失、篡改、过期或跨指数/口径使用均拒绝。验证不写研究快照、revision或更新任务。原request_id成功重放仍返回原结果，不受凭证随后过期影响；未知结果先用原负载回读。重复建档保留既有估值配置，不同选择返回409，不静默覆盖。请求字段/枚举无效返回422，预验证的来源缺失或请求失败则200返回逐指标原因及null token。读取缺少valuation_code的旧档案，只回查明确注册映射；显式valuation_code=null不回退，尚无明确映射则估值unsupported。正式同步仍按原策略与任务流程执行。
 
@@ -456,3 +456,12 @@ UpdateRequest.resources按scope区分六种结构，OpenAPI同时公开各模块
 - 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即覆盖八个指数模块。明确的手动更新不受自动更新策略开关限制；不更新其他指数、组合行情或汇率。
 - 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格及公司估值的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
 - Yahoo 参考每股值仅在相对差≤0.01%且绝对差≤0.005币种单位时视为微调；始终与最后一次明确确认的固定依据比较。此规则不舍入或改写实际金额、税费、份额及汇率，也不豁免权益、日期、币种与拆分变化。
+
+
+### 红利低波100估值覆盖与校验（2026.11.04）
+
+`valuation.pe/pb`新增`coverage:{start,end}`表示实际可用历史覆盖（含当前日）；`windows[3|5|10]`有效窗口包含`rank/count/quantiles/from/to/requested_from`，from/to为参与分位的历史样本首末日，排除当前日。仅韭圈儿日频短历史可返回`status=partial_history`和非空rank，必须连同实际区间显示，不是完整年限；缺口、过疏、非正当前值仍为`insufficient_history`及null。月度算法保持原规则。`available_valuation_methods`按该快照的两个指标共同可用方法列出；930955仅overall。
+
+列表、详情和sources投影返回`valuation_cross_check`（其他来源为null）：`source/field/primary_source/threshold`及`pe/pb`。PE状态为`within_threshold`、`warning`、`unavailable`或`date_mismatch`；比较成功时返回`date/primary/official/reference_date/relative_difference`，后者为有符号比例字符串，以官方PE为分母，绝对值≥0.1提醒。无同日有效值时不返回差异；失败原因单列。PB当前始终unavailable并给出reason。官方失败不影响主源发布，PE/PB主源校验失败保留旧快照。
+
+`POST .../scenarios`新增`reference_coverage:{status,from?,to?,requested_from?}`，与响应的reference_window/reference_points同属同一分析版本。partial_history时须按实际日期命名参考区间。方法版本更新为index-library-3；接口路径、写入CAS、幂等和schema不变。

@@ -15,7 +15,7 @@ description: 查询或维护知行财富的资产更新、余额快照、负债�
 - 读 `/api/capabilities` 与 `/api/family/catalog` 获得能力、revision、项目及关联ID；需要写入时读 `/api/family/command-schema` 获取当前 JSON Schema，勿根据名称猜ID。
 - 仅需要日期选项时用`family_bounds()`或`/api/family/bounds`；完整写入核对仍读取catalog及command-schema。
 - 总览：`/api/family/summary?grain=month&period=YYYY-MM`；按年用year。月度比较上月末，年度比较上年末；结束日余额不可累加。自定义必须提供start/end。
-- 趋势分析：`/api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD`。按月比较上月末、按年比较上年末；用户明确要求同比时改用 comparison=yoy 并说明基线，null保留未知；范围变化计入总额变化，保留服务端 scope_changed/reason 说明，不将变化率称为投资收益。
+- 趋势分析：`/api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD`。按月比较上月末、按年比较上年末；用户明确要求同比时改用 comparison=yoy 并说明基线，null保留未知；范围变化计入总额变化，保留服务端 scope_changed/reason 说明，不将变化率称为投资收益。逐期检查 missing、warnings 和 reconciliation_todos；资金待核对时提示检查同期间手工现金，不能因金额可算就视为已核对。
 - 收入：`/api/family/income?year=YYYY`；提醒统一用`/api/reminders`。收入不自动增加现金，待收款不是现金，保险保额/保费不是资产。现金覆盖仅按计划还款折算，不包括生活开支。
 - 通知启停、测试及排程诊断位于提醒中心。系统排程读 `/api/notifications`：每次只登记最近一条，同一时刻合并；`deferred_count` 是等待后续排程数，不是失败，`missing_count` 只指本次选中的缺失提醒。后续接续需要本机服务运行；受理不等于用户看到或已经付款，不确认业务、不删状态文件来清除排程提示。
 

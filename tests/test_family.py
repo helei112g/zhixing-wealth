@@ -108,6 +108,24 @@ class FamilyTests(unittest.TestCase):
         self.write('reconcile',dict(link_id=link['id'],effective_on='2026-10-27',confirmation='已核对手工现金'))
         self.assertIsNotNone(self.family.read()['total_assets'])
         self.assertEqual(len(self.store.state()['events']),len(before)+1)
+    def test_history_preserves_cash_reconciliation_by_period_without_extra_reads(self):
+        self.item();p=self.portfolio();link=self.link(p,'2026-01-01');event=self.buy(p)
+        self.service.cache_prices(event['instrument_id'],[dict(date=d,price='10',source='synthetic') for d in ('2026-02-28','2026-03-31')])
+        with patch.object(self.family,'read',side_effect=AssertionError('history loads overview')), patch.object(self.family,'catalog',side_effect=AssertionError('history loads catalog')):
+            rows=self.family.history('2026-01-01','2026-02-28')['rows']
+        self.assertEqual(rows[0]['reconciliation_todos'],[])
+        self.assertEqual(rows[1]['reconciliation_todos'],self.family.read('2026-02-28')['reconciliation_todos'])
+        self.assertEqual(rows[1]['reconciliation_todos'][0]['link_id'],link['id'])
+        self.assertEqual(rows[1]['missing'],[])
+        self.assertEqual(rows[1]['quality'],'待核对')
+        before=self.store.state()['events']
+        self.write('reconcile',dict(link_id=link['id'],effective_on='2026-03-01',confirmation='已核对手工现金'))
+        rows=self.family.history('2026-02-01','2026-03-31')['rows']
+        self.assertTrue(rows[0]['reconciliation_todos'])
+        self.assertEqual(rows[1]['reconciliation_todos'],[])
+        self.assertNotEqual(rows[1]['quality'],'待核对')
+        self.assertEqual(self.store.state()['events'],before)
+
     def test_preview_is_side_effect_free_and_stale_save_rejected(self):
         rev=self.store.state()['revision'];payload=dict(name='合成',category='cash',currency='CNY',economic_id='a',effective_on='2026-01-01',amount='1',source='合成')
         a=self.family.command('item',payload,rev,preview=True)

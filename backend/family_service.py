@@ -109,8 +109,9 @@ class FamilyService:
                                   'scope_changed': changed, 'reason': reason}
                 points.append({'date': str(d), 'partial': d != period_end, 'values': values, 'changes': changes,
                                'components': [{k:r[k] for k in ('id','name','category','value')} for r in snap['items']],
-                               'quality': '待核对' if snap['provisional'] else '沿用或暂估' if snap['warnings'] else '已记录',
+                               'quality': '待核对' if snap['provisional'] or snap['reconciliation_todos'] else '沿用或暂估' if snap['warnings'] else '已记录',
                                'missing': snap['missing_items'], 'warnings': snap['warnings'],
+                               'reconciliation_todos': snap['reconciliation_todos'],
                                'comparison_date': str(baseline), 'scope_changed': scope_changed,
                                'active_ids': scope(snap)})
                 cursor = period_end + timedelta(days=1)

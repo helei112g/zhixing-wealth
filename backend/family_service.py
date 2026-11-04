@@ -26,6 +26,14 @@ class FamilyService:
         self.store = store
 
     @cached_query
+    def bounds(self):
+        """Date navigation needs no quotes, portfolio replay or closure checks."""
+        with self.store.connection() as db:
+            family = read_state(db)
+            revision = int(db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()[0])
+        return dict(bounds=recording_bounds(family, str(today())), revision=revision)
+
+    @cached_query
     def read(self, date=None):
         date = past(date or today(), '估值日期')
         with self.store.connection() as db:

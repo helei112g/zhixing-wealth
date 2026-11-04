@@ -45,6 +45,9 @@ def family_router(store, environment):
     @router.get('/catalog')
     def catalog(): return wire(family.catalog())
 
+    @router.get('/bounds', summary='轻量读取资产与收入日期范围，不重算组合或返回完整台账')
+    def bounds(): return family.bounds()
+
     @router.get('/history', summary='月度比上月末、年度比上年末（previous）；显式 yoy 为去年同期')
     def history(start: str | None = None, end: str | None = None, grain: str = 'month', comparison: str = 'previous'):
         return family.history(start, end, grain, comparison)

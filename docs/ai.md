@@ -128,3 +128,12 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 月度收支 `Client.cashflow(year)` 默认包含全部收入（含公积金）。`income_summary` 为全年已录入收入，不依赖开支确认；`summary` 仅包含同组已核对月份的实际收支及储蓄率，不能混用两者分母。
 
 指数建档先`resolve_index(code)`读取后缀列表与明确默认值，再按用户核对的选择调用`validate_index_valuation(code, valuation_suffix)`。CSI/SH/SZ/LG只表示估值来源编码，不改变官方指数身份；不得按编制方或代码前缀推断。两项PE/PB验证通过才可使用返回的原valuation_token；无法取数时展示逐项原因，可由用户明确选择None暂不接入估值，不能自动降级为None。提交同时携带原resolve_token、valuation_token、expected_research_revision、稳定request_id；token过期或选择改变后重新验证并核对。所有后续正常采集只读取明确保存/注册的完整来源代码，不尝试其他后缀。
+
+
+### 当前页面与更新任务
+
+`Client.family_bounds()` 读取日期选项，完整资产编辑再读 catalog。持仓分析默认配置进度，API仍分别提供allocation_analysis与holding_distribution。
+
+在用户授权更新当前指数后，调用 `Client.refresh_index(index_id, request_id)`；ID来自指数读取，request_id由调用方保留。该方法提交当前指数八个模块，不修改自动策略，也不涉及其他指数或组合行情。随后按返回job_id轮询到终态，并回读指数详情；分别报告市场截止、公告查询日和实际来源日期。`Client.update_history()` 返回统一的最近5条展示记录，不能代替按ID确认较早任务结果。未知结果先查证，不换request_id扩大或重复执行。
+
+macOS 通知设置位于提醒中心。Yahoo微小参考值变化可能继续更新来源，但已确认流水保持原值；查看review_changes确认是否发生实质变化，不能删除确认决定或原流水来消除提醒。

@@ -179,4 +179,6 @@ def router(service):
     def job(job_id:str):return service.updates.get(job_id)
     @api.get('/api/data-updates/jobs')
     def jobs():return {'jobs':service.jobs()}
+    @api.get('/api/data-updates/history', summary='合并公共数据与行情更新，父子任务去重，按开始时间倒序返回最近5条')
+    def history():return service.updates.history()
     return api

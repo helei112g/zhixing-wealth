@@ -215,6 +215,33 @@ class ReadPerformanceTests(unittest.TestCase):
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertNotEqual(summary['portfolio']['planned_amount'], client.get(url + '?view=summary').json()['portfolio']['planned_amount'])
 
+    def test_bounds_does_not_load_quotes_or_replay_portfolios(self):
+        self.family.command('link',dict(portfolio_id=self.p['id'],effective_on='2026-01-02',share='1'),self.store.state()['revision'])
+        expected=self.family.catalog()['bounds']
+        with patch.object(self.store,'state',side_effect=AssertionError('bounds loaded investment history')):
+            self.assertEqual(self.family.bounds()['bounds'],expected)
+        response=TestClient(create_app(self.directory,testing=True,auto_sync=False)).get('/api/family/bounds')
+        self.assertEqual(response.json()['bounds'],expected)
+
+    def test_holding_analyses_reuse_revision_and_invalidate_after_price_write(self):
+        before=self.service.allocation_analysis(self.p['id'])
+        distribution=self.service.holding_analysis.report(self.p['id'])
+        with patch.object(self.store,'state',side_effect=AssertionError('warm analysis loaded history')):
+            self.assertEqual(before,self.service.allocation_analysis(self.p['id']))
+            self.assertEqual(distribution,self.service.holding_analysis.report(self.p['id']))
+        self.service.cache_prices(self.iid,[dict(date='2026-01-02',price='20',source='synthetic')])
+        self.assertNotEqual(before,self.service.allocation_analysis(self.p['id']))
+        self.assertNotEqual(distribution,self.service.holding_analysis.report(self.p['id']))
+
+    def test_gzip_preserves_every_dashboard_field(self):
+        client=TestClient(create_app(self.directory,testing=True,auto_sync=False))
+        url='/api/portfolios/'+self.p['id']+'/dashboard'
+        plain=client.get(url,headers={'Accept-Encoding':'identity'})
+        zipped=client.get(url,headers={'Accept-Encoding':'gzip'})
+        self.assertEqual(zipped.headers.get('content-encoding'),'gzip')
+        self.assertEqual(zipped.json(),plain.json())
+        self.assertLess(int(zipped.headers['content-length']),int(plain.headers['content-length'])//2)
+
     def test_revision_poll_reports_midnight_without_a_business_write(self):
         client = TestClient(create_app(self.directory, testing=True, auto_sync=False))
         with patch('backend.family_api.today', return_value=date(2026, 1, 2)):

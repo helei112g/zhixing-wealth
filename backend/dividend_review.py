@@ -5,10 +5,11 @@ from .common import dec, ds
 
 
 # Both caps must hold, measured from the last reviewed value (never a rolling
-# source value). Only Yahoo's reference rate gets this tolerance; quantities,
-# dates, currency and split restoration factors never do.
+# source value). A sub-cent provider reference is not a new receipt fact.
+# Only Yahoo's reference rate gets this tolerance; quantities, dates, currency
+# and split restoration factors never do. Confirmed ledger amounts stay exact.
 YAHOO_RELATIVE_TOLERANCE = Decimal('0.0001')  # 0.01%, one basis point
-YAHOO_PER_SHARE_TOLERANCE = Decimal('0.0001')
+YAHOO_PER_SHARE_TOLERANCE = Decimal('0.005')  # half a currency cent per share
 DATE_FIELDS = ('record_date', 'notice_record_date', 'pay_date')
 CHANGE_LABELS = dict(eligible_quantity='权益份额变化', record_date='权益计算日期变化',
                      notice_record_date='来源登记日变化', pay_date='来源派息日变化',

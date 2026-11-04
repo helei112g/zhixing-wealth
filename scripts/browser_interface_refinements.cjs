@@ -42,7 +42,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
   await row.getByRole('button',{name:'合成权益',exact:true}).click();await page.locator('.instrument-profit [data-profit-equation]').waitFor();
   check(await page.locator('.instrument-profit-breakdown').count()===0&&(await page.locator('.instrument-profit').innerText()).includes('现金分红净收益'),'profit calculation is integrated below the single headline');
   check(await page.locator('.instrument-profit .equation-part b').evaluateAll(es=>es.every(e=>getComputedStyle(e).color==='rgb(146, 153, 163)')),'formula values are small neutral gray');await shot('instrument-profit');
-  await nav('持仓分析');await page.locator('.holding-sunburst-node').first().waitFor();
+  await nav('持仓分析');await page.getByRole('tab',{name:'持仓分布',exact:true}).click();await page.locator('.holding-sunburst-node').first().waitFor();
   check(await page.locator('.holding-sunburst-node path').evaluateAll(es=>new Set(es.map(e=>e.getAttribute('fill'))).size>=3),'sunburst distinguishes three markets with the muted palette');await shot('sunburst');
   for(const name of ['总览','趋势分析','保险','收入/开支']){await nav(name,'资产分析');await page.locator('.family-intro').waitFor();check(await caption.count()===1&&(await caption.innerText()).includes('资产 ·')&&await page.locator('.family-intro>span').count()===0,name+' has one caption in the title');}
   await nav('保险','资产分析');await page.getByRole('button',{name:'新增记录',exact:true}).click();await field('保单名称').fill('合成终身保单');await field('保单现金价值').fill('100');await field('保障期限').selectOption('lifetime');
@@ -61,10 +61,10 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
    }else if(holdNextRead){holdNextRead=false;const snapshot=status;await new Promise(resolve=>{heldRead=async()=>{await route.fulfill({json:snapshot});resolve();};});return;}
    await route.fulfill({json:status});
   });
-  await nav('全局设置','全局页面');await page.locator('.notification-issues').waitFor();
+  await nav('提醒中心','全局页面');await page.locator('.notification-issues').waitFor();
   check((await page.locator('.notification-issues').innerText()).includes(policy.name)&&(await page.locator('.notification-issues').innerText()).includes('2026-11-01 09:00')&&(await page.locator('.notification-issues').innerText()).includes('SyntheticError / 7'),'notice identifies the plan, exact time and OS reason');await shot('notification-details');
   await page.getByRole('button',{name:'查看相关计划',exact:true}).click();await page.getByRole('heading',{name:policy.name,exact:true}).waitFor();check(true,'notice opens its exact asset plan');
-  await nav('全局设置','全局页面');await page.getByRole('button',{name:'重试排程',exact:true}).click();await page.locator('.notification-issues').waitFor({state:'hidden'});check(retried,'retry clears resolved notification issues using simulated queue evidence');
+  await nav('提醒中心','全局页面');await page.getByRole('button',{name:'重试排程',exact:true}).click();await page.locator('.notification-issues').waitFor({state:'hidden'});check(retried,'retry clears resolved notification issues using simulated queue evidence');
   check(await page.getByText('等待后续排程 74 项（不计为失败）',{exact:false}).isVisible(),'deferred reminders are waiting work, not scheduling failures');
   check(await page.getByText('下一条通知 2026-11-02 09:00',{exact:false}).isVisible(),'shows only the next accepted notification time');
   check(await page.getByText('后续排程需要本机服务运行',{exact:false}).isVisible(),'explains continuation requires local service');
@@ -83,7 +83,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
   check(postCount===posts,'automatic notification refresh is read-only');
   await page.setViewportSize({width:390,height:1000});await page.waitForFunction(()=>document.querySelector('#app-navigation').getBoundingClientRect().right<=0);
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'single notification status fits mobile');await notificationPanel.screenshot({path:path.join(out,'notification-single-next-mobile.png')});
-  for(const width of [390,320]){await page.setViewportSize({width,height:1000});await nav('持仓标的');await page.locator('.holding-row').first().waitFor();await row.getByRole('button',{name:'设置计划',exact:true}).click();await drawer.getByLabel('投资范围',{exact:true}).waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'drawer fits '+width);await shot('drawer-'+width);await page.keyboard.press('Escape');await nav('持仓分析');await page.locator('.holding-sunburst-node').first().waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'sunburst fits '+width);await shot('sunburst-'+width);}
+  for(const width of [390,320]){await page.setViewportSize({width,height:1000});await nav('持仓标的');await page.locator('.holding-row').first().waitFor();await row.getByRole('button',{name:'设置计划',exact:true}).click();await drawer.getByLabel('投资范围',{exact:true}).waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'drawer fits '+width);await shot('drawer-'+width);await page.keyboard.press('Escape');await nav('持仓分析');await page.getByRole('tab',{name:'持仓分布',exact:true}).click();await page.locator('.holding-sunburst-node').first().waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'sunburst fits '+width);await shot('sunburst-'+width);}
   check(errors.length===0,'no browser runtime errors');fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({checks,errors,notification_evidence:'simulated',author:'Leo',date:boot.today},null,2));
  }catch(e){await shot('failure').catch(()=>{});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

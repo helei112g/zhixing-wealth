@@ -67,6 +67,9 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
  await page.setViewportSize({width:1500,height:1050});await page.getByRole('button',{name:'收起导航',exact:true}).click();check(Math.round((await page.locator('.sidebar').boundingBox()).width)===76,'desktop navigation collapses to 76px rail');await page.getByRole('button',{name:'展开导航',exact:true}).click();check(Math.round((await page.locator('.sidebar').boundingBox()).width)===224,'desktop navigation expands to 224px');
  // Continuous revision changes used to clear the overview chart on every bootstrap reload.
  const b=await api('/bootstrap');const asset=await api('/family/commands',{operation:'item',payload:{category:'cash',currency:'CNY',name:'合成刷新核验',effective_on:'2026-01-01',household_amount:'100'},expected_revision:b.revision});await nav('总览','资产分析');await page.locator('.overview-balance-bars').waitFor();
+ const navigationReads=[];const recordNavigation=r=>{const path=new URL(r.url()).pathname;if(path.startsWith('/api/family/'))navigationReads.push(path);};
+ page.on('request',recordNavigation);await page.goto(new URL('/?family=overview',base).href);await page.locator('.overview-balance-bars').waitFor();page.off('request',recordNavigation);
+ check(navigationReads.includes('/api/family/bounds')&&navigationReads.includes('/api/family/summary')&&!navigationReads.includes('/api/family/overview')&&!navigationReads.includes('/api/family/catalog'),'asset overview uses lightweight navigation without redundant ledger requests');
  await page.evaluate(()=>{window.__overviewFlashes=0;window.__observer=new MutationObserver(records=>{for(const r of records)for(const n of r.addedNodes)if(n.nodeType===1&&n.textContent.includes('读取期间统计'))window.__overviewFlashes++;});window.__observer.observe(document.querySelector('.main-content'),{childList:true,subtree:true});});
  for(let n=1;n<=3;n++){const r=await api('/family/revision');await api('/family/commands',{operation:'valuation',payload:{item_id:asset.result.id,effective_on:'2026-01-0'+(n+1),household_amount:String(100+n)},expected_revision:r.revision});await page.waitForTimeout(2400);await page.waitForFunction(value=>Number(document.querySelector('[data-summary-metric=total_assets] .balance-value')?.textContent.replace(/,/g,''))===Number(value),String(100+n));check(await page.locator('.overview-balance-bars').count()===1,'chart stays mounted and updates value during revision '+n);}
  check(await page.evaluate(()=>window.__overviewFlashes)===0,'same-query background revisions no longer flash the overview loading state');await page.evaluate(()=>window.__observer.disconnect());await shot('overview-refresh-stable');
@@ -90,6 +93,14 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
   check(await page.locator('.research-basis button[aria-pressed=true]').innerText()==='全收益指数 '+tr,'new family can load its exact total-return series '+code);
   if(code==='000991'){await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('cell',{name:/合成北交所公司/}).waitFor();check((await page.locator('.research-companies').innerText()).includes('920201 · BJ'),'healthcare preserves Beijing member identity');await shot('healthcare-beijing-member');}
  }
+ await page.getByRole('tab',{name:'数据来源',exact:true}).click();
+ const update=page.getByRole('button',{name:'更新当前指数全部数据',exact:true});await update.waitFor();
+ while(await update.isDisabled())await page.waitForTimeout(100);
+ const submitted=page.waitForRequest(r=>r.url().endsWith('/api/data-updates/run')&&r.method()==='POST');
+ await update.click();const payload=(await submitted).postDataJSON();
+ assert.deepEqual(payload.targets,['csi:000991']);assert.deepEqual(payload.scopes,['index_prices','memberships','valuations','financials']);
+ check(!payload.resources,'current-index refresh requests all its modules');
+ await page.getByText('更新任务已受理，完成状态及实际数据日期见下方。',{exact:true}).waitFor();await shot('index-manual-update');
  check(errors.length===0,'no browser exceptions');fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({checks,errors,synthetic:true},null,2));
  }catch(e){console.error('PAGE ERRORS',errors);console.error((await page.locator('body').innerText()).slice(-4000));await shot('failure');throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

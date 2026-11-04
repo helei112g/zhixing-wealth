@@ -6,6 +6,8 @@ import json
 import secrets
 import threading
 import time
+from collections import OrderedDict
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime
 from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, today, wire
@@ -25,7 +27,7 @@ class ResearchService:
         self.secret = secrets.token_bytes(32)
         self.updates = UpdateJobs(self)
         self.worker_lock = self.updates.worker_lock
-        self.cache = {}
+        self.cache = OrderedDict()
 
     @contextmanager
     def transaction(self, key='revision', expected=None, bump=False):
@@ -126,7 +128,7 @@ class ResearchService:
                 match=next((r for r in db.execute("SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running')") if json.loads(r[1])['digest']==task_digest),None)
                 jid=match[0] if match else secrets.token_hex(16)
                 if not match:
-                    job=dict(id=jid,digest=task_digest,generation=generation,resources=resources,scopes=list(MODULES),trigger='index_create',started_at=now(),items=[],completed_resources=[])
+                    job=dict(id=jid,created_order=time.time_ns(),digest=task_digest,generation=generation,resources=resources,scopes=list(MODULES),trigger='index_create',started_at=now(),items=[],completed_resources=[])
                     db.execute('INSERT INTO data_update_tasks VALUES (?,?,?)',(jid,'pending',json_dumps(job)))
                 result=dict(id=iid,basis=basis,research_revision=revision,job_id=jid,existing=not inserted)
                 db.execute('INSERT INTO data_update_receipts VALUES (?,?,?,?)',(receipt,digest,jid,json_dumps(result)))
@@ -169,16 +171,19 @@ class ResearchService:
             db.execute('INSERT INTO research_heads VALUES (?,?,?) ON CONFLICT(index_id,module) DO UPDATE SET snapshot_id=excluded.snapshot_id',(iid,module,sid))
         return sid
 
-    def detail(self, iid, basis='price', method='overall', window=3):
+    def detail(self, iid, basis='price', method='overall', window=3, *, summary=False):
         if basis not in ('price','total_return') or method not in ('overall','median','arithmetic') or window not in WINDOWS: raise DomainError('指数口径、估值方法或窗口无效')
         with self.store.lock:
             p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff()
-            recent=self.updates.jobs()
+            recent=[] if summary else self.updates.jobs()
             coverage_key=json_dumps([item for job in recent for item in job.get('items',[]) if item.get('target')==iid])
-            key=(iid,basis,method,window,revision,calculation_date,coverage_key)
-            if key in self.cache: return self.cache[key]
-            resources={name:self.module(iid,name) for name in ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials')}
-        price=resources[basis];v=resources['valuations'];members=resources['memberships'];stocks=resources['stock_valuations'];finance=resources['financials']
+            key=(iid,basis,method,window,revision,calculation_date,coverage_key,summary)
+            if key in self.cache:
+                self.cache.move_to_end(key)
+                return deepcopy(self.cache[key])
+            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials')
+            resources={name:self.module(iid,name) for name in names}
+        price=resources[basis];v=resources['valuations'];members=resources.get('memberships');stocks=resources.get('stock_valuations');finance=resources.get('financials')
         asof=price['effective_date'] if price else providers.cutoff()
         prices=clean_prices(price['rows'],asof) if price else []
         calendar={r['date'] for r in (resources['price'] or {}).get('rows',[])}
@@ -196,6 +201,10 @@ class ResearchService:
         chart=curve[::step]
         if curve and (not chart or chart[-1]!=curve[-1]):chart.append(curve[-1])
         for entry in dd.values():entry.pop('curve',None)
+        if summary:
+            result=wire(dict(id=iid,profile=p,latest=prices[-1] if prices else None,asof=asof,valuation=valuations,drawdown=dd,
+                             changes=price_changes(prices,calculation_date),status='available' if prices else 'missing'))
+            return self._remember(key,result,revision)
         company_vals={r['code']:r for r in (stocks or {}).get('rows',[])}
         companies=[dict(r,industry=r.get('industry') or (company_vals.get(r['code']) or {}).get('industry') or '',valuation=company_vals.get(r['code'])) for r in (members or {}).get('rows',[])]
         periods=(finance or {}).get('periods',[]);totals={period:financial_totals((finance or {}).get('rows',[]),companies,period) for period in periods} if finance else {}
@@ -221,8 +230,14 @@ class ResearchService:
             valuation=valuations,drawdown=dd,curve=chart,daily_series=moving_averages(prices,window),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
             sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and method=='overall' and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb')))))
-        if len(self.cache)>8:self.cache.clear()
-        self.cache[key]=result
+        return self._remember(key,result,revision)
+
+    def _remember(self,key,result,revision):
+        with self.store.lock:
+            if self.revision()==revision:
+                self.cache[key]=deepcopy(result)
+                self.cache.move_to_end(key)
+                while len(self.cache)>64:self.cache.popitem(last=False)
         return result
 
     def scenario(self,iid,body):
@@ -264,7 +279,7 @@ class ResearchService:
         if page<1:raise DomainError('页码无效')
         rows=[]
         for p in profiles[(page-1)*20:page*20]:
-            d=self.detail(p['id']);rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')})
+            d=self.detail(p['id'],summary=True);rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')})
         return dict(items=rows,total=len(profiles),page=page,page_size=20,research_revision=self.revision())
 
     def settings(self):

@@ -40,3 +40,6 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 
 
 计划买入使用purchase_plan_preview(P,payload)后原revision POST /api/portfolios/P/purchase-plans，回读dashboard和labels；仅建立标的计划，不写BUY、预留或扣现金。target_pct是全组合预算百分数，路径可含scope/direction/detail。已有标的按ID或精确代码复用，不修改全局名称。实际买入转持有中，清仓后需明确意图才重新计划；目标归零取消。allocation_analysis(P,level=scope|direction|detail|instrument,...)按完整标签路径汇总，筛选仍以全组合预算/资产作分母；required_amount与over_amount分别保留，不相抵。当前持仓收益率读取holding_return，基于剩余含费税成本，不用累计买入成本或已实现收益替代。
+
+
+持仓分析顺序为配置进度、持仓分布、收益排行榜，默认配置进度；API使用同一后端统计。分红参考与到账事实分开：Yahoo微调以最后确认依据为固定基准，不滚动推进；只有相对差≤0.01%且绝对差≤0.005币种单位才可豁免参考率变化，其他权益／日期／币种／拆分变化仍要核对。不要按新参考率自动修改已确认金额，也不要删除旧决定消除提醒。

@@ -113,9 +113,27 @@ class DividendReviewTests(unittest.TestCase):
         self.keep(self.notice(per_share='.01'))
         self.assertEqual(self.notice(per_share='.010002')['status'], 'needs_review', 'relative cap required')
         self.keep(self.notice(per_share='100'))
-        self.assertEqual(self.notice(per_share='100.00011')['status'], 'needs_review', 'absolute cap required')
+        self.assertEqual(self.notice(per_share='100.005')['status'], 'confirmed')
+        self.assertEqual(self.notice(per_share='100.00501')['status'], 'needs_review', 'absolute cap required')
         self.keep(self.notice(per_share='1', source='合成官方公告'))
         self.assertEqual(self.notice(per_share='1.000001')['status'], 'needs_review', 'no tolerance for official source')
+
+    def test_subcent_yahoo_rate_refresh_survives_restart_without_changing_receipt(self):
+        # Synthetic values exercise the interaction of relative and absolute caps.
+        event=self.confirm()
+        self.keep(self.notice(per_share='4'))
+        anchor=self.candidate()['previous_basis']
+        for rate in ('3.9998','4.0002','3.9997','4.0004'):
+            self.notice(per_share=rate)
+            self.service=Service(Store(self.directory))
+            row=self.candidate()
+            self.assertEqual(row['status'],'confirmed')
+            self.assertEqual(row['previous_basis'],anchor)
+            self.assertEqual(row['recorded_event'],event)
+            self.assertEqual(self.reminders(),[])
+        row=self.notice(per_share='4.00041')
+        self.assertEqual(row['status'],'needs_review')
+        self.assertIn('每份分红实质变化',row['review_changes'])
 
     def test_any_entitlement_change_and_known_date_currency_or_split_change_reopens(self):
         self.confirm()

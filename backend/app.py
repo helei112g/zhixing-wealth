@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from .common import ConflictError, DomainError, now, today, wire
 from .service import Service
@@ -98,6 +99,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     app.state.research = research
     app.include_router(household_router)
     app.include_router(research_router(research))
+    app.add_middleware(GZipMiddleware, minimum_size=2000, compresslevel=4)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'] + (['testserver'] if testing else []))
 
     @app.middleware('http')
@@ -192,7 +194,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                              'detail_fields':['module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources'],
                              'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-library-2','missing':'null with status; UI -'},
                 'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
-                                 'job': '/api/data-updates/jobs/{job_id}', 'request_id_required': True,
+                                 'job': '/api/data-updates/jobs/{job_id}', 'history':'/api/data-updates/history', 'history_limit':5, 'request_id_required': True,
+                                 'current_index': {'targets':'one exact index ID','scopes':['index_prices','memberships','valuations','financials'],
+                                                   'cutoffs':'completed trading day for prices; today for published information; inspect actual module dates'},
                                  'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials'],
                                  'retry':'unknown outcome: read back and preserve original request_id/payload; confirmed failed resource: submit a new request_id with the exact failed item.resource',
                                  'execution':'while app runs only; restart resumes durable work unless --no-sync or read-only'},
@@ -220,7 +224,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                      'expected_revision_required': True, 'levels': ['scope', 'direction', 'detail'],
                                      'cardinality': 'one path per portfolio instrument; no duplicated values'},
                 'family': {'label': '资产分析', 'read': '/api/family/overview',
-                           'catalog': '/api/family/catalog', 'command_schema': '/api/family/command-schema',
+                           'catalog': '/api/family/catalog', 'bounds':'/api/family/bounds', 'command_schema': '/api/family/command-schema',
                            'recommended_operations': ['item','valuation','links','unlink','income','expense_plan','expense_month','archive','restore'],
                            'comparison': {'summary_default': 'month', 'summary_baseline': 'previous_period_end', 'history_curve': 'previous',
                                           'history_options': ['previous', 'year_start', 'yoy']},
@@ -337,8 +341,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def allocation_analysis(portfolio_id: str, level: Literal['scope','direction','detail','instrument']='scope',
                             scope: str='', direction: str='', detail: str='', asset_class: str='', instrument_id: str='',
                             status: Literal['all','incomplete','over','unplanned','planned']='all', sort: Literal['gap','name']='gap'):
-        from .allocation_planning import allocation_report
-        return reply(allocation_report(service, portfolio_id, level, scope, direction, detail, asset_class, status, sort, instrument_id=instrument_id))
+        return reply(service.allocation_analysis(portfolio_id, level, scope, direction, detail, asset_class, status, sort, instrument_id=instrument_id))
 
     @app.get('/api/portfolios/{portfolio_id}/label-options', summary='添加计划买入前读取标签选项与revision')
     def label_options(portfolio_id: str):

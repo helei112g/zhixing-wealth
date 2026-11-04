@@ -61,7 +61,7 @@ fs.mkdirSync(out,{recursive:true});
   check(await editor.getByRole('button',{name:'关闭',exact:true}).isDisabled()&&await editor.getByRole('button',{name:'取消',exact:true}).isDisabled(),'pending save keeps the active drawer stable');
   releaseSave();await editor.waitFor({state:'hidden'});await page.unroute(labelsRoute);
   await row.getByText('海外债券 / 国债 / 美元国债调整',{exact:true}).waitFor();
-  await nav('持仓分析');await page.locator('.holding-sunburst-node').first().waitFor();
+  await nav('持仓分析');await page.getByRole('tab',{name:'持仓分布',exact:true}).click();await page.locator('.holding-sunburst-node').first().waitFor();
   check(await page.locator('.tag-layout,.tag-pie-chart,.holding-tree-sidebar').count()===0,'distribution has no duplicate sidebar or legacy pie');
   const svg=page.locator('.holding-sunburst svg'),box=await svg.boundingBox();check(box.width>=560,'sunburst is centered and uses the freed width');
   const report=await api('/portfolios/'+p.id+'/holding-analysis'),n=report.nodes[0],angle=-Math.PI/2+Number(n.value)/Number(report.total)*Math.PI,rad=box.width*.19+((box.width/2-3-box.width*.19)/3)/2;
@@ -85,7 +85,7 @@ fs.mkdirSync(out,{recursive:true});
     check(await page.locator('.portfolio-valuation-caption').count()===1,name+' has one valuation caption in the header at '+width);
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),name+' fits '+width);
    }
-   await page.locator('.holding-sunburst-node').first().focus();await page.locator('.holding-sunburst-node').first().press('Enter');await shot('distribution-selected-'+width);
+   await page.getByRole('tab',{name:'持仓分布',exact:true}).click();await page.locator('.holding-sunburst-node').first().focus();await page.locator('.holding-sunburst-node').first().press('Enter');await shot('distribution-selected-'+width);
    await page.getByRole('tab',{name:'收益排行榜',exact:true}).click();await page.getByLabel('隐藏金额',{exact:true}).waitFor();
    check(await page.getByLabel('隐藏金额',{exact:true}).isChecked()&&!(await page.locator('.holdings-ranking').innerText()).includes('CNY'),'ranking privacy preference survives navigation at '+width);await shot('ranking-rates-'+width);
    await nav('持仓标的');await page.locator('.holding-row').filter({hasText:'合成海外债券基金'}).getByRole('button',{name:'设置计划',exact:true}).click();await editor.getByLabel('投资范围',{exact:true}).waitFor();

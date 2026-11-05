@@ -481,18 +481,18 @@ class ProviderContractTests(unittest.TestCase):
                 if info.filename=='xl/worksheets/sheet1.xml':value=re.sub(rb'<dimension ref="[^"]+"',b'<dimension ref="A1"',value)
                 dst.writestr(info,value)
         self.assertEqual(len(excel_rows(fixed.getvalue())),3)
-    def test_stock_ttm_uses_f115_and_preserves_loss_zero_and_real_date(self):
+    def test_stock_history_preserves_loss_zero_and_requested_date(self):
         from datetime import datetime
         from backend.common import ZONE
         stamp=int(datetime(2026,10,30,15,tzinfo=ZONE).timestamp())
-        response=dict(data=dict(diff=[dict(f12='600201',f9=99,f115=-3,f23=0,f124=stamp,f100='银行')]))
+        response=dict(result=dict(data=[dict(SECURITY_CODE='600201',PE_TTM=-3,PB_MRQ=0,TRADE_DATE=ASOF,BOARD_NAME='银行')]))
         with patch.object(providers,'request',return_value=(response,{})):
             r=providers.stock_valuations([dict(code='600201',market='SH')],ASOF)['rows'][0]
-        self.assertEqual((r['pe'],r['pe_field'],r['pe_status']),('-3','f115','loss'));self.assertEqual(r['pb_status'],'zero_or_missing');self.assertEqual(r['date'],ASOF)
+        self.assertEqual((r['pe'],r['pe_field'],r['pe_status']),('-3','PE_TTM','loss'));self.assertEqual(r['pb_status'],'zero_or_missing');self.assertEqual(r['date'],ASOF)
     def test_intraday_snapshot_is_not_relabelled_as_prior_close(self):
         from datetime import datetime
         from backend.common import ZONE
-        stamp=int(datetime(2026,10,31,10,tzinfo=ZONE).timestamp());response=dict(data=dict(diff=[dict(f12='600201',f115=3,f23=1,f124=stamp)]))
+        stamp=int(datetime(2026,10,31,10,tzinfo=ZONE).timestamp());response=dict(result=dict(data=[dict(SECURITY_CODE='600201',PE_TTM=3,PB_MRQ=1,TRADE_DATE='2026-10-31')]))
         with patch.object(providers,'request',return_value=(response,{})):
             with self.assertRaises(providers.market.ProviderError):providers.stock_valuations([dict(code='600201',market='SH')],ASOF)
 
@@ -582,10 +582,10 @@ class RegisteredIdentityTests(unittest.TestCase):
             member=providers.constituents(profile,ASOF)['rows'][0]
         self.assertEqual((member['code'],member['market'],member['exchange']),('920201','BJ','北京证券交易所'))
         stamp=int(datetime.fromisoformat(ASOF+'T15:00:00+08:00').timestamp())
-        quote=dict(data=dict(diff=[dict(f12='920201',f124=stamp,f115=20,f23=2,f100='医药')]))
+        quote=dict(result=dict(data=[dict(SECURITY_CODE='920201',PE_TTM=20,PB_MRQ=2,TRADE_DATE=ASOF,BOARD_NAME='医药')]))
         with patch.object(providers,'request',return_value=(quote,{})) as request:
             value=providers.stock_valuations([member],ASOF)
-        self.assertIn('secids=0.920201',request.call_args.args[0])
+        self.assertIn('920201',request.call_args.args[0]);self.assertIn('RPT_VALUEANALYSIS_DET',request.call_args.args[0])
         self.assertEqual(value['rows'][0]['code'],'920201')
         with patch.object(providers,'request',return_value=(dict(result=dict(data=[],pages=1)),{})) as request:
             value=providers.financials([member],ASOF)

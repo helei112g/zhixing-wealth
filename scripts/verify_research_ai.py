@@ -27,6 +27,15 @@ def main():
     check(c.request('/api/settings/lixinger')['counts']==counts,'analysis reads are offline')
     for part in ('series','constituents','financials','sources'):
         check(c.research_part(saved['id'],part,analysis_id=d['analysis_id'],window=0)['analysis_id']==d['analysis_id'],'versioned '+part)
+    from decimal import Decimal
+    check(d['scenario_metrics']['pe'],'same-day mcw scenario capability is explicit')
+    body=dict(analysis_id=d['analysis_id'],basis='price',method='mcw',metric='pe',target_multiple=d['valuation']['pe']['current'],change_ratio='0.1',reference_window=5,accept_fixed_basket_assumption=True)
+    scenario=c.research_scenario(saved['id'],body)
+    check(Decimal(scenario['point'])==Decimal(d['latest']['close'])*Decimal('1.1') and '同比例' in scenario['assumption'],'HTTP scenario uses reviewed proportional-change assumptions')
+    try:c.research_scenario(saved['id'],dict(body,accept_fixed_basket_assumption=False))
+    except RuntimeError:check(True,'scenario refuses missing assumption acceptance')
+    else:raise AssertionError('scenario assumed user acceptance')
+    check(c.request('/api/settings/lixinger')['counts']==counts,'scenario consumes no supplier requests')
     versions=c.request('/api/research/indices/'+saved['id']+'/versions')['items'];v=versions[-1]
     check(c.request('/api/research/indices/'+saved['id']+'/versions/'+v['id'])['sha256']==v['sha256'],'immutable older snapshot read')
     job=c.refresh_index(saved['id'],'synthetic-ai-refresh');check(c.refresh_index(saved['id'],'synthetic-ai-refresh')['job_id']==job['job_id'],'update receipt idempotence')

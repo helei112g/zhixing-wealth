@@ -141,26 +141,31 @@ def constituents(profile, asof):
 
 def stock_valuations(members, asof):
     if any(r['market'] not in ('SH','SZ','BJ') for r in members): raise market.ProviderError('境外成分估值尚无核验适配，不调用A股接口')
-    rows = []; evidence = []
-    for pos in range(0, len(members), 50):
-        group = members[pos:pos+50]
-        codes = {r['code']: r for r in group}
-        url = 'https://push2.eastmoney.com/api/qt/ulist.np/get?' + urlencode(dict(fltt='2', fields='f12,f13,f14,f115,f23,f124,f100',
-               secids=','.join(('1.' if r['market'] == 'SH' else '0.') + r['code'] for r in group)))
-        obj, src = request(url); evidence.append(src)
-        for r in (obj.get('data') or {}).get('diff') or []:
-            if r['f12'] not in codes: raise market.ProviderError('成分估值返回非请求代码')
-            stamp = r.get('f124'); d = datetime.fromtimestamp(int(stamp), ZONE).date().isoformat() if stamp else None
-            if not d or d > asof: continue  # Intraday/future snapshots are not relabelled as yesterday.
-            def optional(v):
-                return None if v in (None, '-', '') else ds(dec(v))
-            pe, pb = optional(r.get('f115')), optional(r.get('f23'))
-            rows.append(dict(code=r['f12'], date=d, pe=pe, pb=pb, pe_status='loss' if pe and dec(pe)<0 else 'zero_or_missing' if pe is not None and dec(pe)==0 else 'available' if pe is not None else 'missing_or_zero_base',
-                             pb_status='nonpositive_equity' if pb and dec(pb)<0 else 'zero_or_missing' if pb is not None and dec(pb)==0 else 'available' if pb is not None else 'missing', source='东方财富', pe_field='f115', pb_field='f23',
-                             industry=r.get('f100') if isinstance(r.get('f100'),str) and r['f100']!='-' else None, methodology_note='供应商TTM字段；分母与亏损处理未逐家公司独立复原'))
-    if not rows: raise market.ProviderError('未取得截止日内的成分估值快照；盘中数据不充当已完成收盘')
-    return dict(rows=rows, evidence=evidence, effective_date=max((r['date'] for r in rows), default=None),
-                limitation='PE TTM采用供应商f115，PB采用f23；分母未逐家公司独立复原。空值不填零。')
+    rows=[];evidence=[]
+    for pos in range(0,len(members),50):
+        codes={r['code'] for r in members[pos:pos+50]}
+        quoted=','.join('"'+c+'"' for c in sorted(codes))
+        params=dict(reportName='RPT_VALUEANALYSIS_DET',columns='SECURITY_CODE,TRADE_DATE,PE_TTM,PB_MRQ,BOARD_NAME',pageSize=500,pageNumber=1,
+                    filter=f"(SECURITY_CODE in ({quoted}))(TRADE_DATE='{asof}')",source='WEB',client='WEB')
+        obj,src=request('https://datacenter-web.eastmoney.com/api/data/v1/get?'+urlencode(params));evidence.append(src)
+        result=obj.get('result') or {}
+        if not isinstance(result.get('data'),list):raise market.ProviderError('历史公司估值源未返回指定日期数据')
+        if int(result.get('pages',1))>1:raise market.ProviderError('公司估值返回超出单日批量上限，保留旧数据')
+        seen=set()
+        for r in result['data']:
+            code=r['SECURITY_CODE'];d=str(r['TRADE_DATE'])[:10]
+            if code not in codes or code in seen or d!=asof:raise market.ProviderError('公司估值代码或日期不符，拒绝混用盘中/其他日期')
+            seen.add(code)
+            def optional(v):return None if v in (None,'-','') else ds(dec(v))
+            pe,pb=optional(r.get('PE_TTM')),optional(r.get('PB_MRQ'))
+            rows.append(dict(code=code,date=d,pe=pe,pb=pb,
+                pe_status='loss' if pe and dec(pe)<0 else 'zero_or_missing' if pe is not None and dec(pe)==0 else 'available' if pe is not None else 'missing_or_zero_base',
+                pb_status='nonpositive_equity' if pb and dec(pb)<0 else 'zero_or_missing' if pb is not None and dec(pb)==0 else 'available' if pb is not None else 'missing',
+                source='东方财富·历史估值',pe_field='PE_TTM',pb_field='PB_MRQ',industry=r.get('BOARD_NAME'),methodology_note='指定交易日PE TTM与PB MRQ；供应商分母未逐家公司独立复原'))
+    if not rows:raise market.ProviderError('未取得指定交易日的公司估值，缺失不使用盘中快照替代')
+    return dict(rows=rows,evidence=evidence,effective_date=max(r['date'] for r in rows),
+                missing_codes=sorted({m['code'] for m in members}-{r['code'] for r in rows}),
+                limitation='东方财富历史PE_TTM与PB_MRQ；按实际交易日期读取，缺失不补零。')
 
 
 def financials(members, asof):

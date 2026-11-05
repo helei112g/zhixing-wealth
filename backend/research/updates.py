@@ -151,7 +151,7 @@ class UpdateJobs:
         if r['scope'] in ('quotes','fx'):return self._legacy(r)
         iid,module=r['target'],r['module']
         cutoffs=self.current_job or {}
-        asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','stock_valuations') else (cutoffs.get('information_cutoff') or str(today()))
+        asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','stock_valuations','valuations','market_activity') else (cutoffs.get('information_cutoff') or str(today()))
         value=self.research.collection.collect(iid,module,asof,automatic=self.current_trigger in ('schedule','startup'))
         return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='complete',snapshot_id=value.get('snapshot_id'),date=value.get('effective_date'))]
 

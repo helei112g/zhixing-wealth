@@ -122,8 +122,15 @@ class ResearchService:
         sid=secrets.token_hex(16)
         with self.transaction(bump=True) as db:
             if db.execute('PRAGMA page_count').fetchone()[0]*db.execute('PRAGMA page_size').fetchone()[0]>400*1024*1024: raise DomainError('数据库接近备份容量限制，请先导出并检查存储；旧快照保留')
-            # Supplied data must never overwrite a newer effective date.
-            if current and value.get('effective_date') and current.get('effective_date') and value['effective_date']<current['effective_date']: raise DomainError('来源返回旧日期，保留当前有效快照')
+            # Older snapshots used the query cutoff as effective_date for these
+            # modules. Compare their actual observations, retaining the originals.
+            def observed(v):
+                if module=='index_financials': dates=[r['date'] for r in v.get('rows',[])]
+                elif module=='market_activity': dates=[r['date'] for rows in v.get('series',{}).values() for r in rows]
+                elif module=='historical_memberships': dates=[b['period'] for b in v.get('baskets',[]) if b.get('members')]
+                else:return v.get('effective_date')
+                return max(dates,default=None)
+            if current and observed(current) and (not observed(value) or observed(value)<observed(current)): raise DomainError('来源返回旧日期或空观测，保留当前有效快照')
             for sha,block in blocks.items():db.execute('INSERT OR IGNORE INTO research_price_chunks VALUES (?,?)',(sha,block))
             db.execute('INSERT INTO research_snapshots VALUES (?,?,?,?,?,?)',(sid,iid,module,now(),digest,content))
             db.execute('INSERT INTO research_heads VALUES (?,?,?) ON CONFLICT(index_id,module) DO UPDATE SET snapshot_id=excluded.snapshot_id',(iid,module,sid))
@@ -187,6 +194,8 @@ class ResearchService:
             valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=moving_averages(prices,window,(price or {}).get('missing_dates',[])),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
             sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('mapping_verified')) and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb'))),
+            scenario_metrics={m:bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('provider_id')=='lixinger') and valuations.get(m,{}).get('date')==asof and dec(valuations.get(m,{}).get('current') or '0')>0) for m in ('pe','pb')},
+            scenario_assumption='固定成分、股数、权重和除数；假定所有成分价格同比例变化，所有成分盈利或净资产同比例变化。仅作条件敏感性推算，不代表估值与指数点位的实际映射或预测。',
             collection=self.collection.status(iid),official_reference=resources.get('official_reference'),source_coverage=(price or {}).get('coverage'),memberships_complete=(members or {}).get('weights_complete',True),
             historical_memberships=(resources.get('historical_memberships') or {}).get('baskets',[]),membership_comparison_coverage=(resources.get('historical_memberships') or {}).get('comparison_coverage',[]),index_info=(resources.get('index_info') or {}).get('info'),
             index_financials=(resources.get('index_financials') or {}).get('rows',[]),fundamental_activity=(v or {}).get('activity_rows',[]),
@@ -206,7 +215,7 @@ class ResearchService:
         if metric not in ('pe','pb'):raise DomainError('试算指标无效')
         d=self.detail(iid,basis,body.get('method','overall'))
         if body.get('analysis_id')!=d['analysis_id']:raise ConflictError('分析版本已变化，请重新读取并核对假设')
-        if not d['mapping_available']:raise DomainError('仅同日价格序列与已核验分母映射的估值可试算；全收益缺少未来分红再投资假设')
+        if not d['scenario_metrics'][metric]:raise DomainError('条件试算须使用价格指数与同日正数整体法/总市值加权估值；全收益、异日或非正估值不能试算')
         if body.get('accept_fixed_basket_assumption') is not True:raise DomainError('请明确接受固定成分、权重及除数的条件假设')
         change=dec(body.get('change_ratio'));target=dec(body.get('target_multiple'),positive=True)
         if change<=-1:raise DomainError('分母变化须大于-100%')
@@ -219,7 +228,7 @@ class ResearchService:
         low=min(dec('-.5'),change);high=max(dec('.5'),change)
         curve=[dict(change_pct=ds((low+(high-low)*i/20)*100),point=ds(point*(1+low+(high-low)*i/20)*target/current)) for i in range(21)]
         return dict(curve=curve,reference_window=int(reference_window),reference_points=reference_points,point=ds(result),current_point=ds(point),metric=metric,target_multiple=ds(target),change_ratio=ds(change),analysis_id=d['analysis_id'],basis=basis,
-            formula='P0*(1+change_ratio)*target_multiple/current_multiple',assumption='固定成分、权重及除数；忽略调样与融资变化；仅条件代数结果')
+            formula='P0*(1+change_ratio)*target_multiple/current_multiple',assumption=d['scenario_assumption'])
 
     def projection(self,iid,part,basis='price',window=3,analysis_id=None,page=1,page_size=20,method='overall'):
         d=self.detail(iid,basis,method,window)

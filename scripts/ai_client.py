@@ -185,7 +185,7 @@ class Client:
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/source-check',dict(analysis_id=analysis_id))
 
     def research_scenario(self,index_id,payload):
-        """Read-only calculation against the caller's original analysis version."""
+        """Read-only scenario; read scenario_metrics and obtain explicit uniform-scaling assumptions first."""
         if not isinstance(payload,dict):raise ValueError('Scenario must be a JSON object')
         self.connect()
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/scenarios',payload)

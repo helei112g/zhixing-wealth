@@ -94,6 +94,46 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(d['top10_weight'],'100');self.assertFalse(d['mapping_available'])
         with self.store.connection() as db:validate_backup(db)
         self.assertNotIn(SYNTHETIC,json.dumps(d));self.assertTrue(d['curve']);self.assertTrue(d['drawdown']['3']['partial'])
+    def test_condition_scenario_requires_explicit_uniform_change_and_same_day(self):
+        iid=self.add()
+        for module in lixinger.DEFAULT_MODULES:self.r.collection.collect(iid,module,'2026-11-04')
+        d=self.r.detail(iid,method='mcw')
+        self.assertFalse(d['mapping_available'])
+        self.assertTrue(d['scenario_metrics']['pe'])
+        body=dict(analysis_id=d['analysis_id'],method='mcw',metric='pe',target_multiple=d['valuation']['pe']['current'],change_ratio='0.1',accept_fixed_basket_assumption=True)
+        result=self.r.scenario(iid,body)
+        from decimal import Decimal
+        self.assertEqual(Decimal(result['point']),Decimal(d['latest']['close'])*Decimal('1.1'))
+        self.assertIn('同比例',result['assumption'])
+        with self.assertRaises(DomainError):self.r.scenario(iid,dict(body,accept_fixed_basket_assumption=False))
+        self.r.collection.collect(iid,'valuations','2026-11-05')
+        d=self.r.detail(iid,method='mcw');self.assertFalse(d['scenario_metrics']['pe'])
+        with self.assertRaises(DomainError):self.r.scenario(iid,dict(body,analysis_id=d['analysis_id']))
+    def test_observation_dates_replace_legacy_query_cutoff_without_losing_newer_data(self):
+        modules=['index_info','index_financials','market_activity','historical_memberships']
+        iid=self.r.collection.save('000905',modules,'2026-07-01',True,self.r.revision())['id']
+        for module in modules:self.r.collection.collect(iid,module,'2026-11-04')
+        for module in modules[1:]:
+            original=self.r.module(iid,module)
+            self.r.publish(iid,module,dict(original,effective_date='2026-11-05'))
+            self.r.publish(iid,module,original)
+            self.assertEqual(self.r.module(iid,module)['effective_date'],original['effective_date'])
+        original=self.r.module(iid,'index_financials');older=copy.deepcopy(original)
+        older['rows']=[dict(older['rows'][0],date='2020-03-31')];older['effective_date']='2020-03-31'
+        with self.assertRaises(DomainError):self.r.publish(iid,'index_financials',older)
+    def test_empty_legacy_membership_placeholder_cannot_block_real_quarters(self):
+        iid=self.r.collection.save('000905',['index_info','historical_memberships'],'2026-07-01',True,self.r.revision())['id']
+        self.r.publish(iid,'historical_memberships',dict(effective_date='2026-11-05',baskets=[dict(period='2025-12-31',members=[],status='unavailable')]))
+        self.r.collection.collect(iid,'index_info','2026-11-04')
+        self.r.collection.collect(iid,'historical_memberships','2026-11-04')
+        self.assertTrue(self.r.module(iid,'historical_memberships')['baskets'][0]['members'])
+
+    def test_full_financial_and_activity_ranges_are_not_silently_capped_at_ten_years(self):
+        iid=self.r.collection.save('399006',['index_info','index_financials','market_activity'],None,True,self.r.revision())['id']
+        for module in ('index_info','index_financials','market_activity'):self.r.collection.collect(iid,module,'2026-11-04')
+        for module in ('index_financials','market_activity'):
+            self.assertEqual(self.r.module(iid,'stage.'+module)['range_start'],'2010-06-01')
+
     def test_checkpoint_resume_after_budget_failure_does_not_repeat_successful_shard(self):
         iid=self.add(['market_activity']);self.r.collection.collect(iid,'index_info','2026-11-04');s=self.r.access.status();self.r.access.configure(s['revision'],True,1)
         self.r.access.request('cn/index/mutual-market',{'stockCode':'000905','startDate':'2026-10-01','endDate':'2026-11-04'})

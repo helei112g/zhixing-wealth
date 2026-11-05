@@ -118,6 +118,6 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 Token只能由用户在本机「本机Token与预算」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。默认每端点20次本机预算，失败也消耗尝试；1000次是供应商试用上限，不是本机已知余额。试用自动采集默认关闭，不自动提高预算或解除权限阻断。
 
-详情与快照历史读取不触发网络；只有显式更新或已启用的应用定时策略调用供应商。价格、估值、权重、财报和披露日各自保留。回测基于当前可得历史，不能声称严格PIT；mcw条件试算关系未核验时禁用。完整规范见 [研究合同](research.md) 与 [API](api.md)。
+详情与快照历史读取不触发网络；只有显式更新或已启用的应用定时策略调用供应商。价格、估值、权重、财报和披露日各自保留。回测基于当前可得历史，不能声称严格PIT；mcw条件试算须明确接受全部成分同比例变化假设，不声称已核验实际点位映射。完整规范见 [研究合同](research.md) 与 [API](api.md)。
 
 `research_source_check(index_id, analysis_id)` 仅在明确授权联网核验时调用；先以mcw价格口径读取analysis_id，结果保存在独立官方参考快照，不改变理杏仁历史或估值分母映射。

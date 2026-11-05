@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'index-studio-3'
+METHOD_VERSION = 'index-studio-4'
 WINDOWS = (3, 5, 10)
 
 

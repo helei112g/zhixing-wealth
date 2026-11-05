@@ -385,7 +385,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 | GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield，holding=1/3/5，independent=true/false。返回日频估值均值、分位、逐笔回测、资金观察、波动率和集中度，含同一analysis_id。 |
 | GET `.../{id}/{part}` | series/constituents/financials/sources；analysis_id 防混版本，page/page_size 分页。 |
 | GET `.../{id}/versions`、`.../versions/{snapshot_id}` | 最近100个非检查点来源版本及精确版本回读；跨指数版本拒绝，旧来源历史不删除。 |
-| POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和已核验整体口径才能试算，mcw未经关系核验时禁用；全收益/等权/中位数禁用。 |
+| POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和整体法/mcw估值可在用户接受固定成分、股数、权重、除数及全部成分同比例变化假设后试算；读取scenario_metrics/ scenario_assumption；全收益/等权/中位数禁用。 |
 | POST `/api/research/indices/{id}/source-check` | analysis_id绑定mcw价格快照；显式请求官方最近45天同日价格与可得PE参考，不消耗理杏仁额度，不合并历史。 |
 | GET `/api/settings/lixinger` | 已配置状态、本机文件路径、独立revision、每端点尝试次数与预算；不返回Token或片段。 |
 | PUT `/api/settings/lixinger/token` | 仅用户本机页面提交 token 与 expected_revision；0600原子文件，保存后关闭采集，计数不重置。AI客户端不提供密钥读写命令。 |
@@ -433,5 +433,7 @@ UpdateRequest.resources按scope区分六种结构，OpenAPI同时公开各模块
 - `GET /api/family/bounds` 返回 `{bounds, revision}`，bounds 与 catalog.bounds 相同；不返回资产、笔记或行情明细。仍使用账本 revision 和日期失效规则。
 - `GET /api/data-updates/history` 返回 `{jobs, limit:5}`，按开始时间与创建顺序倒序。每条 kind 为 public 或 legacy，state 为任务状态；关联的行情子任务折叠到公共数据父任务。这里只限定展示数量，旧接口及按 job_id 查询保持可用。失败项保留原始 resource 和错误，重试只提交该项。
 - 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即覆盖八个指数模块。明确的手动更新不受自动更新策略开关限制；不更新其他指数、组合行情或汇率。
-- 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格及公司估值的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
+- 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格、指数/公司估值及资金数据的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
 - Yahoo 参考每股值仅在相对差≤0.01%且绝对差≤0.005币种单位时视为微调；始终与最后一次明确确认的固定依据比较。此规则不舍入或改写实际金额、税费、份额及汇率，也不豁免权益、日期、币种与拆分变化。
+
+标的详情新增 `price_history_start`：本组合首次购买前六个自然月。行情同步按各组合最早购买日补齐该区间并记录 `quote_history_requested_start`；后续增量更新不重复全量请求。成立/上市晚于起点时保留实际覆盖。

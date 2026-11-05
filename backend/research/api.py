@@ -82,7 +82,7 @@ class ScenarioRequest(BaseModel):
     metric:Literal['pe','pb']='pe'
     target_multiple:str|int|float=Field(description='正的目标PE/PB，推荐精确十进制字符串')
     change_ratio:str|int|float=Field('0',description='盈利或净资产变化比例，大于-1；0.1表示10%，推荐十进制字符串')
-    accept_fixed_basket_assumption:StrictBool=Field(description='须明确接受固定成分、权重及除数的假设；false不能试算')
+    accept_fixed_basket_assumption:StrictBool=Field(description='须接受固定成分、股数、权重及除数，以及全部成分价格和盈利/净资产各自同比例变化的假设；false不能试算')
     reference_window:Literal[3,5,10]=5
 
 

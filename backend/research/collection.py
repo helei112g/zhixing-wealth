@@ -84,7 +84,7 @@ class Collection:
         state = self.research.module(iid, 'stage.'+module) or {}
         if automatic and state.get('phase')=='validation_failed': raise DomainError('上次完整性校验失败；保留旧数据，需手动核对后重试')
         start = sub.get('history_start') or p['launch']
-        if module in ('historical_memberships', 'index_financials', 'market_activity'):
+        if module == 'historical_memberships':
             start = max(start, str(years_before(end, 10)))
         full = (not old or old.get('provider_id') != 'lixinger' or not state.get('last_reconciled') or
                 (today()-day(state['last_reconciled'][:10])).days >= 15 or state.get('generation') != p.get('collection_generation', 0))
@@ -194,7 +194,7 @@ class Collection:
         periods.update(fresh.get('periods',[])); evidence.extend(fresh.get('evidence',[]))
         dates=[r[k] for r in rows.values() for k in r if k=='date' or k.endswith('_published_at') if r[k]]
         return dict(fresh,rows=list(rows.values()),periods=sorted(periods),evidence=evidence,
-                    effective_date=max(dates,default=None),collection_cutoff=end,collected_codes=sorted(wanted),source_snapshot_ids=refs)
+                    effective_date=max(dates,default=None),collection_cutoff=end,collected_codes=sorted({r['code'] for r in rows.values()} if module=='stock_valuations' else wanted),source_snapshot_ids=refs)
 
 
 def merge(old, new, full, requested_range=None):

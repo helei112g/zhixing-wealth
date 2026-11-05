@@ -34,14 +34,12 @@ html.nav-collapsed .app-shell{grid-template-columns:76px minmax(0,1fr)}.compact-
 .studio-funds-summary{grid-template-columns:repeat(2,minmax(0,1fr));margin:20px 0}
 
 /* Research overview: separate chart controls and compact, distinct summaries. */
-.studio-overview-summary{grid-template-columns:1fr 1.35fr 1fr 1fr;border-top:3px solid #537ca4}
+.studio-overview-summary{grid-template-columns:1fr 1.35fr 1fr 1fr}
 .studio-change-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;margin-top:12px}
 .studio-change-grid b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
 .studio-change-grid small{display:block;margin:0 0 4px}
 .studio-summary .positive,.research-page .positive{color:#bf4b50}
 .studio-summary .negative,.research-page .negative{color:#258879}
-.studio-price-panel{border-top:3px solid #537ca4}
-.studio-valuation-panel{border-top:3px solid #9a81ae}
 .studio-ranks{border-top:1px solid var(--line);margin-top:18px;padding-top:16px}
 .studio-ranks summary{cursor:pointer;color:var(--blue);font-weight:550}
 .studio-heading>div:first-child{display:flex;align-items:end;flex-wrap:wrap;gap:10px}

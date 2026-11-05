@@ -175,6 +175,13 @@ class AnalyticsTests(unittest.TestCase):
         self.assertIsNone(ranks(series)['0']['rank'])
         self.assertEqual(ranks(series,allow_zero=True)['0']['rank'],'0.5')
         self.assertTrue(backtest(series,rows,3,1,allow_zero=True)['trades'])
+    def test_long_market_holiday_is_not_a_missing_next_close(self):
+        rows=self.rows();prices=[r for r in rows if not '2026-10-01'<=r['date']<='2026-10-07']
+        result=backtest(dict(rows=rows,frequency='daily'),prices,3,1)
+        signal=next(r for r in result['trades'] if r['signal_date']=='2026-09-30')
+        self.assertEqual(signal['entry_date'],'2026-10-08')
+        result=backtest(dict(rows=rows,frequency='daily'),prices,3,1,missing_dates=['2026-10-05'])
+        self.assertEqual(next(r for r in result['trades'] if r['signal_date']=='2026-09-30')['status'],'missing')
     def test_missing_known_session_invalidates_ma(self):
         rows=self.rows()[-100:];missing=rows[20]['date'];rows.pop(20)
         out=moving_averages(rows,0,[missing]);self.assertIsNone(out[60]['ma51']);self.assertIsNotNone(out[-1]['ma51'])

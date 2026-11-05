@@ -65,7 +65,7 @@ def valuation_curve(series, prices, window):
     return sample(out)
 
 
-def backtest(series, prices, window, holding, independent=False, allow_zero=False):
+def backtest(series, prices, window, holding, independent=False, allow_zero=False, missing_dates=()):
     all_rows=sorted([r for r in series.get('rows',[]) if r.get('value') is not None],key=lambda r:r['date'])
     valid=lambda v: dec(v)>=0 if allow_zero else dec(v)>0
     rows=[r for r in all_rows if valid(r['value'])]
@@ -82,14 +82,14 @@ def backtest(series, prices, window, holding, independent=False, allow_zero=Fals
         vals=[dec(r['value']) for r in h]; v=dec(signal['value'])
         rank=(sum(x<v for x in vals)+Decimal('.5')*sum(x==v for x in vals))/len(vals)
         enter=bisect_right(dates,at); record=dict(signal_date=at,rank=ds(rank),thresholds=quantiles(vals),status='missing',entry_date=None,exit_date=None,return_ratio=None)
-        if enter>=len(prices) or (day(dates[enter])-day(at)).days>7:
+        if enter>=len(prices) or (day(dates[enter])-day(at)).days>15 or any(at<dt<dates[enter] for dt in missing_dates):
             trades.append(record);continue
         entry=prices[enter]; record['entry_date']=entry['date']
         # Independence is checked across the whole signal stream, not separately per outcome bucket.
         if independent and entry['date']<=occupied: continue
         mature=str(years_before(entry['date'],-holding)); leave=bisect_left(dates,mature)
         if mature>dates[-1]: record['status']='immature'
-        elif leave<len(prices) and (day(dates[leave])-day(mature)).days<=7:
+        elif leave<len(prices) and (day(dates[leave])-day(mature)).days<=15 and not any(mature<=dt<dates[leave] for dt in missing_dates):
             record.update(status='mature',exit_date=dates[leave],return_ratio=ds(dec(prices[leave]['close'])/dec(entry['close'])-1))
         occupied=mature if independent else occupied; trades.append(record)
     groups=[]
@@ -100,7 +100,7 @@ def backtest(series, prices, window, holding, independent=False, allow_zero=Fals
         groups.append(dict(label=label,mature=len(vals),immature=sum(r['status']=='immature' for r in selected),missing=sum(r['status']=='missing' for r in selected),
                            median=q.get('p50'),p25=q.get('p25'),p75=q.get('p75'),positive_ratio=ds(Decimal(sum(v>0 for v in vals))/len(vals)) if vals else None))
     return dict(trades=trades,groups=groups,holding_years=holding,independent=independent,
-                limitation='按当前可获取历史复盘，历史估值可能重述；下一有效日收盘入场，未计费税；重叠样本非独立交易，不是严格PIT')
+                limitation='按当前可获取历史复盘，历史估值可能重述；下一有效日收盘入场，已知缺日或超过15天无收盘记缺失；未计费税，历史交易日历未全核验；重叠样本非独立交易，不是严格PIT')
 
 
 def flow_months(rows, prices, stock_field, flow_field, quarterly=False, missing_dates=()):
@@ -162,5 +162,5 @@ def studio_analysis(service,iid,basis,method,window,metric,holding,independent):
                capitalization={k:flow_months(fundamental,price_rows,k,None) for k in ('mc','cmc','ecmc')})
     return wire(dict(analysis_id=d['analysis_id'],metric=metric,method=method,window=window,basis=basis,
                      ranks=ranks(series,allow_zero=metric=='dividend_yield'),valuation_curve=valuation_curve(series,price_rows,window),
-                     backtest=backtest(series,price_rows,window,holding,independent,allow_zero=metric=='dividend_yield'),funds=funds,
+                     backtest=backtest(series,price_rows,window,holding,independent,allow_zero=metric=='dividend_yield',missing_dates=price.get('missing_dates',[])),funds=funds,
                      volatility_250=vol,concentration_hhi=hhi,overlaps=overlaps,total_return_comparison=gap))

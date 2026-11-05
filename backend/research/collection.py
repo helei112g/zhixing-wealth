@@ -166,7 +166,26 @@ class Collection:
             if not baskets: raise DomainError('请先采集历史成分名单')
             unique = {m['code']: m for b in baskets['baskets'] for m in b['members']}
             rows = self.shared_companies('financials', list(unique.values()), end)
-            value = dict(rows, years=history.totals(rows['rows'], [b for b in baskets['baskets'] if b['period'].endswith('12-31')]), membership_snapshot_id=baskets['snapshot_id'])
+            annual=[deepcopy(b) for b in baskets['baskets'] if b['period'].endswith('12-31')]
+            known={};observations=[];evidence=[]
+            for profile in self.research.profiles():
+                cached=self.research.module(profile['id'],'historical_financials') or {}
+                if cached.get('collection_cutoff')==end:
+                    known.update({(r['period'],r['code']):r for r in cached.get('industry_observations',[])})
+                    evidence.extend(cached.get('industry_evidence',[]))
+            for basket in annual:
+                period=basket['period'];missing=[m for m in basket['members'] if (period,m['code']) not in known]
+                if missing:
+                    fresh=providers.historical_industries(missing,period);evidence.extend(fresh['evidence'])
+                    known.update({(period,m['code']):dict(code=m['code'],period=period,date=None,industry=None) for m in missing})
+                    known.update({(period,r['code']):dict(r,period=period) for r in fresh['rows']})
+                for member in basket['members']:
+                    record=known.get((period,member['code']))
+                    member['industry']=record.get('industry') if record else ''
+                    if record:observations.append(record)
+            value = dict(rows, years=history.totals(rows['rows'],annual), membership_snapshot_id=baskets['snapshot_id'],
+                         industry_observations=observations,industry_evidence=evidence,
+                         industry_basis='对应期末前最近7天内的历史估值记录行业；当前可得版本，不声称严格PIT')
         else:
             value = self.shared_companies(module, members['rows'], end)
         with self.research.store.lock:

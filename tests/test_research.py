@@ -448,6 +448,30 @@ class ReviewRegressions(unittest.TestCase):
         with self.assertRaises(ConflictError):self.r.save_settings(dict(policies=policies,expected_settings_revision=1))
 
 class ProviderContractTests(unittest.TestCase):
+    def test_historical_industry_uses_latest_valid_observation_and_rejects_bad_scope(self):
+        member=dict(code='600201',market='SH');period='2025-12-31'
+        older=dict(SECURITY_CODE='600201',TRADE_DATE='2025-12-26',BOARD_NAME='旧分类')
+        latest=dict(older,TRADE_DATE='2025-12-30',BOARD_NAME='信息技术')
+        with patch.object(providers,'request',return_value=(dict(result=dict(data=[latest,older],pages=1)),{})):
+            self.assertEqual(providers.historical_industries([member],period)['rows'],[dict(code='600201',date='2025-12-30',industry='信息技术')])
+        with patch.object(providers,'request',return_value=(dict(result=None,code=9201,message='返回数据为空'),{})):
+            self.assertEqual(providers.historical_industries([member],period)['rows'],[])
+        with patch.object(providers,'request',return_value=(dict(result=None,code=9501,message='参数错误'),{})):
+            with self.assertRaises(providers.market.ProviderError):providers.historical_industries([member],period)
+        for data,pages in [([dict(latest,TRADE_DATE='2026-01-01')],1),([dict(latest,SECURITY_CODE='600202')],1),([latest,latest],1),([latest],2)]:
+            with self.subTest(data=data,pages=pages),patch.object(providers,'request',return_value=(dict(result=dict(data=data,pages=pages)),{})):
+                with self.assertRaises(providers.market.ProviderError):providers.historical_industries([member],period)
+
+    def test_historical_cash_flow_unknown_industry_is_not_complete(self):
+        from backend.research.history import totals
+        members=[dict(code='a',industry='工业'),dict(code='b',industry='银行'),dict(code='c',industry='')]
+        baskets=[dict(period=p,members=members,status='checked') for p in ('2024-12-31','2025-12-31')]
+        rows=[dict(code=m['code'],period=b['period'],operating_cf='10') for b in baskets for m in members]
+        for year in totals(rows,baskets):
+            v=year['metrics']['operating_cf']
+            self.assertEqual((v['amount'],v['count'],v['denominator'],v['excluded_count'],v['excluded_unknown_industry']),('10',1,1,2,1))
+            self.assertEqual(v['status'],'insufficient_coverage');self.assertIsNone(v['growth'])
+
     def test_financial_batches_are_bounded_and_merge_both_reports_per_company(self):
         import re,threading,time
         from urllib.parse import urlparse,parse_qs

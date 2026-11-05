@@ -186,6 +186,22 @@ class CollectionTests(unittest.TestCase):
         with self.assertRaises(DomainError):self.r.collection.collect(iid,'price','2026-11-04',automatic=True)
         self.assertEqual(len(self.calls),used)
         self.r.collection.collect(iid,'price','2026-11-04');self.assertIsNotNone(self.r.module(iid,'price'))
+
+    def test_historical_industry_cache_uses_period_and_cutoff_not_current_membership(self):
+        from tests.research_fixtures import finance_payload,industry_payload,member_payload
+        modules=['memberships','historical_memberships','historical_financials'];iid=self.add(modules)
+        other=self.r.collection.save('000300',modules,'2026-10-01',True,self.r.revision())['id']
+        members=member_payload({})['rows'];members[0]['industry']='银行'
+        baskets=[dict(period='2025-12-31',status='checked',members=members)]
+        for target in (iid,other):
+            self.r.publish(target,'memberships',dict(rows=members,effective_date='2026-09-30'))
+            self.r.publish(target,'historical_memberships',dict(baskets=baskets,effective_date='2025-12-31'))
+        with patch('backend.research.providers.financials',side_effect=finance_payload),patch('backend.research.providers.historical_industries',side_effect=industry_payload) as fetch:
+            first=self.r.collection.company_data(iid,'historical_financials','2026-11-04')
+            self.r.collection.company_data(other,'historical_financials','2026-11-04');self.assertEqual(fetch.call_count,1)
+            self.assertEqual(first['years'][0]['metrics']['operating_cf']['count'],1)
+            self.assertEqual(self.r.module(iid,'historical_memberships')['baskets'][0]['members'][0]['industry'],'银行')
+            self.r.collection.company_data(other,'historical_financials','2026-11-05');self.assertEqual(fetch.call_count,2)
     def test_official_check_is_versioned_and_does_not_modify_valuation(self):
         iid=self.add()
         for m in ('index_info','price','valuations'):self.r.collection.collect(iid,m,'2026-11-04')

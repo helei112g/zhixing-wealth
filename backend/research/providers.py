@@ -168,6 +168,29 @@ def stock_valuations(members, asof):
                 limitation='东方财富历史PE_TTM与PB_MRQ；按实际交易日期读取，缺失不补零。')
 
 
+def historical_industries(members, period):
+    """Industry carried by a historical valuation observation, never today's list."""
+    if any(m['market'] not in ('SH','SZ','BJ') for m in members):raise market.ProviderError('历史行业仅支持已核验A股身份')
+    start=str(day(period)-timedelta(days=7));rows={};evidence=[]
+    for pos in range(0,len(members),50):
+        codes={m['code'] for m in members[pos:pos+50]};quoted=','.join('"'+c+'"' for c in sorted(codes))
+        params=dict(reportName='RPT_VALUEANALYSIS_DET',columns='SECURITY_CODE,TRADE_DATE,BOARD_NAME',pageSize=500,pageNumber=1,
+                    filter=f"(SECURITY_CODE in ({quoted}))(TRADE_DATE>='{start}')(TRADE_DATE<='{period}')",
+                    sortColumns='TRADE_DATE,SECURITY_CODE',sortTypes='-1,1',source='WEB',client='WEB')
+        obj,src=request('https://datacenter-web.eastmoney.com/api/data/v1/get?'+urlencode(params));evidence.append(src)
+        result=obj.get('result') or {};data=result.get('data')
+        if obj.get('code')==9201 and obj.get('message')=='返回数据为空':data=[]
+        if not isinstance(data,list):raise market.ProviderError('历史行业源未返回匹配记录')
+        if int(result.get('pages',1))>1:raise market.ProviderError('历史行业记录超出批量上限，保留旧数据')
+        seen=set()
+        for r in data:
+            code=r['SECURITY_CODE'];d=str(r['TRADE_DATE'])[:10]
+            if code not in codes or not start<=d<=period or (code,d) in seen:raise market.ProviderError('历史行业代码/日期不符或记录重复')
+            seen.add((code,d))
+            if code not in rows or rows[code]['date']<d:rows[code]=dict(code=code,date=d,industry=r.get('BOARD_NAME') or '')
+    return dict(rows=list(rows.values()),evidence=evidence)
+
+
 def financials(members, asof):
     if any(r['market'] not in ('SH','SZ','BJ') for r in members): raise market.ProviderError('境外成分财报口径尚未核验，不调用A股财务接口')
     # Official availability is conservative: supplier notice date is used unless separately verified.

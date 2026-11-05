@@ -76,6 +76,9 @@ def browser_finance(members,asof=ASOF):
             r[field+'_published_at']=str(int(r['period'][:4])+1)+'-04-30'
     return value
 
+def industry_payload(members,period):
+    return dict(rows=[dict(code=m['code'],date=period,industry='银行' if m['code']=='000201' else '信息技术') for m in members],evidence=[])
+
 def install_providers():
     from tests.lixinger_fixtures import install
     install()
@@ -83,4 +86,5 @@ def install_providers():
     providers.constituents=browser_members
     providers.stock_valuations=stock_payload
     providers.financials=browser_finance
+    providers.historical_industries=industry_payload
     providers.cutoff=lambda:ASOF

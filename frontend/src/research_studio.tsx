@@ -1,4 +1,5 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React,{useEffect,useId,useRef,useState} from 'react';
+import {Info} from 'lucide-react';
 import {Bar,BarChart,Cell,CartesianGrid,Legend,Line,LineChart,ResponsiveContainer,Tooltip,XAxis,YAxis} from 'recharts';
 import {api,money,Obj,percent,query} from './api';
 import {Button,Empty,ErrorBox,Field,Modal,Notice,Panel} from './components';
@@ -8,6 +9,23 @@ const num=(v:any,d=2)=>v==null?'-':money(v,d),pct=(v:any)=>v==null?'-':percent(v
 export const moduleLabels:Obj={index_info:'指数基本信息',price:'价格日线',total_return:'全收益日线',valuations:'日频估值与场内基金/市值',memberships:'当前成分与权重',historical_memberships:'十年历史成分',index_financials:'指数季度/TTM财务',market_activity:'融资与北向持仓',tracking_funds:'跟踪基金',stock_valuations:'公司估值',financials:'公司财务',historical_financials:'历史财务备用汇总'};
 const methodNames:Obj={mcw:'总市值加权',ew:'等权',median:'中位数',overall:'旧源整体法',arithmetic:'旧源算术平均'};
 const metricNames:Obj={pe:'PE TTM',pb:'PB',ps:'PS TTM',dividend_yield:'股息率'};
+const methodExplanations:Record<string,{purpose:string;algorithm:string;example:string}>={
+ mcw:{
+  purpose:'看经济规模较大的资产如何定价。',
+  algorithm:'先汇总成分公司的市值和对应财务数据，再计算整体估值，大公司影响更大。',
+  example:'以 PE TTM 为例：总市值合计 ÷ 近12个月净利润合计，包含亏损公司的利润。',
+ },
+ ew:{
+  purpose:'看等额组合与规模加权组合有什么差异。',
+  algorithm:'假设每家公司投入相同金额，先汇总这些投资对应的财务份额，再计算组合估值。',
+  example:'以 PE TTM 为例：公司数 ÷ 各公司 PE 倒数之和，包含负值；不是把 PE 直接做算术平均。',
+ },
+ median:{
+  purpose:'看估值是否扩散到典型公司。',
+  algorithm:'将参与计算的公司估值排序，取居中位置；每家公司一票，不按市值加权。',
+  example:'反映典型公司的估值水平，较少受少数极端估值影响；与总市值加权对照，观察变化是否只集中在大公司。',
+ },
+};
 const colors=['#365f91','#bc8650','#298879','#8866a6','#6e7f8b'];
 export const windowName=(w:number)=>w?w+'年':'全历史';
 
@@ -65,6 +83,37 @@ function HistoryWindow({value,onChange,label}:Obj){
  return <div className="segmented" aria-label={label}>{[3,5,10,0].map(w=>
   <button key={w} aria-pressed={value===w} className={value===w?'active':''} onClick={()=>onChange(w)}>{windowName(w)}</button>
  )}</div>;
+}
+
+function ValuationMethods({methods,value,onChange}:{methods:string[];value:string;onChange:(method:string)=>void}){
+ const [help,Help]=useState<string|null>(null);
+ const id=useId();
+
+ return <div className="segmented studio-methods" aria-label="估值方法">
+  {methods.map(method=>{
+   const explanation=methodExplanations[method];
+   const open=help===method;
+   const tooltipId=`${id}-${method}`;
+   return <div className="studio-method-option" key={method}>
+    <button type="button" aria-pressed={value===method} className={value===method?'active':''} onClick={()=>onChange(method)}>{methodNames[method]}</button>
+    {explanation&&<div className="studio-method-help"
+     onMouseEnter={()=>Help(method)}
+     onMouseLeave={e=>{if(!e.currentTarget.contains(document.activeElement))Help(null);}}
+     onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))Help(null);}}
+     onKeyDown={e=>{if(e.key==='Escape')Help(null);}}>
+     <button type="button" className="studio-method-info" aria-label={`${methodNames[method]}计算说明`} aria-describedby={open?tooltipId:undefined}
+      onFocus={()=>Help(method)} onClick={()=>Help(method)}><Info size={14} aria-hidden="true"/></button>
+     {open&&<div id={tooltipId} className="studio-method-tooltip" role="tooltip">
+      <strong>{methodNames[method]} · {method}</strong>
+      <p className="studio-method-purpose">{explanation.purpose}</p>
+      <p>{explanation.algorithm}</p>
+      <p>{explanation.example}</p>
+      <small>采用理杏仁结果，参与样本及特殊值处理沿用源端口径。</small>
+     </div>}
+    </div>}
+   </div>;
+  })}
+ </div>;
 }
 
 export const trendClass=(value:any)=>value==null?'':Number(value)>0?'positive':Number(value)<0?'negative':'';
@@ -139,9 +188,7 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
   </Panel>
   <Panel title="估值走势" className="studio-valuation-panel" right={<HistoryWindow value={valuationWindow} onChange={ValuationWindow} label="估值历史窗口"/>}>
    <div className="studio-controls">
-    <div className="studio-choice"><span>估值方法</span><div className="segmented" aria-label="估值方法">
-     {methods.map(m=><button key={m} aria-pressed={method===m} className={method===m?'active':''} onClick={()=>setMethod(m)}>{methodNames[m]}</button>)}
-    </div></div>
+    <div className="studio-choice"><span>估值方法</span><ValuationMethods methods={methods} value={method} onChange={setMethod}/></div>
     <div className="studio-choice"><span>观察指标</span><div className="segmented" aria-label="观察指标">
      {Object.entries(metricNames).map(([k,v])=><button key={k} aria-pressed={metric===k} className={metric===k?'active':''} onClick={()=>Metric(k)}>{String(v)}</button>)}
     </div></div>

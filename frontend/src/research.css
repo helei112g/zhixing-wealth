@@ -31,6 +31,12 @@ html.nav-collapsed .app-shell{grid-template-columns:76px minmax(0,1fr)}.compact-
 .frozen-source-data{white-space:pre-wrap;overflow-wrap:anywhere;max-height:500px;overflow:auto;font-size:12px}
 
 .studio-choice{display:grid;gap:7px}.studio-choice>span{color:var(--muted);font-size:13px}.studio-controls .segmented,.studio-finance-metrics,.composition-tabs{flex-wrap:wrap}.studio-finance-metrics{margin-bottom:12px}.studio-finance-summary{margin:20px 0}.composition-tabs{margin-bottom:16px}.composition-coverage{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px}.composition-coverage>div{display:grid;gap:5px;padding:14px;border:1px solid var(--line);border-radius:12px}.composition-coverage span,.composition-coverage small{font-size:12px;color:var(--muted)}
+.studio-methods{position:relative;max-width:100%}
+.studio-method-option{display:inline-flex;align-items:center}
+.segmented .studio-method-info{display:grid;place-items:center;padding:7px 5px;color:var(--muted)}
+.segmented .studio-method-info:hover,.segmented .studio-method-info:focus-visible{color:var(--blue);background:var(--tint)}
+.studio-method-tooltip{position:absolute;z-index:35;top:100%;left:0;width:min(360px,calc(100vw - 64px));padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px #20354d22;font-size:12px;line-height:1.7;color:var(--text)}
+.studio-method-tooltip strong{font-size:13px}.studio-method-tooltip p{margin:8px 0}.studio-method-purpose{color:var(--blue)}.studio-method-tooltip small{display:block;color:var(--muted);font-size:11px}
 .studio-funds-summary{grid-template-columns:repeat(2,minmax(0,1fr));margin:20px 0}
 
 /* Research overview: separate chart controls and compact, distinct summaries. */

@@ -127,6 +127,36 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(await page.getByText('同区间收益与成分重叠',{exact:true}).count()===0&&await page.getByRole('button',{name:'历史回测',exact:true}).count()===0,'return backtest and cross-index comparison removed');
   const methods=page.getByLabel('估值方法',{exact:true});
   const initialOrder=await methods.getByRole('button').allTextContents();
+  const selectedBeforeHelp=await methods.locator('button[aria-pressed=true]').innerText();
+  const chartBeforeHelp=await valuationChart.boundingBox();
+  let helpRequests=0;
+  const countHelpRequests=request=>{
+   const pathname=new URL(request.url()).pathname;
+   // The page already polls its local revision; help must not request analysis or collection.
+   if(pathname.startsWith('/api/research/')&&pathname!=='/api/research/revision')helpRequests++;
+  };
+  page.on('request',countHelpRequests);
+  for(const [label,purpose] of [['总市值加权','看经济规模较大的资产如何定价。'],['等权','看等额组合与规模加权组合有什么差异。'],['中位数','看估值是否扩散到典型公司。']]){
+   await methods.getByRole('button',{name:label+'计算说明',exact:true}).hover();
+   const tooltip=methods.getByRole('tooltip');
+   await tooltip.waitFor();
+   check((await tooltip.innerText()).includes(purpose),label+' explains its valuation perspective on hover');
+   await tooltip.hover();
+   assert.ok(await tooltip.isVisible(),'pointer can move into the explanation');
+   await page.getByRole('heading',{name:'估值走势',exact:true}).hover();
+   await tooltip.waitFor({state:'hidden'});
+  }
+  const equalWeightHelp=methods.getByRole('button',{name:'等权计算说明',exact:true});
+  await equalWeightHelp.focus();
+  await methods.getByRole('tooltip').waitFor();
+  await equalWeightHelp.press('Escape');
+  check(await methods.getByRole('tooltip').count()===0,'keyboard focus opens method help and Escape dismisses it');
+  await equalWeightHelp.click();
+  await methods.getByRole('tooltip').waitFor();
+  assert.deepEqual(await valuationChart.boundingBox(),chartBeforeHelp);
+  check(await methods.locator('button[aria-pressed=true]').innerText()===selectedBeforeHelp&&helpRequests===0,'method explanations preserve selection and chart layout without analysis or collection requests');
+  page.off('request',countHelpRequests);
+  await equalWeightHelp.press('Escape');
   await methods.getByRole('button',{name:'中位数',exact:true}).click();
   await methods.locator('button[aria-pressed=true]').filter({hasText:'中位数'}).waitFor();
   await ready();
@@ -224,6 +254,16 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await ready();
   await shot('studio-mobile');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile overview has no horizontal overflow');
+  for(const label of ['总市值加权','等权','中位数']){
+   const helpButton=page.getByRole('button',{name:label+'计算说明',exact:true});
+   await helpButton.click();
+   const tooltip=page.getByRole('tooltip');
+   await tooltip.waitFor();
+   const bounds=await tooltip.boundingBox();
+   assert.ok(bounds.x>=0&&bounds.x+bounds.width<=390,'method explanation fits the mobile viewport');
+   await helpButton.press('Escape');
+  }
+  check(true,'all method explanations open by click and fit a narrow screen');
   await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
   await shot('studio-finance-mobile');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile financial layout fits viewport');

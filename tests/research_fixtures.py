@@ -48,10 +48,12 @@ def finance_payload(members,asof=ASOF):
 
 
 
+def historical_memberships(profile,asof=ASOF):
+    """Legacy frozen-source fixture still used by the isolated product showcase."""
+    return dict(baskets=[dict(period=str(y)+'-12-31',status='official' if y>=2020 else 'unavailable',members=[dict(m,weight=None) for m in member_payload(profile)['rows']] if y>=2020 else [],reason='合成历史缺口' if y<2020 else None) for y in range(2015,2026)],effective_date=ASOF,evidence=[])
+
+
 def browser_prices(profile,basis,asof=ASOF,start_date=None):
-    if profile['code']=='000819' and basis=='total_return' and not _attempts.get('short_return'):
-        _attempts['short_return']=True
-        raise TimeoutError('合成全收益源暂时不可用')
     value=price_payload(profile,basis,asof)
     if profile['code']=='000819':value['rows']=value['rows'][-1000:]
     return value

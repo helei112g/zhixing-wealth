@@ -52,13 +52,13 @@ function IndustryDistribution({d}:Obj){
  const entries=Object.entries(groups).sort((a,b)=>Number(b[1])-Number(a[1]));
  const colors=['#3e6d9b','#2c8a7b','#9474aa','#c18a50','#738d48'];
  return <Panel title="行业分布" right={<small className="muted">权重日期 {d.membership_date||'-'}</small>}>
-  {entries.length?<div className="industry-list">
-   {entries.map(([name,weight],i)=><div className="research-weight" key={name}>
-    <span>{name}</span>
+  {entries.length?<ol className="industry-list" style={{'--industry-row-count':Math.ceil(entries.length/2)} as React.CSSProperties}>
+   {entries.map(([name,weight],i)=><li className="research-weight" key={name}>
+    <span className="industry-rank">{i+1}</span><span className="industry-name">{name}</span>
     <div><i style={{width:Math.min(100,Number(weight))+'%',background:colors[i%colors.length]}}/></div>
     <b>{num(weight)}%</b>
-   </div>)}
-  </div>:<p className="muted">缺少全量同日权重，暂不计算行业分布。</p>}
+   </li>)}
+  </ol>:<p className="muted">缺少全量同日权重，暂不计算行业分布。</p>}
  </Panel>;
 }
 

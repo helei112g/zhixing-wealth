@@ -161,7 +161,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
 
   await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
   await page.getByRole('img',{name:'指数财务金额趋势',exact:true}).waitFor();
-  check(await page.locator('.research-weight').evaluateAll(rows=>rows.length>0&&rows.every(row=>row.clientWidth>300&&row.querySelector('span').scrollWidth<=row.querySelector('span').clientWidth+1)),'industry rows leave readable space for full names and weights');
+  check(await page.locator('.research-weight').evaluateAll(rows=>rows.length>0&&rows.every(row=>row.clientWidth>300&&row.querySelector('.industry-name').scrollWidth<=row.querySelector('.industry-name').clientWidth+1)),'industry rows leave readable space for full names and weights');
   check(await page.getByRole('button',{name:'历史调样',exact:true}).count()===0&&await page.getByRole('button',{name:'篮子对照',exact:true}).count()===0,'financial pages are unified');
   for(const [label,suffix] of [['年度历史','12-31'],['一季度历史','03-31'],['半年历史','06-30'],['三季度历史','09-30']]){
    await page.getByRole('button',{name:label,exact:true}).click();

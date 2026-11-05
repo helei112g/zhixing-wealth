@@ -57,8 +57,9 @@ html.nav-collapsed .app-shell{grid-template-columns:76px minmax(0,1fr)}.compact-
 .index-info-popover{position:absolute;z-index:30;top:100%;left:0;width:min(430px,calc(100vw - 48px));max-height:70vh;overflow:auto;padding:20px;background:var(--panel,#fff);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 35px #20354d22}
 .index-info-popover h3{margin:0 0 12px}.index-info-popover .key-values{font-size:12px}
 .index-info-popover dd{overflow-wrap:anywhere;max-width:250px}
-.industry-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 40px;margin-top:12px}
-.research-weight{display:grid;grid-template-columns:minmax(100px,1fr) minmax(60px,1.5fr) 65px;gap:14px;align-items:center;min-height:30px;font-size:13px}
+.industry-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(var(--industry-row-count),auto);grid-auto-flow:column;gap:12px 32px;margin:12px 0 0;padding:0;list-style:none}
+.research-weight{display:grid;grid-template-columns:2.5ch 7em minmax(40px,1fr) 65px;gap:10px;align-items:center;min-height:30px;font-size:13px}
+.industry-rank{color:var(--muted);text-align:right;font-size:12px;font-variant-numeric:tabular-nums}
 .research-weight>span{overflow-wrap:anywhere}
 .research-weight>b{text-align:right;font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}
 .research-weight>div{height:6px;background:#e5ebf2;border-radius:3px;overflow:hidden}
@@ -67,7 +68,7 @@ html.nav-collapsed .app-shell{grid-template-columns:76px minmax(0,1fr)}.compact-
 .collection-modules .check small{display:block;color:var(--muted);line-height:1.6;font-size:11px;margin-top:4px}
 .company-period{display:flex;justify-content:flex-end;margin:12px 0}.company-period select{min-width:150px}
 @media(max-width:1100px){.studio-overview-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.industry-list{grid-template-columns:1fr}}
+@media(max-width:760px){.industry-list{grid-template-columns:1fr;grid-template-rows:none;grid-auto-flow:row}}
 @media(max-width:600px){.studio-overview-summary{grid-template-columns:1fr}.index-info-anchor{position:static}.studio-heading{position:relative}.index-info-popover{top:75px;left:0}.studio-change-grid{gap:12px}.studio-heading>div:first-child{align-items:center}.studio-current-ranks{gap:12px}.studio-current-ranks strong{font-size:20px}.studio-current-ranks small{font-size:10px}}
 .studio-heading>div:first-child{display:grid;grid-template-columns:minmax(220px,280px) auto;align-items:center}
 .studio-heading>div:first-child>label{grid-column:1/-1;margin:0}

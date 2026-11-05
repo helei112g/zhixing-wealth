@@ -157,42 +157,69 @@ class Collection:
     def company_data(self, iid, module, end):
         """Retain the company-level exception; never substitute index totals for companies."""
         from . import history
+
         p = self.active(iid, module)
-        if p.get('exposure') == 'overseas': raise DomainError('跨市场公司财务币种与准则尚未核验')
+        if p.get('exposure') == 'overseas':
+            raise DomainError('跨市场公司财务币种与准则尚未核验')
         members = self.research.module(iid, 'memberships')
-        if not members: raise DomainError('请先采集有效成分名单')
+        if not members:
+            raise DomainError('请先采集有效成分名单')
+
         if module == 'historical_financials':
             baskets = self.research.module(iid, 'historical_memberships')
-            if not baskets: raise DomainError('请先采集历史成分名单')
+            if not baskets:
+                raise DomainError('请先采集历史成分名单')
             unique = {m['code']: m for b in baskets['baskets'] for m in b['members']}
             rows = self.shared_companies('financials', list(unique.values()), end)
-            annual=[deepcopy(b) for b in baskets['baskets'] if b['period'].endswith('12-31')]
-            known={};observations=[];evidence=[]
-            for profile in self.research.profiles():
-                cached=self.research.module(profile['id'],'historical_financials') or {}
-                if cached.get('collection_cutoff')==end:
-                    known.update({(r['period'],r['code']):r for r in cached.get('industry_observations',[])})
-                    evidence.extend(cached.get('industry_evidence',[]))
-            for basket in annual:
-                period=basket['period'];missing=[m for m in basket['members'] if (period,m['code']) not in known]
-                if missing:
-                    fresh=providers.historical_industries(missing,period);evidence.extend(fresh['evidence'])
-                    known.update({(period,m['code']):dict(code=m['code'],period=period,date=None,industry=None) for m in missing})
-                    known.update({(period,r['code']):dict(r,period=period) for r in fresh['rows']})
-                for member in basket['members']:
-                    record=known.get((period,member['code']))
-                    member['industry']=record.get('industry') if record else ''
-                    if record:observations.append(record)
-            value = dict(rows, years=history.totals(rows['rows'],annual), membership_snapshot_id=baskets['snapshot_id'],
-                         industry_observations=observations,industry_evidence=evidence,
-                         industry_basis='对应期末前最近7天内的历史估值记录行业；当前可得版本，不声称严格PIT')
+            annual, observations, evidence = self.historical_industry_baskets(baskets['baskets'], end)
+            value = dict(
+                rows,
+                years=history.totals(rows['rows'], annual),
+                membership_snapshot_id=baskets['snapshot_id'],
+                industry_observations=observations,
+                industry_evidence=evidence,
+                industry_basis='对应期末前最近7天内的历史估值记录行业；当前可得版本，不声称严格PIT',
+            )
         else:
             value = self.shared_companies(module, members['rows'], end)
+
         with self.research.store.lock:
-            latest=self.active(iid, module)
-            if latest.get('collection_generation',0)!=p.get('collection_generation',0):raise DomainError('采集范围已变化，本次响应未发布')
+            latest = self.active(iid, module)
+            if latest.get('collection_generation', 0) != p.get('collection_generation', 0):
+                raise DomainError('采集范围已变化，本次响应未发布')
             sid = self.research.publish(iid, module, value)
         return dict(value, snapshot_id=sid)
+
+    def historical_industry_baskets(self, baskets, end):
+        """Enrich annual basket copies with dated observations, preserving source lists."""
+        annual = [deepcopy(b) for b in baskets if b['period'].endswith('12-31')]
+        known = {}
+        observations = []
+        evidence = []
+        for profile in self.research.profiles():
+            cached = self.research.module(profile['id'], 'historical_financials') or {}
+            if cached.get('collection_cutoff') == end:
+                known.update({(r['period'], r['code']): r for r in cached.get('industry_observations', [])})
+                evidence.extend(cached.get('industry_evidence', []))
+
+        for basket in annual:
+            period = basket['period']
+            missing = [m for m in basket['members'] if (period, m['code']) not in known]
+            if missing:
+                fresh = providers.historical_industries(missing, period)
+                evidence.extend(fresh['evidence'])
+                known.update({
+                    (period, m['code']): dict(code=m['code'], period=period, date=None, industry=None)
+                    for m in missing
+                })
+                known.update({(period, r['code']): dict(r, period=period) for r in fresh['rows']})
+            for member in basket['members']:
+                record = known.get((period, member['code']))
+                member['industry'] = record.get('industry') if record else ''
+                if record:
+                    observations.append(record)
+
+        return annual, observations, evidence
 
     def shared_companies(self, module, members, end):
         """Reuse immutable company observations for the same query cutoff across indices."""

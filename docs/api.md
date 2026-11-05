@@ -370,53 +370,39 @@ Dashboard full 视图包含 `curve_quality`：`missing_days`、`from/to` 和 `re
 
 GET /api/notifications返回missing_requests：每项含id、schedule_id、item_id、portfolio_id、name、kind、due_date、at、reason及可选error_domain/error_code；未知系统原因明确标注。POST action支持refresh（重新排程并验证系统队列）、open_settings（打开本机macOS通知设置）、enable/disable/test。原生弹出通知继续隐藏名称与金额；详情只在本机设置页面展示。排程成功不等于用户看见或业务已处理。
 
-## 指数研究与全局数据更新（schema10）
+## 指数观察台与本地数据采集（schema11）
 
-指数不绑定组合。会话、Origin、CSRF、停写保护与现有接口相同；GET不发起采集。细节、来源频率与限制见[研究合同](research.md)。
+所有读取只访问本地快照。凭据仅通过本机设置页面输入，不能提供给 AI、命令行参数、日志或请求文件。
 
-| 接口 | 合同 |
+| 接口 | 请求与结果 |
 |---|---|
-| POST `/api/research/indices/resolve` | `{code}`；返回 profile、resolve_token、research_revision、expires_at、valuation_options（CSI/SH/SZ/LG）、default_valuation_suffix、valuation_disabled。只读身份预览；仅明确登记或已保存的映射可作为默认值。 |
-| POST `/api/research/indices/valuation-preview` | `{code,valuation_suffix}`；后缀必须显式传CSI/SH/SZ/LG，或null表示暂不接入估值。只读联网验证，返回code/status、metrics.pe/pb的状态、观测数量、首末日期及最新值；两项均有效才返回valuation_token，缺失或请求失败时token为null。显式null返回skipped及token，不访问供应商。 |
-| POST `/api/research/indices` | `{resolve_token, valuation_token, expected_research_revision, request_id}`；短期签名绑定精确配对及已验证的来源选择（含显式不接入），CAS建档及首次补齐意图同事务持久化；返回 id、basis、job_id、research_revision、existing。原 request_id 重放返回原结果，变更负载409。 |
-| GET `/api/research/indices?kind=宽基&page=1` | 固定每页20；价格摘要、PE/PB 3/5/10年分位和独立高点日期。无搜索、关注及组合关联。 |
-| GET `/api/research/indices/{id}?basis=price&method=overall&window=3` | basis为price/total_return；method为overall/median/arithmetic；窗口3/5/10。返回analysis_id、独立research_revision及四页签投影。当前可得版本；历史asof参数明确拒绝，避免冒充PIT。 |
-| GET `.../{id}/series` | basis、window、可选analysis_id；返回抽样曲线与完整日线计算的高点/最大回撤。 |
-| GET `.../{id}/constituents`、`financials` | page≥1、page_size默认20上限100、analysis_id；分页前先核对输入集合。financials返回当前篮子摘要、历史断点及原始财报字段分页。 |
-| GET `.../{id}/sources` | 各模块snapshot_id、源日期、抓取时间、字段及SHA-256；与指定analysis_id不一致时409。 |
-| POST `.../{id}/scenarios` | `{analysis_id,basis,metric,target_multiple,change_ratio,accept_fixed_basket_assumption:true}`；只读Decimal试算，metric为pe/pb，change_ratio为比例；可用CLI `scenario INDEX_ID REQUEST.json`，不需--confirm-write。仅同日价格序列、整体法、正估值可用；无未来分红假设不开放全收益。 |
-| GET/PUT `/api/settings/data-updates` | GET返回policies及settings_revision；PUT完整六项policies及expected_settings_revision，冲突409。scope、enabled、cadence（daily/trade_day/weekly/manual）、time、timezone=Asia/Shanghai。 |
-| POST `/api/data-updates/run` | `{scopes,request_id,targets?}` 或加精确 `resources`；202仅表示受理。scopes为quotes/fx/index_prices/memberships/valuations/financials。重复request_id不重复执行；不同负载409。 |
-| GET `/api/data-updates/jobs/{job_id}` | 按已受理ID读取持久任务与逐项结果，不依赖最近20条展示列表。 |
-| GET `/api/data-updates/jobs` | 最近20条任务、resources、逐项实际数据日、来源版本、错误及状态。确认失败后可用新request_id提交失败项原resource；未知结果先按原job_id回读，重复原request_id不会重新执行。 |
+| GET `/api/research/catalog` | 本地已核验目录、已添加订阅、模块、module_sources来源说明及研究版本；不采集目录中的全部指数。 |
+| POST `/api/research/indices/resolve` | `{code}`，只读返回精确配对 profile 和 research_revision。 |
+| POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。返回逐端点预计调用量、预算余量、依赖缺项和原 research_revision；无供应商请求。 |
+| PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。只保存，显式更新才入队。 |
+| GET `/api/research/indices` | 兼容每页20的本地摘要读取，kind/page可选；页面首页改用选择器。 |
+| GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
+| GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield。返回日频估值均值、分位、资金观察、波动率和集中度；收益回测、成分重叠、区间收益比较已退役，含同一analysis_id。 |
+| GET `.../{id}/{part}` | series/constituents/financials/sources；analysis_id 防混版本，page/page_size 分页。 |
+| GET `.../{id}/versions`、`.../versions/{snapshot_id}` | 最近100个非检查点来源版本及精确版本回读；跨指数版本拒绝，旧来源历史不删除。 |
+| POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和整体法/mcw估值可在用户接受固定成分、股数、权重、除数及全部成分同比例变化假设后试算；读取scenario_metrics/ scenario_assumption；全收益/等权/中位数禁用。 |
+| POST `/api/research/indices/{id}/source-check` | analysis_id绑定mcw价格快照；显式请求官方最近45天同日价格与可得PE参考，不消耗理杏仁额度，不合并历史。 |
+| GET `/api/settings/lixinger` | 已配置状态、本机文件路径、独立revision、每端点尝试次数与预算；不返回Token或片段。 |
+| PUT `/api/settings/lixinger/token` | 仅用户本机页面提交 token 与 expected_revision；0600原子文件，保存不采集且关闭自动采集；显式手动更新在既有预算内可用，计数不重置。AI客户端不提供密钥读写命令。 |
+| PUT `/api/settings/lixinger` | expected_revision、enabled、limit（1–1000）、automatic、可选clear_block；不会自动请求接口或重置计数。 |
+| GET/PUT `/api/settings/data-updates` | 六个全局策略与expected_settings_revision；本机理杏仁自动采集还须单独启用。 |
+| POST `/api/data-updates/run` | scopes、稳定request_id，可选targets/resources。只规划已启用订阅模块；失败精确重试沿用resource。结果未知先回读原job_id。 |
+| GET `/api/data-updates/jobs`、`.../{job_id}`、`/api/data-updates/history` | 任务与逐模块失败，history合并去重保留最近5条展示。 |
 
-精确资源示例：`{"scope":"fx","currency":"HKD"}`、`{"scope":"quotes","instrument_id":"synthetic-id"}`、`{"scope":"index_prices","target":"cni:399006","module":"total_return"}`。memberships包含memberships/historical_memberships，valuations包含valuations/stock_valuations，financials包含financials/historical_financials；重试单模块不扩大为整个scope。旧 `/api/sync` 和 `/api/jobs` 继续兼容。
+旧 `POST /api/research/indices`、`POST .../valuation-preview` 返回410；旧后缀选择和乐咕联网抓取已退役，旧数据仍可读取。更新任务的 request_id 保持幂等；订阅变更用研究版本防并发覆盖，重复保存不产生采集调用。
 
-缺值为null，状态说明历史不足、覆盖不足、非正基数等原因；百分位/回撤均为比例字符串。高点日期按对应完整日历窗口、指定序列的最高收盘**最近一次**出现日计算。
+指数资源模块分别归入原六个scope：index_prices含index_info/price/total_return；memberships含memberships/historical_memberships/tracking_funds；valuations含valuations/market_activity/stock_valuations；financials含index_financials/financials/historical_financials。只更新订阅模块，原行情与汇率scope独立。
 
-计划PUT允许可选 `holding_labels:{scope,direction,detail}`，与计划同事务、原expected_revision保存。GET labels同时返回当前allocation。省略region/holding_labels分别保留原地区/标签，不把默认值写回；独立labels PUT语义保持不变。
+历史篮子现金流以对应年末前7天内最近历史估值记录的行业排除金融公司；历史行业按期间与公司缓存，不沿用当前名单行业。`excluded_unknown_industry` 记录未核验家数，存在未核验行业时不认定完整覆盖、不计算同比；行业和财报均为当前可得历史版本，不声称严格PIT。
 
-公共更新的行情/汇率资源支持可选布尔`full`（默认false），用于历史补齐；精确重试须保留它。记账、基准与导入后的自动补齐进入同一队列，遵守全局scope开关及仅手动设置。
+详情 `changes` 含 daily/weekly/monthly/ytd；月度、周度、年度均取期间起点之前最近有效收盘，不把日涨跌相加。`index_financials` 按报告日期筛选同类报告期的 q.*.t 和 q.*.t_y2y；t_r为回溯值，不是同比。
 
-指数增强（method_version `index-library-2`）：detail新增`changes.daily/weekly/ytd`（ratio/from_date/to_date或null）、`top10_weight`（百分数）、`daily_series`（完整显示日线及ma51/ma120/ma250/ma850，缺期null）、按权重降序的`companies[].weight_rank/financials[报告期]`与`financials.current_years`。`valuation.*.windows.*.quantiles`为有效同源历史样本的p10/p25/p50/p75/p90。list亦提供changes。旧字段保持兼容。
-
-`POST .../scenarios`可选`reference_window:3|5|10`（默认5），返回`curve`（change_pct、point）、`reference_points`（分位→multiple/point）和reference_window。曲线与所选结果均由后端Decimal计算；参考点固定分母不变，窗口不足则空对象。只接受同日整体法价格序列与明确固定篮子假设；所有结果仍绑定analysis_id。
-
-
-研究能力发现补充 `research.bases`、`valuation_methods`、`detail_fields`、`moving_averages`及`scenario_reference_windows`。标准库客户端的 `research_index(..., method='overall')`显式透传估值方法；`research_part(index_id, part, *, basis='price', window=3, method='overall', analysis_id=None, page=1, page_size=20)`覆盖四种资料投影，part限series／constituents／financials／sources。调用者在跨页读取时传入刚读取的analysis_id，遵守409版本冲突规则。
-
-
-### 当前持仓收益、交易类型与资产归档
-
-`capital_summary.holding_profit` 汇总当前份额的浮动盈亏；`holdings[].holding_profit` 与其 `performance.holding_profit` 使用同一值。`cost_including_fees_base` / `performance.remaining_cost` 为剩余含买入费税成本，按原交易锁定汇率并沿用移动平均成本；卖出同比例移除成本，送转总成本不变。再投增加份额成本，所以无卖出但有再投时仍可能不同于累计收益。行情、企业行动或剩余成本未核实时为null，空仓为0。`performance.realized_sale_profit` 及组合同名字段为卖出净回款（含已确认应收）减售出部分记账成本，不含分红和单独费用；累计收益继续保留其全部原有组成。金额单位CNY，均为Decimal字符串。
-
-`GET /api/portfolios/{P}/transactions?kind=BUY&page=1&page_size=20` 按原事件类型先筛选后分页，返回 `filters.kind`、`facets.kinds`。kind留空为全部，可选值见原流水kind枚举（含SELL、DIVIDEND、REINVEST、SPLIT等）；未知值422。组合与标的隔离、稳定排序、分页revision语义保持；market/asset_class/region参数仅保留API兼容。无参数旧接口仍返回全量数组；使用kind的新调用返回分页对象。
-
-资产命令schema版本2新增archive/restore：两者均要求原 `record_id`、`payload.target=item|link`、`payload.effective_on=YYYY-MM-DD`，可附reason，日期不得晚于今天。预览 `/api/family/preview` 后以原revision提交 `/api/family/commands`，再回读catalog和overview；409或超时先核对，不能自动替换版本或重复提交。catalog的 `archive_entries` 返回id、target、name、category、currency、closed_on、can_restore，组合另含portfolio_id。
-
-archive从生效日退出资产统计，不添加零余额、不删除历史，不等于出售或收款；实际收款另行记现金。item追加关闭版本，restore追加新有效版本并沿用已有余额；恢复日期不能早于归档日期，不能覆盖更晚档案。link只关闭原关联，restore创建新的无重叠关联区间，不清空旧closed_on，也不改组合、交易、锁定汇率或笔记。归档区间不生成付款提醒，过去余额和记录保留；归档期内不能追加估值，归档前的余额更正仍可预览保存。恢复后须核对最近余额。当前总览 `metrics.net_assets` 继续由后端统计。
-
-catalog另提供`value_history`：保留原快照字段并增加按该日档案归属比例计算的`household_total`，包含负债利息与费用，使用Decimal字符串；活动与归档余额历史共同读取，不直接展示底层全额本金。跨汇率的同额原币再投不制造个人本金；到账后尚未再投时先体现现金回收，再投确认时按到账资金口径内部抵消。补充本金须另记普通买入。
+数值保留Decimal字符串与null；股息率、rank、growth、return_ratio、volatility_250均为比例，权重为百分数。前端万/亿缩放不用于写接口。409表示原版本或request_id负载冲突，422表示口径、范围、预算、权限或数据校验不通过。
 
 ## 标的近期行情涨跌幅
 
@@ -426,7 +412,7 @@ catalog另提供`value_history`：保留原快照字段并增加按该日档案�
 
 ## 机器契约与版本号
 
-`capabilities.skills`列出四项项目技能；`concurrency.domains`区分账本、研究、更新设置的读取入口及原版本字段。`family.comparison.history_curve=previous`与接口默认一致，yoy只在显式要求同比时使用。研究建档及更新任务的request_id是各自的受理凭据，不是通用账本幂等键。
+`capabilities.skills`列出四项项目技能；`concurrency.domains`区分账本、研究、更新设置的读取入口及原版本字段。`family.comparison.history_curve=previous`与接口默认一致，yoy只在显式要求同比时使用。更新任务的request_id是受理凭据，不是通用账本幂等键。
 
 OpenAPI明确列出dashboard的full/summary、持仓分布的holdings/assets、研究basis/method/window/part的可选值。DashboardResponse公开CapitalSummary、HoldingSnapshot、PlanFunding，保留其他已有响应字段；数值保持Decimal字符串，未知保持null。ScenarioRequest/ScenarioResult区分输入change_ratio（比例）与curve[].change_pct（百分数）。409为版本或同request_id负载冲突，422为输入或业务口径不成立。
 
@@ -444,15 +430,14 @@ UpdateRequest.resources按scope区分六种结构，OpenAPI同时公开各模块
 - `expense_plan`、`expense_month` 加入 `/api/family/preview` 和 `/api/family/commands`，沿用expected_revision、record_id。`command-schema`版本3提供完整JSON Schema。expense_plan包含name、amount或source_item_id、effective_month、end_month；编辑原ID追加版本。expense_month包含month、extra_plan、actual_amount、confirmed、note，record_id为YYYY-MM；未来月份只允许预算。
 - 实际开支总额替代预算，不相加。confirmed表示整月收入和开支已经完整核对，无收入记录时明确确认零收入；收入记录改变后needs_review为true并退出实际年度统计。已确认月份保存预算快照，之后改计划不改写该月。上述两类操作不产生现金流水、证券事件或资产快照；超时先回读，不自动重试。
 - 指数详情新增 `module_status`，逐模块包含supported/status/reason/date。科创50价格/全收益代码000688/000688CNY01，中证海外中国互联网H11136/H01136；后者估值及财务模块明确unsupported，不调用A股财务适配器。
-- 注册表另支持红利低波100（930955/H20955）、中证煤炭（399998/H20596）、全指医药（000991/H00991），均为csi家族；任一代码可识别，保留输入basis，重复建档返回同一id。红利低波100的指数估值模块为unsupported，其余模块分别报告实际状态；全指医药的北交所成分使用market=BJ。399998的profile含valuation_code=399998.SZ，行情仍使用中证接口。接口、研究CAS及幂等契约不变。
-- 中证红利000922/H00922的身份预览profile包含`valuation_code=000922.CSI`；此前没有该字段的既有档案无需重建，估值采集时回查当前注册表，仍保留原档案响应。修复不自动更新正式数据，正常估值更新后详情返回PE/PB及对应来源参数。930955的候选等权历史与认证API核验见[研究来源说明](research.md)，当前接口支持状态不变。
 
-估值验证凭证有效期10分钟，绑定完整输入身份及所选来源；缺失、篡改、过期或跨指数/口径使用均拒绝。验证不写研究快照、revision或更新任务。原request_id成功重放仍返回原结果，不受凭证随后过期影响；未知结果先用原负载回读。重复建档保留既有估值配置，不同选择返回409，不静默覆盖。请求字段/枚举无效返回422，预验证的来源缺失或请求失败则200返回逐指标原因及null token。读取缺少valuation_code的旧档案，只回查明确注册映射；显式valuation_code=null不回退，尚无明确映射则估值unsupported。正式同步仍按原策略与任务流程执行。
 
 ### 轻量导航、统一更新记录与当前指数更新
 
 - `GET /api/family/bounds` 返回 `{bounds, revision}`，bounds 与 catalog.bounds 相同；不返回资产、笔记或行情明细。仍使用账本 revision 和日期失效规则。
 - `GET /api/data-updates/history` 返回 `{jobs, limit:5}`，按开始时间与创建顺序倒序。每条 kind 为 public 或 legacy，state 为任务状态；关联的行情子任务折叠到公共数据父任务。这里只限定展示数量，旧接口及按 job_id 查询保持可用。失败项保留原始 resource 和错误，重试只提交该项。
 - 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即覆盖八个指数模块。明确的手动更新不受自动更新策略开关限制；不更新其他指数、组合行情或汇率。
-- 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格及公司估值的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
+- 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格、指数/公司估值及资金数据的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
 - Yahoo 参考每股值仅在相对差≤0.01%且绝对差≤0.005币种单位时视为微调；始终与最后一次明确确认的固定依据比较。此规则不舍入或改写实际金额、税费、份额及汇率，也不豁免权益、日期、币种与拆分变化。
+
+标的详情新增 `price_history_start`：本组合首次购买前六个自然月。行情同步按各组合最早购买日补齐该区间并记录 `quote_history_requested_start`；后续增量更新不重复全量请求。成立/上市晚于起点时保留实际覆盖。

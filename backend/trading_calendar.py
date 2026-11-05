@@ -23,10 +23,12 @@ def no_expected_session(market, quote_date, valuation_date):
     """True only when verified closures/weekends explain the ENTIRE quote gap."""
     market = 'CN' if market in ('SH', 'SZ') else market
     start, end = day(quote_date), day(valuation_date)
-    if market not in _CLOSED or start.year != 2026 or end.year != 2026 or end < start:
+    if market not in _CLOSED or end.year != 2026 or end < start:
         return False
     d = start + timedelta(days=1)
     while d <= end:
+        if d.year != 2026:
+            return False
         if d.weekday() < 5 and d not in _CLOSED[market]: return False
         d += timedelta(days=1)
     return True

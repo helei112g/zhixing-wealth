@@ -14,7 +14,7 @@ import zipfile
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
-from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, now, ratio, classification, canonical_region, today, wire
+from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, month_after, now, ratio, classification, canonical_region, today, wire
 from .ledger import Ledger, Market, normalize_event, periods, split_notice_records, split_notice_confirmed
 from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES, cached_query
 from .version import VERSION, NAME
@@ -627,12 +627,14 @@ class Service:
                 'pending': any(p['pending'] for p in parts),
                 'provisional': not e.get('tax_known', True) or not e.get('ex_date_known', True)}
         curves = {}
+        first_purchase=min((e['date'] for e in events if e['kind']=='BUY'),default=self.portfolio(state,portfolio_id)['start_date'])
+        price_history_start=str(month_after(day(first_purchase),-6))
         for kind in ('raw', 'adjusted', 'total_return'):
             series = market_data.price_series.get((instrument_id, kind))
             curves[kind] = series.rows if series else []
         profit_rows=self.trade_results(portfolio_id,instrument_id,state=state)
         return wire({'transactions':self.transaction_rows(portfolio_id,instrument_id,state=state,profit_rows=profit_rows),'portfolio': self.portfolio(state, portfolio_id), 'holding': holding, 'events': events,
-                     'trades': trades, 'curves': curves, 'price_basis': 'adjusted' if curves['adjusted'] and holding['instrument']['market'] in ('SH','SZ','HK','US') else 'raw',
+                     'trades': trades, 'curves': curves, 'price_history_start':price_history_start, 'price_basis': 'adjusted' if curves['adjusted'] and holding['instrument']['market'] in ('SH','SZ','HK','US') else 'raw',
                      'todos': [t for t in snap['todos'] if t.get('instrument_id',t.get('event',{}).get('instrument_id'))==instrument_id], 'dividend_values': dividend_values,
                      'dividends': [e for e in events if e['kind'] in ('DIVIDEND', 'REINVEST')],
                      'dividend_candidates':self.dividend_candidates(portfolio_id,instrument_id,state=state),
@@ -1241,10 +1243,23 @@ class Service:
                             job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 企业行动数据','status':'error','message':str(exc)[:500]})
                     try:
                         existing = [r['date'] for r in state['prices'] if r['instrument_id'] == inst['id'] and r['kind'] == inst.get('series_kind','raw') and not r.get('manual')]
-                        beginning = start if full or not existing else max(start, (day(max(existing)) - timedelta(days=7)).isoformat())
-                        result = market.quotes(inst, beginning, today().isoformat(), adjusted_start=start)
+                        first_purchase=min((e['date'] for e in state['events'] if e.get('instrument_id')==inst['id'] and e['kind']=='BUY'),default=None)
+                        history_start=str(month_after(day(first_purchase),-6)) if first_purchase else start
+                        requested=inst.get('quote_history_requested_start')
+                        backfill=not requested or requested>history_start
+                        beginning = history_start if full or backfill or not existing else max(history_start, (day(max(existing)) - timedelta(days=7)).isoformat())
+                        result = market.quotes(inst, beginning, today().isoformat(), adjusted_start=history_start)
+                        raw = [r for r in result['rows'] if r['kind'] == inst.get('series_kind','raw')]
+                        if not raw:raise market.ProviderError('未返回该标的有效价格，历史请求范围未推进')
                         price_counts = self.cache_prices(inst['id'], result['rows'])
                         self.cache_actions(inst['id'],result.get('actions',[]))
+                        # Remember the successful requested range, including a fund
+                        # launched later than that range, to avoid daily full retries.
+                        with self.store.transaction() as db:
+                            fresh=db.execute('SELECT data FROM instruments WHERE id=?',(inst['id'],)).fetchone()
+                            if fresh:
+                                obj=json.loads(fresh['data']);obj['quote_history_requested_start']=min(history_start,obj.get('quote_history_requested_start') or history_start)
+                                db.execute('UPDATE instruments SET data=? WHERE id=?',(json_dumps(obj),inst['id']))
                         if result.get('name') and not inst.get('custom_name') and not inst.get('builtin'):
                             with self.store.transaction() as db:
                                 fresh = db.execute('SELECT identity,data FROM instruments WHERE id=?', (inst['id'],)).fetchone()
@@ -1253,7 +1268,6 @@ class Service:
                                     if not obj.get('custom_name'):
                                         obj['name'] = result['name']
                                         db.execute('UPDATE instruments SET data=? WHERE id=?', (json_dumps(obj), inst['id']))
-                        raw = [r for r in result['rows'] if r['kind'] == inst.get('series_kind','raw')]
                         job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name': inst['code'] + ' ' + (result.get('name') or inst['name']), 'status': 'ok', 'count': len(raw), 'saved':price_counts['saved'], 'unchanged':price_counts['unchanged'], 'date': max(r['date'] for r in raw), 'source': result['source'], 'notes': result['notes']})
                     except Exception as exc:
                         job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name': inst['code'], 'status': 'error', 'message': str(exc)[:500]})

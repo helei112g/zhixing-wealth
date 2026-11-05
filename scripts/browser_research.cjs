@@ -1,106 +1,283 @@
-/* Only synthetic provider adapters installed by verify.py's guarded test server. */
-const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
-(async()=>{const browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1500,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));let csrf='',checks=0;
- const check=(v,n)=>{assert.ok(v,n);console.log('PASS',++checks,n);};
- const api=async(url,body,method=body===undefined?'GET':'POST')=>{const r=await page.request.fetch(base+'/api'+url,{method,data:body,headers:{'X-CSRF-Token':csrf}});assert.ok(r.ok(),await r.text());return r.json();};
- const nav=async(name,group)=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:group,exact:true}).getByRole('button',{name,exact:true}).click();};
- const shot=name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true,animations:'disabled'});
- async function add(code){await page.getByRole('button',{name:'添加指数',exact:true}).first().click();const dialog=page.getByRole('dialog',{name:'添加指数',exact:true});await dialog.getByLabel('指数代码',{exact:true}).fill(code);await dialog.getByRole('button',{name:'识别指数',exact:true}).click();await dialog.getByLabel('估值来源后缀',{exact:true}).waitFor();check(await dialog.getByRole('button',{name:'确认添加并更新',exact:true}).isDisabled(),'save waits for valuation validation '+code);if(['930955','H20955','H11136','H01136'].includes(code)){await dialog.getByLabel('估值来源后缀',{exact:true}).selectOption('none');await dialog.getByRole('button',{name:'确认暂不接入估值',exact:true}).click();}else{await dialog.getByRole('button',{name:'验证 PE、PB',exact:true}).click();}await dialog.getByRole('button',{name:'确认添加并更新',exact:true}).click();await dialog.waitFor({state:'hidden'});}
- try{
- const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);csrf=(await api('/bootstrap')).csrf_token;
- await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();await nav('指数资料库','研究工具');await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
- check((await api('/bootstrap')).portfolios.length===0,'research can open in a zero-portfolio ledger');check(await page.locator('.research-page input[type=search]').count()===0,'no search field');
- await page.getByRole('button',{name:'添加指数',exact:true}).first().click();
- let sourceDialog=page.getByRole('dialog',{name:'添加指数',exact:true});
- await sourceDialog.getByLabel('指数代码',{exact:true}).fill('000922');await sourceDialog.getByRole('button',{name:'识别指数',exact:true}).click();
- const suffixSelect=sourceDialog.getByLabel('估值来源后缀',{exact:true}),saveSource=sourceDialog.getByRole('button',{name:'确认添加并更新',exact:true});
- await suffixSelect.waitFor();check(await suffixSelect.inputValue()==='CSI','registered dividend mapping is selected explicitly');
- check(JSON.stringify(await suffixSelect.locator('option').evaluateAll(items=>items.map(i=>i.value)))===JSON.stringify(['','CSI','SH','SZ','LG','none']),'source choices include four suffixes and explicit opt-out');
- check(await saveSource.isDisabled(),'identity resolution alone cannot save');await suffixSelect.selectOption('SH');await sourceDialog.getByRole('button',{name:'验证 PE、PB',exact:true}).click();
- await sourceDialog.getByText('PE、PB 尚未全部验证通过，请重试、切换后缀或暂不接入估值。',{exact:true}).waitFor();check(await saveSource.isDisabled(),'wrong suffix with missing data cannot save');
- await suffixSelect.selectOption('CSI');await sourceDialog.getByRole('button',{name:'验证 PE、PB',exact:true}).click();await sourceDialog.getByText('PE、PB 验证通过',{exact:true}).waitFor();
- check((await sourceDialog.getByRole('status').innerText()).includes('PE：')&&(await sourceDialog.getByRole('status').innerText()).includes('PB：'),'both metric validation results and dates are shown');await shot('valuation-source-selection-desktop');
- await suffixSelect.selectOption('SZ');check(await saveSource.isDisabled(),'changing suffix invalidates earlier proof');
- await suffixSelect.selectOption('CSI');await sourceDialog.getByRole('button',{name:'验证 PE、PB',exact:true}).click();await saveSource.click();await sourceDialog.waitFor({state:'hidden'});
- await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();
- await page.getByRole('button',{name:'添加指数',exact:true}).first().click();sourceDialog=page.getByRole('dialog',{name:'添加指数',exact:true});
- await sourceDialog.getByLabel('指数代码',{exact:true}).fill('000985');await sourceDialog.getByRole('button',{name:'识别指数',exact:true}).click();await sourceDialog.getByLabel('估值来源后缀',{exact:true}).waitFor();
- check(await sourceDialog.getByLabel('估值来源后缀',{exact:true}).inputValue()==='','unmapped index never guesses a suffix');check(await sourceDialog.getByRole('button',{name:'验证 PE、PB',exact:true}).isDisabled(),'unmapped source requires an explicit choice');
- await sourceDialog.getByLabel('估值来源后缀',{exact:true}).selectOption('none');await sourceDialog.getByRole('button',{name:'确认暂不接入估值',exact:true}).click();await sourceDialog.getByText('已选择暂不接入指数估值，行情等模块仍可更新。',{exact:true}).waitFor();
- await page.setViewportSize({width:320,height:850});await shot('valuation-source-opt-out-320');check(await sourceDialog.evaluate(el=>el.getBoundingClientRect().width<=320),'source selector drawer fits 320px');await sourceDialog.getByRole('button',{name:'取消',exact:true}).click();await page.setViewportSize({width:1500,height:1050});
- await add('399606');await page.getByRole('button',{name:'返回指数资料库',exact:true}).waitFor();await page.waitForFunction(()=>document.querySelector('.research-metrics .drawdown-window time')?.textContent==='2024-07-01',null,{timeout:20000});
- check(await page.locator('.research-basis button[aria-pressed=true]').innerText()==='全收益指数 399606','total-return input retains its basis');
- await page.getByRole('button',{name:'价格指数 399006',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.research-metrics .drawdown-window time')?.textContent==='2025-06-02');
- check((await page.locator('.research-metrics .drawdown-window time').allTextContents()).join('|')==='2025-06-02|2022-06-01|2017-06-01','three independent high dates appear in the summary');
- check(await page.locator('.research-summary').count()===1,'basic page has one portfolio-style summary');check((await page.locator('.research-market-changes').innerText()).includes('本周')&&(await page.locator('.research-market-changes').innerText()).includes('最近交易日'),'close summary includes weekly and latest-session returns');check((await page.locator('.research-top-weight').innerText()).includes('95.00%'),'top10 weights use the full basket');await shot('index-basic-desktop');
- await page.getByRole('tab',{name:'估值与回撤',exact:true}).click();check(await page.locator('.research-summary').count()===0,'other tabs do not duplicate the basic summary');await page.getByRole('img',{name:'水下回撤图',exact:true}).waitFor();check(await page.getByRole('columnheader',{name:'3年百分位',exact:true}).count()===1&&await page.getByRole('columnheader',{name:'10年百分位',exact:true}).count()===1,'valuation table includes 3/5/10 years');
+/* All requests run against the guarded synthetic provider in the test harness. */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE_PATH || '../frontend/node_modules/playwright');
+const base = process.env.PORTFOLIO_TEST_URL;
+const out = process.env.PORTFOLIO_TEST_OUTPUT;
 
- const detailRoute='**/api/research/indices/*?*';let releaseWindow,windowStarted;const windowGate=new Promise(r=>releaseWindow=r),windowArrived=new Promise(r=>windowStarted=r);
- await page.locator('.linked-history').evaluate(el=>{el.scrollIntoView({block:'start'});window.scrollBy(0,-40);window.__historyCard=el;window.__historyY=scrollY;});
- await page.route(detailRoute,async route=>{if(new URL(route.request().url()).searchParams.get('window')!=='10')return route.continue();const response=await route.fetch();windowStarted();await windowGate;await route.fulfill({response});});
- try{await page.getByRole('button',{name:'10年',exact:true}).click();await windowArrived;await page.getByText('正在读取10年窗口，暂显示3年数据',{exact:true}).waitFor();check(await page.evaluate(()=>window.__historyCard===document.querySelector('.linked-history')&&Math.abs(scrollY-window.__historyY)<2),'window request retains its chart and scroll position');releaseWindow();await page.waitForFunction(()=>document.querySelector('.linked-history .segmented button.active')?.textContent==='10年');check(await page.evaluate(()=>window.__historyCard===document.querySelector('.linked-history')&&Math.abs(scrollY-window.__historyY)<2),'window response replaces data without moving the page');}finally{releaseWindow();await page.unroute(detailRoute);}
- let failWindow=true;await page.route(detailRoute,async route=>{if(failWindow&&new URL(route.request().url()).searchParams.get('window')==='5'){failWindow=false;return route.fulfill({status:503,json:{error:'合成年限读取暂时失败'}});}return route.continue();});
- try{await page.getByRole('button',{name:'5年',exact:true}).click();await page.getByText('合成年限读取暂时失败',{exact:true}).waitFor();check(await page.locator('.linked-history .segmented button.active').innerText()==='10年'&&!(await page.locator('.research-linked-readout').innerText()).includes('正在读取'),'failed window request keeps the last valid window without a stuck loading state');await page.getByRole('button',{name:'5年',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.linked-history .segmented button.active')?.textContent==='5年');check(true,'same requested window can be retried after failure');}finally{await page.unroute(detailRoute);}
- await page.getByRole('button',{name:'10年',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.linked-history .segmented button.active')?.textContent==='10年');await shot('index-valuation-desktop');
+(async () => {
+ const browser = await chromium.launch({headless:true});
+ const page = await browser.newPage({viewport:{width:1500,height:1050}});
+ let csrf = '', checks = 0;
+ const errors = [];
+ page.on('pageerror', error => errors.push(error.message));
+ const check = (value,label) => {assert.ok(value,label);console.log('PASS',++checks,label);};
+ const api = async (url,body,method=body===undefined?'GET':'POST') => {
+  const response = await page.request.fetch(base+'/api'+url,{method,data:body,headers:{'X-CSRF-Token':csrf}});
+  assert.ok(response.ok(),await response.text());
+  return response.json();
+ };
+ const ready = () => page.locator('[data-studio-ready=true]').waitFor({timeout:45000});
+ const shot = name => page.screenshot({path:path.join(out,name+'.png'),fullPage:true,animations:'disabled'});
+ const navigate = async name => {
+  if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();
+  await page.getByRole('button',{name,exact:true}).click();
+ };
 
- const priceChart=page.getByRole('img',{name:'指数收盘走势',exact:true});await priceChart.locator('.recharts-wrapper').waitFor();await priceChart.locator('.recharts-wrapper').evaluate(el=>el.scrollIntoView({block:'center'}));const box=await priceChart.boundingBox();await page.mouse.move(box.x+box.width*.6,box.y+box.height*.45);await page.waitForFunction(()=>document.querySelectorAll('.shared-date-marker').length===2);check(await page.locator('.research-linked-readout').innerText().then(t=>t.includes('收盘')&&t.includes('水下回撤')),'hover synchronizes both markers and same-date values');await shot('linked-history-hover');
- check(await page.getByRole('img',{name:'日收盘与51、120、250、850日均线',exact:true}).locator('.recharts-line').count()===5,'daily chart renders close and all four full-history moving averages');
- await page.getByRole('checkbox',{name:'按固定成分、权重与除数的假设试算',exact:true}).check();await page.waitForFunction(()=>document.querySelector('.research-scenario-result')?.textContent.includes('120.00'));check(true,'server-side reset scenario reproduces current point');await page.getByRole('img',{name:'盈利估值条件区间示意图',exact:true}).waitFor();check(await page.locator('.research-scenario-panel .recharts-reference-area').count()===1,'scenario displays a historical valuation reference band');await page.getByLabel('分母变化滑块',{exact:true}).fill('25');await page.waitForFunction(()=>document.querySelector('.research-scenario-result')?.textContent.includes('150.00'));check(true,'slider updates the backend-derived point and selected chart marker');await page.getByRole('button',{name:'重置为当前点位',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.research-scenario-result')?.textContent.includes('120.00'));await shot('scenario-range');
- const scenarioRoute='**/api/research/indices/*/scenarios',held=[];let firstScenario,secondScenario;const firstArrived=new Promise(r=>firstScenario=r),secondArrived=new Promise(r=>secondScenario=r);
- await page.route(scenarioRoute,async route=>{let release;const gate=new Promise(r=>release=r),response=await route.fetch();held.push({release,payload:route.request().postDataJSON()});if(held.length===1)firstScenario();if(held.length===2)secondScenario();await gate;await route.fulfill({response});});
- await page.evaluate(()=>{window.__scenarioChart=document.querySelector('[aria-label="盈利估值条件区间示意图"]');window.__scenarioGone=0;window.__scenarioObserver=new MutationObserver(()=>{if(window.__scenarioChart!==document.querySelector('[aria-label="盈利估值条件区间示意图"]'))window.__scenarioGone++;});window.__scenarioObserver.observe(document.querySelector('.research-scenario-panel'),{childList:true,subtree:true});});
- try{const slider=page.getByLabel('分母变化滑块',{exact:true});await slider.fill('20');await firstArrived;await page.getByText('正在计算，图中保留上次结果',{exact:true}).waitFor();const sb=await slider.boundingBox();await page.mouse.move(sb.x+sb.width*.7,sb.y+sb.height/2);await page.mouse.down();await page.mouse.move(sb.x+sb.width*.4,sb.y+sb.height/2,{steps:10});await page.mouse.up();await secondArrived;check(await page.getByRole('img',{name:'盈利估值条件区间示意图',exact:true}).isVisible()&&await page.evaluate(()=>window.__scenarioGone===0),'native slider drag never removes the scenario chart during slow requests');const last=held[held.length-1],expected=(120*(1+Number(last.payload.change_ratio))).toFixed(2);last.release();await page.waitForFunction(v=>document.querySelector('.research-scenario-result')?.textContent.includes(v),expected);held[0].release();await page.waitForTimeout(100);check((await page.locator('.research-scenario-result').innerText()).includes(expected)&&await page.evaluate(()=>window.__scenarioGone===0),'late older scenario response cannot replace the latest result or remount its chart');await shot('scenario-stable-after-drag');}finally{held.forEach(r=>r.release());await page.unroute(scenarioRoute);await page.evaluate(()=>window.__scenarioObserver.disconnect());}
+ try {
+  const health = await api('/health');
+  assert.equal(health.environment,'test');
+  assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
+  csrf = (await api('/bootstrap')).csrf_token;
+  await page.goto(base);
+  await navigate('指数资料库');
+  await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
+  check((await api('/research/catalog')).subscriptions.length===0,'catalog does not subscribe automatically');
+  check(await page.getByRole('button',{name:'本机Token与预算',exact:true}).count()===0,'credential controls removed from index page');
 
- const metricRoute='**/api/research/indices/*?*';await page.route(metricRoute,async route=>{const response=await route.fetch();const value=await response.json();if(value.valuation?.pe)value.valuation.pe.current='0';await route.fulfill({response,json:value});});await page.getByRole('button',{name:'5年',exact:true}).click();await page.getByText('所选估值缺少正数倍数，请切换指标或补齐有效估值。',{exact:true}).waitFor();await page.getByLabel('估值指标',{exact:true}).selectOption('pb');check(await page.getByLabel('目标倍数',{exact:true}).isVisible(),'invalid PE still allows selecting a valid PB');await page.getByLabel('估值指标',{exact:true}).selectOption('pe');check(await page.getByLabel('估值指标',{exact:true}).isVisible(),'invalid metric never traps the selector');await page.unroute(metricRoute);await page.getByRole('button',{name:'10年',exact:true}).click();await page.getByLabel('目标倍数',{exact:true}).waitFor();
+  await navigate('全局设置');
+  await page.getByLabel('理杏仁Token',{exact:true}).fill('synthetic-local-browser-credential');
+  await page.getByRole('button',{name:'保存到本机文件',exact:true}).click();
+  await page.getByText('Token已保存到本机文件；尚未发起采集。',{exact:true}).waitFor();
+  check(await page.getByLabel('理杏仁Token',{exact:true}).inputValue()==='','global token entry clears after save');
+  check(await page.getByLabel('每端点本机累计上限',{exact:true}).count()===0,'global UI has no budget or enable controls');
+  const access = await api('/settings/lixinger');
+  check(Object.keys(access.counts).length===0&&!access.automatic,'saving token does not collect or enable automation');
+  // Larger synthetic-only test budget; no real credential or supplier is used.
+  await api('/settings/lixinger',{expected_revision:access.revision,enabled:false,limit:200,automatic:false},'PUT');
 
- await page.getByRole('button',{name:'全收益指数 399606',exact:true}).click();await page.getByText('仅同日价格指数与整体法估值可试算；全收益未来情景需额外分红再投资假设，当前暂不开放。',{exact:true}).waitFor();
- await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('columnheader',{name:'PE TTM · 倍',exact:true}).waitFor();check((await page.locator('.research-companies').innerText()).includes('-10.00'),'negative company PE is retained');check(await page.getByRole('columnheader',{name:'营业收入 · 亿元',exact:true}).count()===1&&await page.getByRole('columnheader',{name:'经营现金流净额 · 亿元',exact:true}).count()===1,'company revenue profit and operating cash flow columns exist');check((await page.locator('.research-companies tbody tr').first().innerText()).includes('2,025.00'),'company figures use the selected financial period');check(await page.getByLabel('成分排序',{exact:true}).count()===0&&await page.locator('.research-companies tr.top-company').count()===10&&await page.locator('.research-companies tr[data-weight-rank="11"]').evaluate(e=>!e.classList.contains('top-company')),'company table fixes weight order and highlights exactly the top10');check(await page.locator('.research-financial-trend').count()===3&&await page.locator('.research-financial-trend .recharts-bar').count()===3&&await page.locator('.research-financial-trend .recharts-line').count()===3,'all three annual finance panels show amount and aggregate growth');check(await page.locator('.research-financial-trend').evaluateAll(ps=>ps.every(p=>{const amount=p.querySelector('.recharts-label-list text'),year=Array.from(p.querySelectorAll('text')).find(e=>e.textContent.startsWith('2016'));return amount&&year&&Math.abs(Number(amount.getAttribute('x'))-Number(year.getAttribute('x')))<1;})),'annual amount points and growth years share identical horizontal positions');await shot('company-financials-and-trends');await page.getByRole('button',{name:'历史当期成分',exact:true}).click();await page.getByText('年度覆盖与名单状态',{exact:true}).waitFor();await page.getByText('年度覆盖与名单状态',{exact:true}).click();check((await page.locator('#research-content').innerText()).includes('缺失'),'unavailable historical membership years remain gaps');
- await page.getByRole('tab',{name:'数据来源',exact:true}).click();await page.getByText('方法版本',{exact:true}).waitFor();check(await page.locator('.research-source').count()===8,'all data modules preserve versioned sources');await shot('index-sources');
- await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();await page.locator('[data-index-code="399006"]').waitFor();check(await page.locator('.index-library-table th').filter({hasText:'3年 / 5年 / 10年'}).count()===2&&await page.getByRole('button',{name:'查看 →',exact:true}).count()===0,'percentile columns use slash format and names are the only detail entry');check(await page.locator('.research-flat-list.panel').count()===0&&await page.getByRole('columnheader',{name:'本年度涨跌幅',exact:true}).count()===1,'index list uses the borderless holdings style and YTD column');
- await add('000819');await page.getByRole('button',{name:'返回指数资料库',exact:true}).waitFor();await page.waitForTimeout(3000);await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();await page.locator('[data-index-code="000819"]').waitFor();const row=page.locator('[data-index-code="000819"]');check(await row.locator('.drawdown-window time').nth(1).innerText()==='-'&&await row.locator('.drawdown-window time').nth(2).innerText()==='-','short history renders dashes for both longer windows');await shot('index-library-desktop');
- check(await page.locator('.research-page').getByRole('button',{name:'全局设置',exact:true}).count()===0,'settings entry appears only in the sidebar');await row.getByRole('button',{name:'有色金属',exact:true}).click();await page.getByRole('button',{name:'全局设置',exact:true}).click();await page.getByLabel('成分财务自动更新',{exact:true}).waitFor();check(await page.locator('.data-update-table tbody tr').count()===6,'six global update scopes share one settings table');
- await page.getByLabel('成分财务自动更新',{exact:true}).uncheck();await page.getByRole('button',{name:'保存更新策略',exact:true}).click();await page.getByText('更新策略已保存',{exact:true}).waitFor();check(!(await api('/settings/data-updates')).policies.find(p=>p.scope==='financials').enabled,'settings persist with their own revision');
- const failed=page.locator('.job-record').filter({hasText:'合成全收益源暂时不可用'}).first();await failed.locator('summary').click();await failed.getByRole('button',{name:'重试此项',exact:true}).click();await page.waitForTimeout(800);const job=(await api('/data-updates/jobs')).jobs[0];check(job.resources.length===1&&job.resources[0].module==='total_return','retry submits only the failed return-series resource');await shot('data-updates');
- for(const width of [390,320]){await page.setViewportSize({width,height:900});await nav('指数资料库','研究工具');await page.locator('.index-library-table').waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'library fits mobile '+width);await page.locator('[data-index-code="399006"]').getByRole('button',{name:'创业板指',exact:true}).click();await page.locator('.research-summary').waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'basic summary fits mobile '+width);await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.locator('.research-financial-trend').first().waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'company table and annual charts fit mobile '+width);await page.evaluate(()=>window.scrollTo(0,0));await shot('financials-'+width);await page.getByRole('tab',{name:'估值与回撤',exact:true}).click();await page.getByRole('checkbox',{name:'按固定成分、权重与除数的假设试算',exact:true}).check();await page.getByRole('img',{name:'盈利估值条件区间示意图',exact:true}).waitFor();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'linked daily and scenario charts fit mobile '+width);await page.evaluate(()=>window.scrollTo(0,0));await shot('valuation-'+width);await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();await page.getByRole('button',{name:'打开导航',exact:true}).click();check(await page.locator('.main-content').evaluate(e=>e.inert),'mobile navigation makes background inert');await page.waitForFunction(()=>Math.abs(document.querySelector('.sidebar').getBoundingClientRect().left)<.1);check(Math.round((await page.locator('.sidebar').boundingBox()).width)===252,'mobile drawer is fully visible at '+width);await shot('navigation-'+width);await page.keyboard.press('Escape');check(await page.getByRole('button',{name:'打开导航',exact:true}).evaluate(e=>document.activeElement===e),'Escape returns navigation focus '+width);}
- await page.setViewportSize({width:1500,height:1050});await page.getByRole('button',{name:'收起导航',exact:true}).click();check(Math.round((await page.locator('.sidebar').boundingBox()).width)===76,'desktop navigation collapses to 76px rail');await page.getByRole('button',{name:'展开导航',exact:true}).click();check(Math.round((await page.locator('.sidebar').boundingBox()).width)===224,'desktop navigation expands to 224px');
- // Continuous revision changes used to clear the overview chart on every bootstrap reload.
- const b=await api('/bootstrap');const asset=await api('/family/commands',{operation:'item',payload:{category:'cash',currency:'CNY',name:'合成刷新核验',effective_on:'2026-01-01',household_amount:'100'},expected_revision:b.revision});await nav('总览','资产分析');await page.locator('.overview-balance-bars').waitFor();
- const navigationReads=[];const recordNavigation=r=>{const path=new URL(r.url()).pathname;if(path.startsWith('/api/family/'))navigationReads.push(path);};
- page.on('request',recordNavigation);await page.goto(new URL('/?family=overview',base).href);await page.locator('.overview-balance-bars').waitFor();page.off('request',recordNavigation);
- check(navigationReads.includes('/api/family/bounds')&&navigationReads.includes('/api/family/summary')&&!navigationReads.includes('/api/family/overview')&&!navigationReads.includes('/api/family/catalog'),'asset overview uses lightweight navigation without redundant ledger requests');
- await page.evaluate(()=>{window.__overviewFlashes=0;window.__observer=new MutationObserver(records=>{for(const r of records)for(const n of r.addedNodes)if(n.nodeType===1&&n.textContent.includes('读取期间统计'))window.__overviewFlashes++;});window.__observer.observe(document.querySelector('.main-content'),{childList:true,subtree:true});});
- for(let n=1;n<=3;n++){const r=await api('/family/revision');await api('/family/commands',{operation:'valuation',payload:{item_id:asset.result.id,effective_on:'2026-01-0'+(n+1),household_amount:String(100+n)},expected_revision:r.revision});await page.waitForTimeout(2400);await page.waitForFunction(value=>Number(document.querySelector('[data-summary-metric=total_assets] .balance-value')?.textContent.replace(/,/g,''))===Number(value),String(100+n));check(await page.locator('.overview-balance-bars').count()===1,'chart stays mounted and updates value during revision '+n);}
- check(await page.evaluate(()=>window.__overviewFlashes)===0,'same-query background revisions no longer flash the overview loading state');await page.evaluate(()=>window.__observer.disconnect());await shot('overview-refresh-stable');
- // Newly supported families keep exact official pairing and explicit module gaps.
- await nav('指数资料库','研究工具');await add('000688');await page.getByRole('button',{name:'全收益指数 000688CNY01',exact:true}).waitFor();check(true,'STAR 50 UI exposes the exact official total-return code');
- const idleDeadline=Date.now()+20000;
- while((await api('/data-updates/jobs')).jobs.some(j=>['pending','running'].includes(j.state))){assert.ok(Date.now()<idleDeadline,'index update job finishes before the next identity preview');await page.waitForTimeout(100);}
- await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();await add('H11136');await page.getByRole('button',{name:'全收益指数 H01136',exact:true}).waitFor();
- await page.getByRole('heading',{name:'数据覆盖情况',exact:true}).waitFor();for(const label of ['价格指数','全收益指数','成分名单与权重'])await page.getByRole('row').filter({has:page.getByRole('cell',{name:label,exact:true})}).getByRole('cell',{name:'可查看',exact:true}).waitFor({timeout:20000});check(await page.getByText('暂不支持',{exact:true}).count()===5,'overseas index shows five unsupported modules explicitly');await shot('overseas-index-module-coverage');
- await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('cell',{name:/合成境外公司甲/}).waitFor({timeout:20000});
- check((await page.locator('.research-page').innerText()).includes('00999.HK')&&(await page.locator('.research-page').innerText()).includes('SYN.O'),'overseas member table keeps HK and US identities');await shot('overseas-index-members');
- for(const [code,tr,name] of [['930955','H20955','红利低波100'],['399998','H20596','中证煤炭'],['000991','H00991','全指医药']]){
-  const deadline=Date.now()+20000;
-  while((await api('/data-updates/jobs')).jobs.some(j=>['pending','running'].includes(j.state))){assert.ok(Date.now()<deadline,'previous update finishes before adding '+code);await page.waitForTimeout(100);}
-  await page.getByRole('button',{name:'返回指数资料库',exact:true}).click();await add(code);
-  await page.getByRole('button',{name:'全收益指数 '+tr,exact:true}).waitFor();await page.getByRole('heading',{name:name+' '+code,exact:true}).waitFor();
-  for(const label of ['价格指数','全收益指数','成分名单与权重'])await page.getByRole('row').filter({has:page.getByRole('cell',{name:label,exact:true})}).getByRole('cell',{name:'可查看',exact:true}).waitFor({timeout:20000});
-  check((await page.locator('.research-detail-header').innerText()).includes('中证指数'),'new CSI family uses CSI identity '+code);
-  if(code==='930955'){check(await page.getByText('暂不支持',{exact:true}).count()===1,'low-volatility dividend index exposes the valuation source gap');await shot('dividend-low-volatility-coverage');}
-  await page.getByRole('button',{name:'全收益指数 '+tr,exact:true}).click();await page.waitForFunction(()=>document.querySelector('.research-metrics .drawdown-window time')?.textContent==='2024-07-01');
-  check(await page.locator('.research-basis button[aria-pressed=true]').innerText()==='全收益指数 '+tr,'new family can load its exact total-return series '+code);
-  if(code==='000991'){await page.getByRole('tab',{name:'成分与财务',exact:true}).click();await page.getByRole('cell',{name:/合成北交所公司/}).waitFor();check((await page.locator('.research-companies').innerText()).includes('920201 · BJ'),'healthcare preserves Beijing member identity');await shot('healthcare-beijing-member');}
+  await navigate('指数资料库');
+  await page.getByRole('button',{name:'添加采集',exact:true}).first().click();
+  const dialog = page.getByRole('dialog',{name:'添加指数采集'});
+  await dialog.getByLabel('采集指数代码',{exact:true}).fill('000905');
+  await dialog.getByRole('button',{name:'全历史',exact:true}).click();
+  check(await dialog.getByLabel('采集起始日',{exact:true}).count()===0,'full history removes the custom start field');
+  check(await dialog.locator('.collection-modules small').count()===(await api('/research/catalog')).modules.length-1,'each offered module names its source');
+  for(const name of ['十年历史成分','指数季度/TTM财务','融资与北向持仓','公司估值','公司财务','历史财务备用汇总']){
+   await dialog.getByRole('checkbox',{name,exact:true}).check();
+  }
+  await dialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).waitFor();
+  check(Object.keys((await api('/settings/lixinger')).counts).length===0,'preview stays offline');
+  await shot('studio-collection-preview');
+  await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
+  await dialog.waitFor({state:'hidden'});
+  await page.getByRole('tab',{name:'数据来源',exact:true}).click();
+  await page.getByRole('button',{name:'更新当前指数已订阅数据',exact:true}).click();
+  await page.getByText('更新任务已受理，完成状态及实际数据日期见下方。',{exact:true}).waitFor();
+  let job;
+  for(let attempt=0;attempt<180;attempt++){
+   job=(await api('/data-updates/jobs')).jobs[0];
+   if(job&&['complete','partial','error','interrupted'].includes(job.state))break;
+   await page.waitForTimeout(500);
+  }
+  if(job.state!=='complete')console.error(JSON.stringify({state:job.state,items:job.items}));
+  check(job.state==='complete','explicit refresh works with configured token and automation disabled');
+  const detail=await api('/research/indices/csi%3A000905?method=mcw&window=3');
+  check(detail.index_financials.length>0&&detail.historical_memberships.length===40,'source financials and legacy historical records preserved');
+  const counts=(await api('/settings/lixinger')).counts;
+
+  await page.getByRole('tab',{name:'观察台',exact:true}).click();
+  await ready();
+  check(await page.getByRole('heading',{name:'点位走势',exact:true}).count()===1&&await page.getByRole('heading',{name:'估值走势',exact:true}).count()===1,'price and valuation use separate cards');
+  check(await page.locator('.studio-valuation-panel').evaluate(node=>Boolean(node.compareDocumentPosition(document.querySelector('.studio-price-panel'))&Node.DOCUMENT_POSITION_FOLLOWING)),'valuation card appears before price card');
+  const currentRanks=page.getByLabel('当前估值历史分位',{exact:true});
+  const valuation=await api('/research/indices/csi%3A000905/studio?method=mcw&window=3&metric=pe');
+  for(const years of [3,5,10]){
+   const row=currentRanks.locator(':scope > div').filter({has:page.getByText(years+'年分位',{exact:true})});
+   const expected=(Number(valuation.ranks[years].rank)*100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+   check(await row.isVisible()&&(await row.locator('strong').innerText()).startsWith(expected),years+' year current percentile is visible without expanding details');
+  }
+
+  const valuationPanel=page.locator('.studio-valuation-panel');
+  const valuationChart=page.locator('.studio-valuation-chart');
+  const chartNode=await valuationChart.locator('svg.recharts-surface[role=application]').elementHandle();
+  const previousHeight=(await valuationPanel.boundingBox()).height;
+  let releaseWindow;
+  const delayedWindow=new Promise(resolve=>{releaseWindow=resolve;});
+  const studioRoute='**/api/research/indices/*/studio?*';
+  await page.route(studioRoute,async route=>{
+   if(new URL(route.request().url()).searchParams.get('window')==='5')await delayedWindow;
+   await route.continue();
+  });
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'5年',exact:true}).click();
+  await page.getByText('正在读取5年，暂显示3年曲线…',{exact:true}).waitFor();
+  check(await chartNode.evaluate(node=>node.isConnected)&&Math.abs((await valuationPanel.boundingBox()).height-previousHeight)<1,'delayed window update keeps the same chart mounted and card height stable');
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'10年',exact:true}).click();
+  await ready();
+  const lateResponse=page.waitForResponse(response=>response.url().includes('/studio?')&&new URL(response.url()).searchParams.get('window')==='5');
+  releaseWindow();
+  await lateResponse;
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  check(await valuationChart.getAttribute('data-valuation-window')==='10','late response cannot replace the latest selected window');
+  await page.unroute(studioRoute);
+
+  await page.route(studioRoute,route=>route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'合成读取失败'})}));
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'5年',exact:true}).click();
+  await page.getByText('未完成切换，仍显示10年曲线。',{exact:true}).waitFor();
+  check(await valuationChart.getAttribute('data-valuation-window')==='10'&&await chartNode.evaluate(node=>node.isConnected),'failed window request keeps the previous curve and identifies its window');
+  await page.unroute(studioRoute);
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'3年',exact:true}).click();
+  await ready();
+  check(await page.getByRole('img',{name:'日收盘与51、120、250、850日均线',exact:true}).locator('.recharts-line').count()===5,'close and all four MAs render');
+  const summary=await page.locator('.studio-overview-summary').innerText();
+  check(['最近交易日','本周','本月','本年','前十大股票权重'].every(s=>summary.includes(s)),'summary includes all calendar changes and top ten weight');
+  check(await page.locator('.studio-change-grid .positive').count()>0,'positive market changes use rise styling');
+  check(await page.getByText('同区间收益与成分重叠',{exact:true}).count()===0&&await page.getByRole('button',{name:'历史回测',exact:true}).count()===0,'return backtest and cross-index comparison removed');
+  const methods=page.getByLabel('估值方法',{exact:true});
+  const initialOrder=await methods.getByRole('button').allTextContents();
+  const selectedBeforeHelp=await methods.locator('button[aria-pressed=true]').innerText();
+  const chartBeforeHelp=await valuationChart.boundingBox();
+  let helpRequests=0;
+  const countHelpRequests=request=>{
+   const pathname=new URL(request.url()).pathname;
+   // The page already polls its local revision; help must not request analysis or collection.
+   if(pathname.startsWith('/api/research/')&&pathname!=='/api/research/revision')helpRequests++;
+  };
+  page.on('request',countHelpRequests);
+  for(const [label,purpose] of [['总市值加权','看经济规模较大的资产如何定价。'],['等权','看等额组合与规模加权组合有什么差异。'],['中位数','看估值是否扩散到典型公司。']]){
+   await methods.getByRole('button',{name:label+'计算说明',exact:true}).hover();
+   const tooltip=methods.getByRole('tooltip');
+   await tooltip.waitFor();
+   check((await tooltip.innerText()).includes(purpose),label+' explains its valuation perspective on hover');
+   await tooltip.hover();
+   assert.ok(await tooltip.isVisible(),'pointer can move into the explanation');
+   await page.getByRole('heading',{name:'估值走势',exact:true}).hover();
+   await tooltip.waitFor({state:'hidden'});
+  }
+  const equalWeightHelp=methods.getByRole('button',{name:'等权计算说明',exact:true});
+  await equalWeightHelp.focus();
+  await methods.getByRole('tooltip').waitFor();
+  await equalWeightHelp.press('Escape');
+  check(await methods.getByRole('tooltip').count()===0,'keyboard focus opens method help and Escape dismisses it');
+  await equalWeightHelp.click();
+  await methods.getByRole('tooltip').waitFor();
+  assert.deepEqual(await valuationChart.boundingBox(),chartBeforeHelp);
+  check(await methods.locator('button[aria-pressed=true]').innerText()===selectedBeforeHelp&&helpRequests===0,'method explanations preserve selection and chart layout without analysis or collection requests');
+  page.off('request',countHelpRequests);
+  await equalWeightHelp.press('Escape');
+  await methods.getByRole('button',{name:'中位数',exact:true}).click();
+  await methods.locator('button[aria-pressed=true]').filter({hasText:'中位数'}).waitFor();
+  await ready();
+  assert.deepEqual(await methods.getByRole('button').allTextContents(),initialOrder);
+  check(true,'selected valuation method stays in its original position');
+  let releaseMetric;
+  const delayedMetric=new Promise(resolve=>{releaseMetric=resolve;});
+  await page.route(studioRoute,async route=>{await delayedMetric;await route.continue();});
+  await page.getByLabel('观察指标',{exact:true}).getByRole('button',{name:'PB',exact:true}).click();
+  await page.getByText('正在读取估值分析…',{exact:true}).waitFor();
+  check(await valuationChart.locator('svg.recharts-surface[role=application]').count()===0&&(await valuationChart.boundingBox()).height>=350,'metric change never relabels the previous metric curve and preserves chart space');
+  releaseMetric();
+  await ready();
+  await page.unroute(studioRoute);
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'全历史',exact:true}).click();
+  await ready();
+  check(await page.getByLabel('点位历史窗口',{exact:true}).locator('button[aria-pressed=true]').innerText()==='3年','valuation history window does not change price window');
+  const alternate=await api('/research/indices/csi%3A000905?method=median&window=3');
+  assert.deepEqual(alternate.daily_series,detail.daily_series);
+  check(true,'valuation method cannot change price MA sequence');
+  await methods.getByRole('button',{name:'总市值加权',exact:true}).click();
+  await methods.locator('button[aria-pressed=true]').filter({hasText:'总市值加权'}).waitFor();
+  await ready();
+  await page.getByRole('checkbox',{name:'接受固定成分、股数、权重、除数及各成分同比例变化的试算假设',exact:true}).check();
+  await page.getByRole('img',{name:'盈利估值条件区间示意图',exact:true}).waitFor();
+  check(true,'conditional valuation remains available');
+  await shot('studio-overview');
+  await page.getByRole('button',{name:'ⓘ 基本资料',exact:true}).hover();
+  await page.getByRole('dialog',{name:'指数基本资料',exact:true}).waitFor();
+  check(await page.getByRole('tab',{name:'基本资料',exact:true}).count()===0,'basic information lives beside selector without a separate tab');
+  await page.mouse.move(1400,900);
+
+  await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
+  await page.getByRole('img',{name:'指数财务金额趋势',exact:true}).waitFor();
+  check(await page.locator('.research-weight').evaluateAll(rows=>rows.length>0&&rows.every(row=>row.clientWidth>300&&row.querySelector('.industry-name').scrollWidth<=row.querySelector('.industry-name').clientWidth+1)),'industry rows leave readable space for full names and weights');
+  check(await page.getByRole('button',{name:'历史调样',exact:true}).count()===0&&await page.getByRole('button',{name:'篮子对照',exact:true}).count()===0,'financial pages are unified');
+  for(const [label,suffix] of [['年度历史','12-31'],['一季度历史','03-31'],['半年历史','06-30'],['三季度历史','09-30']]){
+   await page.getByRole('button',{name:label,exact:true}).click();
+   const table=page.locator('.studio-finance-summary').locator('..').locator('details');
+   await table.locator('summary').click();
+   const dates=await table.locator('tbody tr td:first-child').allTextContents();
+   check(dates.length>0&&dates.every(d=>d.endsWith(suffix)),label+' only compares matching report periods');
+   await table.locator('summary').click();
+  }
+  await shot('studio-finance');
+  await page.getByRole('button',{name:'成分公司',exact:true}).click();
+  await page.locator('.research-companies').waitFor();
+  check(await page.locator('.research-companies tbody tr').count()===2,'company-level detail remains available');
+  await page.getByRole('tab',{name:'资金与持仓',exact:true}).click();
+  await page.getByText(/最近完整披露期/).first().waitFor();
+  check(await page.locator('svg path[fill="#bf4b50"]').count()>0,'positive money flow bars are red');
+  await shot('studio-funds');
+  const fundFixture=await api('/research/indices/csi%3A000905/studio?method=mcw&window=3');
+  fundFixture.funds.etf=[
+   {date:'2024-01-31',stock:null,flow:null,change:null,complete:false},
+   {date:'2024-02-29',stock:'0',flow:'0',change:null,complete:true},
+   {date:'2024-03-29',stock:'100000000',flow:null,change:null,complete:false},
+   {date:'2024-04-30',stock:'100000000',flow:'0',change:'0',complete:true},
+   {date:'2024-05-31',stock:null,flow:null,change:null,complete:false},
+   {date:'2024-06-28',stock:'200000000',flow:'-10000',change:null,complete:true},
+   {date:'2024-07-31',stock:null,flow:null,change:null,complete:false},
+  ];
+  await page.route(studioRoute,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(fundFixture)}));
+  await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
+  await page.getByRole('tab',{name:'资金与持仓',exact:true}).click();
+  await page.locator('.fund-zero-prefix').waitFor();
+  const stockChart=page.getByRole('img',{name:'A股场内基金资产规模',exact:true});
+  const flowChart=page.getByRole('img',{name:'场内基金认购净流入',exact:true});
+  check(await stockChart.getAttribute('data-start')==='2024-03-29'&&await flowChart.getAttribute('data-start')==='2024-04-30','fund charts trim the zero prefix and their own missing boundaries');
+  check(await flowChart.getAttribute('data-end')==='2024-06-28'&&(await flowChart.innerText()).includes('2024-05-31'),'fund charts preserve later zero observations and interior missing periods');
+  await page.locator('.fund-observations summary').click();
+  const originalRows=page.locator('.fund-observations tbody tr');
+  check(await originalRows.count()===5&&(await originalRows.filter({hasText:'2024-02-29'}).innerText()).includes('0.00'),'original zero records remain in the detail table');
+  await page.unroute(studioRoute);
+  assert.deepEqual((await api('/settings/lixinger')).counts,counts);
+  check(true,'all reading and display switches consume no supplier quota');
+
+  await page.getByRole('tab',{name:'数据来源',exact:true}).click();
+  await page.getByRole('button',{name:'联网核验官方收盘',exact:true}).click();
+  await page.getByText('收盘仅核对同日价格身份，容差0.01点。官方PE与理杏仁mcw口径尚未证实可比，仅并列，不据此开启条件试算；PB参考缺项。',{exact:true}).waitFor();
+  assert.deepEqual((await api('/settings/lixinger')).counts,counts);
+  check(true,'official reference remains separate from paid quota');
+  await page.getByLabel('历史来源版本',{exact:true}).selectOption({index:1});
+  await page.getByText('查看冻结数据（每组最多显示最后100条）',{exact:true}).waitFor();
+  check(true,'immutable older snapshot remains readable');
+  await page.getByRole('button',{name:'管理采集',exact:true}).click();
+  const manage=page.getByRole('dialog',{name:'管理指数采集'});
+  await manage.getByRole('checkbox',{name:'启用此指数；关闭即暂停并保留历史',exact:true}).uncheck();
+  await manage.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  await manage.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
+  await manage.waitFor({state:'hidden'});
+  check(!(await api('/research/catalog')).subscriptions[0].subscription.enabled,'pause retains history');
+  await page.setViewportSize({width:390,height:844});
+  await page.getByRole('tab',{name:'观察台',exact:true}).click();
+  await ready();
+  await shot('studio-mobile');
+  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile overview has no horizontal overflow');
+  for(const label of ['总市值加权','等权','中位数']){
+   const helpButton=page.getByRole('button',{name:label+'计算说明',exact:true});
+   await helpButton.click();
+   const tooltip=page.getByRole('tooltip');
+   await tooltip.waitFor();
+   const bounds=await tooltip.boundingBox();
+   assert.ok(bounds.x>=0&&bounds.x+bounds.width<=390,'method explanation fits the mobile viewport');
+   await helpButton.press('Escape');
+  }
+  check(true,'all method explanations open by click and fit a narrow screen');
+  await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
+  await shot('studio-finance-mobile');
+  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile financial layout fits viewport');
+  await navigate('全局设置');
+  await shot('studio-token-mobile');
+  check(await page.getByLabel('理杏仁Token',{exact:true}).inputValue()==='','token is never refilled');
+  check(errors.length===0,'no browser exceptions');
+  fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({checks,errors,synthetic:true},null,2));
+ } catch(error) {
+  await shot('failure');
+  console.error(errors);
+  console.error((await page.locator('body').innerText()).slice(-3500));
+  throw error;
+ } finally {
+  await browser.close();
  }
- await page.getByRole('tab',{name:'数据来源',exact:true}).click();
- const update=page.getByRole('button',{name:'更新当前指数全部数据',exact:true});await update.waitFor();
- while(await update.isDisabled())await page.waitForTimeout(100);
- const submitted=page.waitForRequest(r=>r.url().endsWith('/api/data-updates/run')&&r.method()==='POST');
- await update.click();const payload=(await submitted).postDataJSON();
- assert.deepEqual(payload.targets,['csi:000991']);assert.deepEqual(payload.scopes,['index_prices','memberships','valuations','financials']);
- check(!payload.resources,'current-index refresh requests all its modules');
- await page.getByText('更新任务已受理，完成状态及实际数据日期见下方。',{exact:true}).waitFor();await shot('index-manual-update');
- check(errors.length===0,'no browser exceptions');fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({checks,errors,synthetic:true},null,2));
- }catch(e){console.error('PAGE ERRORS',errors);console.error((await page.locator('body').innerText()).slice(-4000));await shot('failure');throw e;}finally{await browser.close();}
-})().catch(e=>{console.error(e);process.exit(1);});
+})().catch(error=>{console.error(error);process.exit(1);});

@@ -96,7 +96,7 @@ class Client:
     def preview(self, payload, path='/api/events/preview'):
         """Return the full preview, including split_changes after historical backfills."""
         if not isinstance(payload, dict): raise ValueError('Command must be a JSON object')
-        if path not in ('/api/events/preview', '/api/family/preview', '/api/research/indices/resolve', '/api/research/indices/valuation-preview') and not re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans/preview', path):
+        if path not in ('/api/events/preview', '/api/family/preview', '/api/research/indices/resolve', '/api/research/collection/preview') and not re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans/preview', path):
             raise ValueError('Use a documented preview endpoint')
         if (path == '/api/family/preview' or path.endswith('/purchase-plans/preview')) and (type(payload.get('expected_revision')) is not int or payload['expected_revision'] < 0):
             raise ValueError('Preview requires the original ledger revision')
@@ -115,16 +115,15 @@ class Client:
                  method in ('PUT', 'DELETE') and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes/[^/]+', path))
         assets = method == 'POST' and path == '/api/family/commands'
         revision_field='expected_revision'
-        research=method=='POST' and path=='/api/research/indices'
+        research=method=='PUT' and path=='/api/research/collection'
         settings=method=='PUT' and path=='/api/settings/data-updates'
         update=method=='POST' and path=='/api/data-updates/run'
         if research:revision_field='expected_research_revision'
-        if research and not isinstance(payload.get('valuation_token'),str):raise ValueError('Include the original valuation_token from the reviewed PE/PB validation or explicit opt-out')
         if settings:revision_field='expected_settings_revision'
         if not (core or notes or assets or research or settings or update):raise ValueError('Use a documented mutation')
         if not update and (type(payload.get(revision_field)) is not int or payload[revision_field]<0):
             raise ValueError('Include the original '+revision_field+' from the reviewed read/preview')
-        if (research or update) and not isinstance(payload.get('request_id'),str):raise ValueError('Include the original request_id')
+        if update and not isinstance(payload.get('request_id'),str):raise ValueError('Include the original request_id')
         self.connect()
         # Never retry a mutation or replace its expected_revision automatically.
         return self.request(path, payload, method)
@@ -141,14 +140,16 @@ class Client:
     def resolve_index(self,code):
         return self.preview({'code':code},'/api/research/indices/resolve')
 
-    def validate_index_valuation(self,code,valuation_suffix):
-        """Read-only PE/PB validation; None explicitly opts out of index valuation."""
-        return self.preview({'code':code,'valuation_suffix':valuation_suffix},'/api/research/indices/valuation-preview')
+    def collection_preview(self,code,modules,history_start=None):
+        return self.preview(dict(code=code,modules=modules,history_start=history_start),'/api/research/collection/preview')
 
-    def research_index(self,index_id,basis='price',window=3,method='overall'):
+    def research_studio(self,index_id,**options):
+        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/studio?'+urllib.parse.urlencode(options))
+
+    def research_index(self,index_id,basis='price',window=3,method='mcw'):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))
 
-    def research_part(self,index_id,part,*,basis='price',window=3,method='overall',analysis_id=None,page=1,page_size=20):
+    def research_part(self,index_id,part,*,basis='price',window=3,method='mcw',analysis_id=None,page=1,page_size=20):
         if part not in ('series','constituents','financials','sources'):raise ValueError('Unknown research part')
         params=dict(basis=basis,window=window,method=method,page=page,page_size=page_size)
         if analysis_id is not None:params['analysis_id']=analysis_id
@@ -178,8 +179,13 @@ class Client:
         """
         return self.request('/api/notifications')
 
+    def research_source_check(self,index_id,analysis_id):
+        """Explicitly authorized official request; consumes no Lixinger quota."""
+        self.connect()
+        return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/source-check',dict(analysis_id=analysis_id))
+
     def research_scenario(self,index_id,payload):
-        """Read-only calculation against the caller's original analysis version."""
+        """Read-only scenario; read scenario_metrics and obtain explicit uniform-scaling assumptions first."""
         if not isinstance(payload,dict):raise ValueError('Scenario must be a JSON object')
         self.connect()
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/scenarios',payload)

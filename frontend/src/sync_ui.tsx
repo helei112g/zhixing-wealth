@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react';
 import {api,Obj} from './api';
 import {Button,ErrorBox,Panel} from './components';
 
-const labels:Obj={quotes:'持仓行情',fx:'汇率',index_prices:'指数价格',memberships:'成分名单与权重',valuations:'指数及成分估值',financials:'成分财务',price:'价格指数',total_return:'全收益指数',historical_memberships:'历史有效成分',stock_valuations:'成分公司估值',historical_financials:'历史成分财务'};
+const labels:Obj={index_info:'指数基本信息',index_financials:'指数季度财务',market_activity:'资金与持仓',tracking_funds:'跟踪基金',quotes:'持仓行情',fx:'汇率',index_prices:'指数价格',memberships:'成分名单与权重',valuations:'指数及成分估值',financials:'成分财务',price:'价格指数',total_return:'全收益指数',historical_memberships:'历史有效成分',stock_valuations:'成分公司估值',historical_financials:'历史成分财务'};
 const states:Obj={complete:'完成',ok:'完成',manual:'需手工核对',partial:'部分失败',error:'失败',pending:'等待中',running:'更新中',interrupted:'已中断',unsupported:'暂不支持'};
 const activeJob=(j:Obj)=>['pending','running'].includes(j.state);
 const indexScopes=['index_prices','memberships','valuations','financials'];
@@ -46,5 +46,5 @@ export function IndexUpdate({indexId,onUpdated}:Obj){
  const notified=useRef('');
  useEffect(()=>{if(job&&!activeJob(job)){const key=job.id+':'+job.state+':'+job.finished_at;if(notified.current!==key){notified.current=key;onUpdated();}}},[job?.id,job?.state,job?.finished_at]);
  async function run(resource?:Obj){const result=await submission.submit(resource?{scopes:[resource.scope],targets:[indexId],resources:[resource]}:{scopes:indexScopes,targets:[indexId]});if(result){JobId(result.job_id);M('更新任务已受理，完成状态及实际数据日期见下方。');}}
- return <Panel title="更新当前指数" right={<Button primary disabled={submission.busy||!!active} onClick={()=>run()}>{submission.busy?'正在提交…':active?'正在更新…':'更新当前指数全部数据'}</Button>}><p className="muted small">重新拉取当前指数的价格、全收益、估值、当前与历史成分及财务资料。收盘数据取最近完整交易日，公告资料查询至今天；来源尚未发布或暂不支持的内容会明确列出。</p><ErrorBox error={submission.error||feed.error}/>{message&&<p className="muted small" role="status">{message}</p>}{job&&<JobRecord job={{...job,items:job.items.filter((i:Obj)=>i.target===indexId||i.resource?.target===indexId)}} busy={submission.busy} onRetry={run}/>}</Panel>;
+ return <Panel title="更新当前指数" right={<Button primary disabled={submission.busy||!!active} onClick={()=>run()}>{submission.busy?'正在提交…':active?'正在更新…':'更新当前指数已订阅数据'}</Button>}><p className="muted small">仅更新当前指数已启用的订阅模块，复用已成功的分片；暂停模块不会请求。收盘数据取最近完整交易日，公告资料查询至今天；来源尚未发布或暂不支持的内容会明确列出。</p><ErrorBox error={submission.error||feed.error}/>{message&&<p className="muted small" role="status">{message}</p>}{job&&<JobRecord job={{...job,items:job.items.filter((i:Obj)=>i.target===indexId||i.resource?.target===indexId)}} busy={submission.busy} onRetry={run}/>}</Panel>;
 }

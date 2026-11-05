@@ -32,12 +32,6 @@ def valuation_payload(profile,asof=ASOF):
     return dict(series=series,effective_date=ASOF,evidence=[])
 
 
-def valuation_probe_payload(profile,suffix):
-    code=profile['code']+'.'+suffix
-    good=code==profile.get('valuation_code')
-    return dict(code=code,status='available' if good else 'unavailable',metrics={m:(dict(status='available',count=120,start_date='2016-10-31',date=ASOF,current='10' if m=='pe' else '1') if good else dict(status='error',reason='合成来源未覆盖所选代码')) for m in ('pe','pb')})
-
-
 def member_payload(profile,asof=ASOF):
     return dict(rows=[dict(code='600201',name='合成科技',weight='60',market='SH',industry='信息技术',date='2026-09-30'),dict(code='000201',name='合成银行',weight='40',market='SZ',industry='银行',date='2026-09-30')],effective_date='2026-09-30',evidence=[],source='synthetic')
 
@@ -55,15 +49,11 @@ def finance_payload(members,asof=ASOF):
 
 
 def historical_memberships(profile,asof=ASOF):
+    """Legacy frozen-source fixture still used by the isolated product showcase."""
     return dict(baskets=[dict(period=str(y)+'-12-31',status='official' if y>=2020 else 'unavailable',members=[dict(m,weight=None) for m in member_payload(profile)['rows']] if y>=2020 else [],reason='合成历史缺口' if y<2020 else None) for y in range(2015,2026)],effective_date=ASOF,evidence=[])
 
 
-_attempts={}
-
-def browser_prices(profile,basis,asof=ASOF):
-    if profile['code']=='000819' and basis=='total_return' and not _attempts.get('short_return'):
-        _attempts['short_return']=True
-        raise TimeoutError('合成全收益源暂时不可用')
+def browser_prices(profile,basis,asof=ASOF,start_date=None):
     value=price_payload(profile,basis,asof)
     if profile['code']=='000819':value['rows']=value['rows'][-1000:]
     return value
@@ -86,13 +76,15 @@ def browser_finance(members,asof=ASOF):
             r[field+'_published_at']=str(int(r['period'][:4])+1)+'-04-30'
     return value
 
+def industry_payload(members,period):
+    return dict(rows=[dict(code=m['code'],date=period,industry='银行' if m['code']=='000201' else '信息技术') for m in members],evidence=[])
+
 def install_providers():
-    from backend.research import history
+    from tests.lixinger_fixtures import install
+    install()
     providers.prices=browser_prices
-    providers.valuations=valuation_payload
-    providers.probe_valuations=valuation_probe_payload
     providers.constituents=browser_members
     providers.stock_valuations=stock_payload
     providers.financials=browser_finance
+    providers.historical_industries=industry_payload
     providers.cutoff=lambda:ASOF
-    history.memberships=historical_memberships

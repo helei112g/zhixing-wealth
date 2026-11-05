@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'index-library-2'
+METHOD_VERSION = 'index-studio-6'
 WINDOWS = (3, 5, 10)
 
 
@@ -32,7 +32,9 @@ def full_window(rows, at, years, frequency='daily'):
         stop = end.replace(day=1); start = years_before(stop, years)
         months = {r['date'][:7]: r for r in rows if start <= day(r['date']) < stop}
         return list(months.values()) if len(months) == years * 12 else []
-    if not previous or len(previous) < 180 * years or day(previous[0]['date']) > start + timedelta(days=7): return []
+    if not previous or len(previous) < 180 * years: return []
+    earlier = [r['date'] for r in rows if day(r['date']) <= start]
+    if not earlier or (day(previous[0]['date']) - day(max(earlier))).days > 45: return []
     if (end-day(previous[-1]['date'])).days>45:return []
     if any((day(b['date']) - day(a['date'])).days > 45 for a, b in zip(previous, previous[1:])): return []
     for year in range(start.year + 1, end.year):
@@ -40,11 +42,12 @@ def full_window(rows, at, years, frequency='daily'):
     return previous
 
 
-def drawdown(rows, asof, years):
+def drawdown(rows, asof, years, allow_partial=False):
     rows = clean_prices(rows, asof)
     if not rows: return {'status': 'missing', 'high_date': None, 'high_close': None, 'drawdown_ratio': None}
-    at = rows[-1]['date']; start = years_before(at, years)
-    if not full_window(rows, at, years):
+    at = rows[-1]['date']; start = years_before(at, years) if years else day(rows[0]['date'])
+    partial = bool(years and not full_window(rows, at, years))
+    if partial and not (allow_partial and day(rows[0]['date']) > start and not any((day(b['date'])-day(a['date'])).days>45 for a,b in zip(rows,rows[1:]))):
         return {'status': 'insufficient_history', 'high_date': None, 'high_close': None, 'drawdown_ratio': None}
     sample = [r for r in rows if day(r['date']) >= start]
     peak = dec(sample[0]['close']); high_date = sample[0]['date']; low = Decimal(0); curve = []
@@ -53,21 +56,22 @@ def drawdown(rows, asof, years):
         if v >= peak: peak = v; high_date = row['date']
         ratio = v / peak - 1; low = min(low, ratio)
         curve.append({'date': row['date'], 'close': row['close'], 'drawdown_ratio': ds(ratio)})
-    return {'status': 'available', 'from': sample[0]['date'], 'to': at, 'high_date': high_date,
+    return {'status': 'available', 'partial':partial, 'from': sample[0]['date'], 'to': at, 'high_date': high_date,
             'high_close': ds(peak), 'drawdown_ratio': ds(dec(sample[-1]['close']) / peak - 1),
             'max_drawdown_ratio': ds(low), 'high_date_policy': 'latest_equal_high', 'curve': curve}
 
 
-def valuation(series, asof):
+def valuation(series, asof, allow_zero=False):
     rows = sorted([r for r in series.get('rows', []) if r.get('value') is not None and day(r['date']) <= day(asof)], key=lambda r: r['date'])
     if len({r['date'] for r in rows}) != len(rows): raise ValueError('估值观测重复')
     current = rows[-1] if rows else None
+    valid=lambda v: dec(v)>=0 if allow_zero else dec(v)>0
     windows = {}
     for years in WINDOWS:
-        history = full_window([r for r in rows if dec(r['value'])>0], current['date'], years, series.get('frequency', 'daily')) if current else []
-        if not history or dec(current['value']) <= 0:
+        history = full_window([r for r in rows if valid(r['value'])], current['date'], years, series.get('frequency', 'daily')) if current else []
+        if not history or not valid(current['value']):
             windows[str(years)] = {'status': 'insufficient_history', 'rank': None}; continue
-        v = dec(current['value']); vals = [dec(r['value']) for r in history if dec(r['value']) > 0]
+        v = dec(current['value']); vals = [dec(r['value']) for r in history if valid(r['value'])]
         rank = (sum(x < v for x in vals) + Decimal('.5') * sum(x == v for x in vals)) / len(vals) if vals else None
         windows[str(years)] = {'status': 'available' if rank is not None else 'insufficient_history',
                                'rank': ds(rank) if rank is not None else None, 'count': len(vals),
@@ -77,7 +81,7 @@ def valuation(series, asof):
 
 
 def financial_totals(rows, members, period):
-    weights = {m['code']: dec(m.get('weight', '0')) for m in members}
+    weights = {m['code']: dec(m.get('weight') or '0') for m in members}
     out = {}; previous = str(int(period[:4]) - 1) + period[4:]
     for metric in ('revenue', 'profit', 'operating_cf'):
         eligible = {m['code'] for m in members if metric != 'operating_cf' or
@@ -112,10 +116,11 @@ def quantiles(values):
 
 
 def price_changes(rows,asof):
-    """Calendar week/YTD anchors use the last close strictly before the boundary."""
-    if not rows:return {k:None for k in ('daily','weekly','ytd')}
+    """Calendar week/month/YTD anchors use the last close before the boundary."""
+    if not rows:return {k:None for k in ('daily','weekly','monthly','ytd')}
     latest=rows[-1];end=day(latest['date']);at=day(asof)
     monday=at-timedelta(days=at.weekday());year=at.replace(month=1,day=1)
+    month = at.replace(day=1)
     def change(base):
         if not base:return None
         return dict(ratio=ds(dec(latest['close'])/dec(base['close'])-1),from_date=base['date'],to_date=latest['date'])
@@ -124,18 +129,19 @@ def price_changes(rows,asof):
         before=[r for r in rows if day(r['date'])<boundary]
         return before[-1] if before and (boundary-day(before[-1]['date'])).days<=15 else None
     return dict(daily=change(previous),weekly=change(anchor(monday)) if end>=monday else None,
+                monthly=change(anchor(month)) if end>=month else None,
                 ytd=change(anchor(year)) if end>=year else None)
 
 
-def moving_averages(rows,window):
+def moving_averages(rows,window,missing_dates=()):
     """SMA over trading observations, computed before the display-window cut."""
     if not rows:return []
-    starts=years_before(rows[-1]['date'],window);sums={n:Decimal(0) for n in (51,120,250,850)};out=[]
+    starts=years_before(rows[-1]['date'],window) if window else day(rows[0]['date']);sums={n:Decimal(0) for n in (51,120,250,850)};out=[]
     for i,row in enumerate(rows):
         point=dict(row)
         for n in sums:
             sums[n]+=dec(row['close'])
             if i>=n:sums[n]-=dec(rows[i-n]['close'])
-            point['ma'+str(n)]=ds(sums[n]/n) if i+1>=n else None
+            point['ma'+str(n)]=ds(sums[n]/n) if i+1>=n and not any(rows[i-n+1]['date']<=d<=row['date'] for d in missing_dates) else None
         if day(row['date'])>=starts:out.append(point)
     return out

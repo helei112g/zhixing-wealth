@@ -3,26 +3,16 @@ name: zhixing-research
 description: 在知行财富本机系统读取指数资料、核对代码配对、估值分位和高点日期，并在明确授权后建档或管理公共数据更新。
 ---
 
-# 指数资料与数据更新
+# 指数观察台
 
-阅读 [AI接入约定](../../../docs/ai.md)。开发使用仓库的 `scripts/ai_client.py`，已安装日常工作区使用 `./zhixing`，先核对 environment 和 data_directory；离线不切换环境。不直写 SQLite，不把组合或笔记内容发给数据供应商。
+1. 读取 `/api/capabilities` 和 `/api/research/catalog`，按本地已核验家族识别；未添加不采集。
+2. 用 `collection_preview(code, modules, history_start)` 展示范围、逐端点预算和原研究revision。依据用户授权提交 `PUT /api/research/collection`，保留expected_research_revision，按id回读；409不自动重试。保存不采集。
+3. 明确更新时提交原有公共数据任务，稳定request_id，结果未知先查job_id。精确重试只提交失败项原resource；暂停保留历史。试用默认每端点20次本机预算，不自动扩大或解除权限阻断。
+4. Token由用户在本机页面输入并保存本地文件。禁止读取Token文件或令牌内容，禁止发到聊天、请求文件、日志、云端或仓库。仅可读取配置状态和非敏感计数。
+5. `research_index`/`research_studio`/`research_part`只读本地；日期和分析ID一致，跨版本分页重读。mcw/ew/median不混；旧overall/arithmetic保留旧来源。全历史标实际覆盖，当前篮子回溯不等于历史当期篮子。指数财报不能填逐只公司表。
+6. 收益回测和指数重叠已移除；存量变化不称净流入。条件试算读取scenario_metrics与scenario_assumption，使用同日正数整体法/mcw；须接受固定成分、股数、权重、除数及全部成分价格、盈利/净资产同比例变化的假设。等权、中位数、全收益禁用。
+7. 完整契约复用 [研究说明](../../../docs/research.md)、[API](../../../docs/api.md) 和 [AI指南](../../../docs/ai.md)。旧后缀验证/建档写接口已退役，历史来源数据不删除。
 
-1. 读取 `/api/capabilities` 和 `/api/research/indices`。指数在独立研究工具中，不依赖组合。支持范围与缺口见 [研究合同](../../../docs/research.md) 和 [接口](../../../docs/api.md)。
-2. 通过 `resolve_index(code)` 或 preview 的 `/api/research/indices/resolve` 识别。展示名称、机构、价格/全收益代码、输入口径和研究版本；未知代码不能猜前缀、改成同名指数。
-3. 从resolve响应读取valuation_options与default_valuation_suffix；后缀仅在明确登记时默认选中，不按编制方/代码猜测。调用validate_index_valuation(code, valuation_suffix)验证所选代码的PE、PB，展示各自状态、数量和实际日期。两项通过才有valuation_token；无法取数时保留缺口，由用户明确选择None才可暂不接入估值，不能自动放弃估值。验证只读，不发布快照或更新任务。获得建档授权后，POST `/api/research/indices`，原样携带 resolve_token、valuation_token、expected_research_revision、稳定 request_id（两种token均绑定本次输入；有效期10分钟）。建档和首次补齐意图原子保存。回读返回的正式 ID 与 job_id。受理不等于采集完成。
-4. 409 重新读取并展示差异；未知结果先回读，保留原 request_id，不能换版本强制提交。重复添加只保留一个指数档案。
-5. 估值、价格、成分和财报日期分别解释。3/5/10 年不足为 null，不能补零。高点日期是各自窗口内最高收盘最近出现日；不称为“本轮高点”。PE/PB不按价格与全收益点位比例缩放。
-6. 分页/图表使用同一个 analysis_id；快照变化后重读，不拼接不同版本。财务当前篮子与历史有效名单分开；当前可得重述财报不冒充严格 PIT，缺年份与行业未知保留缺口。
-7. 更新策略从 `/api/settings/data-updates` 读取，用原 expected_settings_revision PUT。展示六类策略的差异，单独核对更新授权；它不使用账本 revision。应用关闭时不承诺执行。
-8. 明确授权更新后 POST `/api/data-updates/run`，携带 scopes、稳定 request_id；确认失败后的新重试使用新 request_id，只提交失败项的原 resource；结果未知先回读并保留原 request_id，不扩大到其他币种或模块。轮询 jobs 核对实际日期和逐项状态；历史失败不等于当前仍失败。
-9. 条件试算用 `scenario INDEX_ID REQUEST.json` 或 `research_scenario(index_id,payload)` 走服务端 scenarios（只读，不需--confirm-write），传当前 analysis_id、Decimal 字符串、明确固定篮子假设。全收益缺少未来分红假设时不可计算，不输出买入分数或投资结论。
+历史现金流按对应年末历史估值记录行业区分金融公司；`excluded_unknown_industry` 非零时不可宣称完整覆盖。历史行业与财报均为当前可得版本，不属于严格PIT。
 
-不合并 PR、不部署、不恢复或清理数据，除非另外获得相应授权。
-
-增强读取：使用changes的from_date/to_date解释日、周、年度涨跌幅；daily_series中的MA按完整交易日计算。成分财务按financials的报告期展示，current_years不冒充历史指数。条件关系图使用scenario返回的curve/reference_points，可选reference_window=3/5/10；历史P10–P90为固定分母参照，不称底部或概率。
-
-客户端完整读取：research_index支持basis、window、method；research_part读取四种投影。跨页显式携带同一analysis_id；从capabilities发现主口径、方法、均线周期及情景参考窗口，不能只根据UI默认值推断。
-
-支持的代码配对、估值来源和覆盖边界统一查阅[研究合同](../../../docs/research.md)，并读取当前resolve与module_status；不能从旧技能中的名称或代码推断最新支持范围。
-
-当前指数全模块更新：先回读精确index_id，展示拟更新范围；在已有明确授权下调用`refresh_index(index_id, request_id)`。固定提交该ID与index_prices/memberships/valuations/financials四个scopes，省略resources覆盖八个模块；不顺带更新其他指数、持仓或汇率。自动策略关闭不阻止明确手动请求。保留request_id，回读job_id至终态后重新读取详情；解释market_cutoff、information_cutoff与各模块实际日期。`update_history()`只是最近5条合并展示，任务未出现在其中不代表失败或未执行，应按job_id查询。
+财务优先用理杏仁历史各期成分直接汇总，按年度/一季度/半年/三季度分别读取；不要用今天的成分回填历史。t_r是回溯值，t_y2y才是同比。涨跌 changes.monthly 为月初前最近有效收盘至最新值的变化。

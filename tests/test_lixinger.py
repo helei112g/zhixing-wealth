@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from datetime import date,timedelta
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
@@ -15,8 +16,8 @@ from backend.common import ConflictError,DomainError
 from backend.research.lixinger_access import LocalAccess
 from backend.research.collection import merge
 from backend.research import lixinger
-from backend.research.analytics import ranks,flow_months
-from backend.research.metrics import moving_averages
+from backend.research.analytics import ranks,flow_months,valuation_curve
+from backend.research.metrics import moving_averages,full_window,years_before
 from backend.research.service import ResearchService,validate_backup
 from backend.service import Service
 from backend.store import Store
@@ -235,6 +236,32 @@ class AnalyticsTests(unittest.TestCase):
         zero = dict(rows=[dict(r, value='0') for r in rows], frequency='daily')
         self.assertIsNone(ranks(zero)['0']['rank'])
         self.assertEqual(ranks(zero, allow_zero=True)['0']['rank'], '0.5')
+
+    def test_valuation_means_span_long_closures_without_inventing_observations(self):
+        rows = [dict(r, value=str(i % 30 + 1)) for i, r in enumerate(self.rows())]
+        rows = [r for r in rows if not any(first <= r['date'] <= last for first, last in (
+            ('2014-10-01', '2014-10-07'), ('2019-10-01', '2019-10-07'), ('2021-10-01', '2021-10-07'),
+        ))]
+        series = dict(rows=rows, frequency='daily')
+        curve = {r['date']: r for r in valuation_curve(series, rows, 3)}
+        at = '2024-09-30'
+        for years in (3, 5, 10):
+            boundary = str(years_before(at, years))
+            values = [Decimal(r['value']) for r in rows if boundary < r['date'] <= at]
+            self.assertEqual(Decimal(curve[at]['mean' + str(years)]), sum(values) / len(values))
+        self.assertTrue(full_window(rows, '2024-10-01', 3))
+
+    def test_valuation_means_keep_real_missing_sessions_and_short_history_empty(self):
+        prices = self.rows()
+        rows = [r for r in prices if r['date'] != '2021-10-01']
+        curve = {r['date']: r for r in valuation_curve(dict(rows=rows, frequency='daily'), prices, 3)}
+        self.assertIsNone(curve['2024-09-30']['mean3'])
+        rows = [r for r in prices if not '2023-01-01' <= r['date'] <= '2023-03-31']
+        curve = {r['date']: r for r in valuation_curve(dict(rows=rows, frequency='daily'), prices, 3)}
+        self.assertTrue(all(curve['2024-09-30']['mean' + str(y)] is None for y in (3, 5, 10)))
+        short = dict(rows=prices[-500:], frequency='daily')
+        self.assertTrue(all(r['mean3'] is None for r in valuation_curve(short, prices, 3)))
+        self.assertFalse(full_window(prices[-500:], prices[-1]['date'], 3))
 
     def test_missing_known_session_invalidates_ma(self):
         rows=self.rows()[-100:];missing=rows[20]['date'];rows.pop(20)

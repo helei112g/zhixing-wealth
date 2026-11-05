@@ -179,6 +179,28 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByText(/最近完整披露期/).first().waitFor();
   check(await page.locator('svg path[fill="#bf4b50"]').count()>0,'positive money flow bars are red');
   await shot('studio-funds');
+  const fundFixture=await api('/research/indices/csi%3A000905/studio?method=mcw&window=3');
+  fundFixture.funds.etf=[
+   {date:'2024-01-31',stock:null,flow:null,change:null,complete:false},
+   {date:'2024-02-29',stock:'0',flow:'0',change:null,complete:true},
+   {date:'2024-03-29',stock:'100000000',flow:null,change:null,complete:false},
+   {date:'2024-04-30',stock:'100000000',flow:'0',change:'0',complete:true},
+   {date:'2024-05-31',stock:null,flow:null,change:null,complete:false},
+   {date:'2024-06-28',stock:'200000000',flow:'-10000',change:null,complete:true},
+   {date:'2024-07-31',stock:null,flow:null,change:null,complete:false},
+  ];
+  await page.route(studioRoute,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(fundFixture)}));
+  await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
+  await page.getByRole('tab',{name:'资金与持仓',exact:true}).click();
+  await page.locator('.fund-zero-prefix').waitFor();
+  const stockChart=page.getByRole('img',{name:'A股场内基金资产规模',exact:true});
+  const flowChart=page.getByRole('img',{name:'场内基金认购净流入',exact:true});
+  check(await stockChart.getAttribute('data-start')==='2024-03-29'&&await flowChart.getAttribute('data-start')==='2024-04-30','fund charts trim the zero prefix and their own missing boundaries');
+  check(await flowChart.getAttribute('data-end')==='2024-06-28'&&(await flowChart.innerText()).includes('2024-05-31'),'fund charts preserve later zero observations and interior missing periods');
+  await page.locator('.fund-observations summary').click();
+  const originalRows=page.locator('.fund-observations tbody tr');
+  check(await originalRows.count()===5&&(await originalRows.filter({hasText:'2024-02-29'}).innerText()).includes('0.00'),'original zero records remain in the detail table');
+  await page.unroute(studioRoute);
   assert.deepEqual((await api('/settings/lixinger')).counts,counts);
   check(true,'all reading and display switches consume no supplier quota');
 

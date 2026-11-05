@@ -46,21 +46,36 @@ def ranks(series, allow_zero=False):
 
 
 def valuation_curve(series, prices, window):
-    rows = sorted([r for r in series.get('rows',[]) if r.get('value') is not None],key=lambda r:r['date'])
-    if not rows: return []
-    dates=[r['date'] for r in rows]; prefix=[Decimal(0)]
-    for r in rows: prefix.append(prefix[-1]+dec(r['value']))
-    gap_indices=[i for i in range(1,len(rows)) if (day(dates[i])-day(dates[i-1])).days>45]
-    close={r['date']:r['close'] for r in prices}; start=str(years_before(dates[-1],window)) if window else dates[0]
-    out=[]
-    for i,r in enumerate(rows):
-        if r['date']<start: continue
-        point=dict(r,close=close.get(r['date']))
-        for y in (3,5,10):
-            boundary=str(years_before(r['date'],y)); lo=bisect_right(dates,boundary,0,i+1); n=i+1-lo
-            no_gap=bisect_right(gap_indices,i)==bisect_right(gap_indices,lo)
-            complete=n>=180*y and lo<len(rows) and (day(dates[lo])-day(boundary)).days<=7 and no_gap and series.get('frequency')=='daily'
-            point['mean'+str(y)]=ds((prefix[i+1]-prefix[lo])/n) if complete else None
+    rows = sorted((r for r in series.get('rows', []) if r.get('value') is not None), key=lambda r: r['date'])
+    if not rows:
+        return []
+
+    dates = [r['date'] for r in rows]
+    prefix = [Decimal(0)]
+    for r in rows:
+        prefix.append(prefix[-1] + dec(r['value']))
+    gap_indices = [i for i in range(1, len(rows)) if (day(dates[i]) - day(dates[i - 1])).days > 45]
+    close = {r['date']: r['close'] for r in prices}
+    price_dates = sorted(close)
+    start = str(years_before(dates[-1], window)) if window else dates[0]
+    out = []
+    for i, r in enumerate(rows):
+        if r['date'] < start:
+            continue
+        point = dict(r, close=close.get(r['date']))
+        for years in (3, 5, 10):
+            boundary = str(years_before(r['date'], years))
+            lo = bisect_right(dates, boundary, 0, i + 1)
+            count = i + 1 - lo
+            # A long holiday may exceed seven calendar days. Require the source
+            # to span the boundary instead; never fabricate observations on closed days.
+            spans_start = 0 < lo <= i and (day(dates[lo]) - day(dates[lo - 1])).days <= 45
+            first_session = bisect_right(price_dates, boundary)
+            if spans_start and 0 < first_session < len(price_dates):
+                spans_start = dates[lo] <= price_dates[first_session]
+            no_gap = bisect_right(gap_indices, i) == bisect_right(gap_indices, lo)
+            complete = spans_start and count >= 180 * years and no_gap and series.get('frequency') == 'daily'
+            point['mean' + str(years)] = ds((prefix[i + 1] - prefix[lo]) / count) if complete else None
         out.append(point)
     return sample(out)
 

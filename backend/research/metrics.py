@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'index-studio-5'
+METHOD_VERSION = 'index-studio-6'
 WINDOWS = (3, 5, 10)
 
 
@@ -32,7 +32,9 @@ def full_window(rows, at, years, frequency='daily'):
         stop = end.replace(day=1); start = years_before(stop, years)
         months = {r['date'][:7]: r for r in rows if start <= day(r['date']) < stop}
         return list(months.values()) if len(months) == years * 12 else []
-    if not previous or len(previous) < 180 * years or day(previous[0]['date']) > start + timedelta(days=7): return []
+    if not previous or len(previous) < 180 * years: return []
+    earlier = [r['date'] for r in rows if day(r['date']) <= start]
+    if not earlier or (day(previous[0]['date']) - day(max(earlier))).days > 45: return []
     if (end-day(previous[-1]['date'])).days>45:return []
     if any((day(b['date']) - day(a['date'])).days > 45 for a, b in zip(previous, previous[1:])): return []
     for year in range(start.year + 1, end.year):

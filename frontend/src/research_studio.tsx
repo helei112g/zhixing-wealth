@@ -101,7 +101,7 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
  const [analysis,Analysis]=useState<Obj|null>(null);
  const [failure,Failure]=useState<Obj|null>(null);
  const methods=['mcw','ew','median','overall','arithmetic'].filter(m=>(d.valuation_methods||[]).includes(m)||method===m);
- const context=JSON.stringify([d.id,d.basis,method,metric,d.research_revision]);
+ const context=JSON.stringify([d.id,d.basis,method,metric,d.research_revision,d.analysis_id]);
  const requestKey=JSON.stringify([context,valuationWindow]);
  const currentAnalysis=analysis?.context===context?analysis:null;
  const error=failure?.requestKey===requestKey?failure.message:'';
@@ -113,7 +113,7 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
   api('/research/indices/'+encodeURIComponent(d.id)+'/studio?'+query({basis:d.basis,method,window:valuationWindow,metric}))
    .then(v=>{
     if(!active)return;
-    if(v.research_revision!==d.research_revision){
+    if(v.research_revision!==d.research_revision||v.analysis_id!==d.analysis_id){
      Failure({requestKey,message:'数据版本已变化，等待本地档案同步后重算。'});
      return;
     }
@@ -230,13 +230,90 @@ export function IndexFinancials({d}:Obj){
  </Panel>;
 }
 
+function trimEmptyEdges(rows:Obj[],keys:string[]){
+ const known=(r:Obj)=>keys.some(key=>r[key]!=null);
+ const first=rows.findIndex(known);
+ if(first<0)return [];
+ let last=rows.length-1;
+ while(last>first&&!known(rows[last]))last--;
+ return rows.slice(first,last+1);
+}
+
+function FundSeriesChart({rows,field,name,changes}:Obj){
+ const series=trimEmptyEdges(rows,[field]);
+ return <div role="img" aria-label={name} data-start={series[0]?.date} data-end={series[series.length-1]?.date}>
+  <h3>{name}</h3>
+  {series.length?<>
+   <p className="muted small">显示 {series[0].date} → {series[series.length-1].date}</p>
+   <ResponsiveContainer width="100%" height={290} minWidth={0}>
+    <BarChart accessibilityLayer data={series}>
+     <CartesianGrid vertical={false} stroke="var(--line)"/><XAxis dataKey="date" minTickGap={80}/><YAxis width={65}/><Tooltip/>
+     <Bar dataKey={field} fill={colors[0]} isAnimationActive={false}>
+      {series.map((r:Obj)=><Cell key={r.date} fill={changes?(Number(r[field])>=0?'#bf4b50':'#258879'):colors[0]}/>)}
+     </Bar>
+    </BarChart>
+   </ResponsiveContainer>
+  </>:<p className="muted">所选范围暂无该指标的有效记录。</p>}
+ </div>;
+}
+
 export function CapitalFlows({d}:Obj){
- const [view,V]=useState('etf'),[cap,Cap]=useState('mc'),[span,Span]=useState(0),[northHistory,NorthHistory]=useState(false),[a,A]=useState<Obj|null>(null),[error,E]=useState('');
- useEffect(()=>{let active=true;A(null);api('/research/indices/'+encodeURIComponent(d.id)+'/studio?'+query({basis:d.basis,method:d.method,window:d.window})).then(v=>{if(active&&v.analysis_id===d.analysis_id)A(v);}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[d.analysis_id,d.basis,d.window]);
- const allValues=(view==='capitalization'?a?.funds.capitalization[cap]:a?.funds[view==='northbound'&&northHistory?'northbound_daily':view])?.filter((r:Obj)=>r.stock!=null||r.flow!=null||r.change!=null)||[],cut=span&&allValues.length?String(Number(allValues[allValues.length-1].date.slice(0,4))-span)+allValues[allValues.length-1].date.slice(4):'',values=allValues.filter((r:Obj)=>!cut||r.date>=cut),rows=values.map((r:Obj)=>({...r,stock:r.stock==null?null:Number(r.stock)/1e8,flow:r.flow==null?null:Number(r.flow)/1e8,change:r.change==null?null:Number(r.change)/1e8}));
- const flowKey=view==='capitalization'?'change':'flow',latestFlow=[...rows].reverse().find((r:Obj)=>r[flowKey]!=null);
+ const [view,V]=useState('etf'),[cap,Cap]=useState('mc'),[span,Span]=useState(0),[northHistory,NorthHistory]=useState(false);
+ const [a,A]=useState<Obj|null>(null),[error,E]=useState('');
+ useEffect(()=>{
+  let active=true;
+  A(null);
+  E('');
+  api('/research/indices/'+encodeURIComponent(d.id)+'/studio?'+query({basis:d.basis,method:d.method,window:d.window}))
+   .then(v=>{if(active&&v.analysis_id===d.analysis_id)A(v);})
+   .catch(e=>{if(active)E(e.message);});
+  return()=>{active=false;};
+ },[d.analysis_id,d.basis,d.window]);
+
+ const flowKey=view==='capitalization'?'change':'flow';
+ const rawValues=(view==='capitalization'?a?.funds.capitalization[cap]:a?.funds[view==='northbound'&&northHistory?'northbound_daily':view])||[];
+ const allValues=trimEmptyEdges(rawValues,['stock',flowKey]);
+ const cut=span&&allValues.length?String(Number(allValues[allValues.length-1].date.slice(0,4))-span)+allValues[allValues.length-1].date.slice(4):'';
+ const rows=allValues.filter((r:Obj)=>!cut||r.date>=cut).map((r:Obj)=>({
+  ...r,
+  date:r.date,
+  stock:r.stock==null?null:Number(r.stock)/1e8,
+  flow:r.flow==null?null:Number(r.flow)/1e8,
+  change:r.change==null?null:Number(r.change)/1e8,
+ }));
+ const firstNonzero=rows.findIndex((r:Obj)=>['stock',flowKey].some(key=>r[key]!=null&&r[key]!==0));
+ const chartRows=firstNonzero>0?rows.slice(firstNonzero):rows;
+ const latestStock=[...rows].reverse().find((r:Obj)=>r.stock!=null);
+ const latestFlow=[...rows].reverse().find((r:Obj)=>r[flowKey]!=null);
  const names:Obj={etf:['A股场内基金资产规模','场内基金认购净流入'],margin:['融资余额','融资净买入'],northbound:['北向持股市值','披露净买入'],capitalization:['成分市值','存量变化（非流量）']};
- return <><Panel title="资金与持仓观察" right={<div className="segmented" aria-label="资金历史窗口">{[3,5,10,0].map(y=><button key={y} className={span===y?'active':''} onClick={()=>Span(y)}>{windowName(y)}</button>)}</div>}><ErrorBox error={error}/><div className="segmented">{[['etf','场内基金'],['margin','融资'],['northbound','北向持仓'],['capitalization','成分总市值']].map(([k,l])=><button key={k} className={view===k?'active':''} onClick={()=>V(k)}>{l}</button>)}</div>{view==='northbound'&&<label className="check"><input type="checkbox" checked={northHistory} onChange={e=>NorthHistory(e.target.checked)}/>查看2024-08-16前披露的日频记录（月汇总）</label>}{view==='capitalization'&&<select value={cap} aria-label="市值口径" onChange={e=>Cap(e.target.value)}><option value="mc">总市值</option><option value="cmc">流通市值</option><option value="ecmc">自由流通市值</option></select>}<p className="muted small">{view==='etf'&&'理杏仁A股场内基金合计；仅统计源端场内基金口径，不汇总场外基金，不将联接基金重复相加。'}单位 CNY亿元；{view==='northbound'?'2024-08-16后按实际季度披露，不平摊成日频。':'按月观察，缺日或未完成月份不输出完整月净流量。'}存量差额包含价格与成分变动，不能当作净流入，各类资金不能相加。</p><p className="muted small">已取得历史 {allValues[0]?.date||'-'} → {allValues[allValues.length-1]?.date||'-'}，共 {allValues.length} 个观察期；当前显示 {rows[0]?.date||'-'} → {rows[rows.length-1]?.date||'-'}。</p>{rows.length>0&&<div className="studio-summary studio-funds-summary"><div><span>{names[view][0]} · 亿元</span><strong>{num(rows[rows.length-1].stock)}</strong><small>{rows[rows.length-1].date}</small></div><div><span>{names[view][1]} · 亿元</span><strong className={trendClass(latestFlow?.[flowKey])}>{num(latestFlow?.[flowKey])}</strong><small>{latestFlow?`${latestFlow.date} · ${view==='capitalization'?'最近存量变化':'最近完整披露期'}`:'尚无完整披露期；不以存量差补净流量'}</small></div></div>}{rows.length?<div className="two-columns">{['stock',view==='capitalization'?'change':'flow'].map((key,i)=><div key={key} role="img" aria-label={names[view][i]}><h3>{names[view][i]}</h3><ResponsiveContainer width="100%" height={290} minWidth={0}><BarChart accessibilityLayer data={rows}><CartesianGrid vertical={false} stroke="var(--line)"/><XAxis dataKey="date" minTickGap={80}/><YAxis width={65}/><Tooltip/><Bar dataKey={key} fill={colors[0]} isAnimationActive={false}>{rows.map((r:Obj)=><Cell key={r.date} fill={i?(Number(r[key])>=0?'#bf4b50':'#258879'):colors[0]}/>)}</Bar></BarChart></ResponsiveContainer></div>)}</div>:<Empty title="尚无该类有效数据">请检查订阅模块、权限与实际覆盖，缺失不补零。</Empty>}<details><summary>实际日期与完整度</summary><div className="table-wrap"><table><thead><tr><th>实际日期</th><th>存量 · 亿元</th><th>净流量 · 亿元</th><th>存量变化 · 亿元</th><th>流量完整度</th></tr></thead><tbody>{[...rows].reverse().map((r:Obj)=><tr key={r.date}><td>{r.date}</td><td>{num(r.stock)}</td><td className={trendClass(r.flow)}>{num(r.flow)}</td><td className={trendClass(r.change)}>{num(r.change)}</td><td>{r.complete?'完整':'缺失或未完成'}</td></tr>)}</tbody></table></div></details></Panel></>;
+
+ return <Panel title="资金与持仓观察" right={<div className="segmented" aria-label="资金历史窗口">{[3,5,10,0].map(y=>
+  <button key={y} className={span===y?'active':''} onClick={()=>Span(y)}>{windowName(y)}</button>
+ )}</div>}>
+  <ErrorBox error={error}/>
+  <div className="segmented">{[['etf','场内基金'],['margin','融资'],['northbound','北向持仓'],['capitalization','成分总市值']].map(([k,l])=>
+   <button key={k} className={view===k?'active':''} onClick={()=>V(k)}>{l}</button>
+  )}</div>
+  {view==='northbound'&&<label className="check"><input type="checkbox" checked={northHistory} onChange={e=>NorthHistory(e.target.checked)}/>查看2024-08-16前披露的日频记录（月汇总）</label>}
+  {view==='capitalization'&&<select value={cap} aria-label="市值口径" onChange={e=>Cap(e.target.value)}><option value="mc">总市值</option><option value="cmc">流通市值</option><option value="ecmc">自由流通市值</option></select>}
+  <p className="muted small">{view==='etf'&&'理杏仁A股场内基金合计；仅统计源端场内基金口径，不汇总场外基金，不将联接基金重复相加。'}单位 CNY亿元；{view==='northbound'?'2024-08-16后按实际季度披露，不平摊成日频。':'按月观察，缺日或未完成月份不输出完整月净流量。'}存量差额包含价格与成分变动，不能当作净流入，各类资金不能相加。</p>
+  <p className="muted small">源端记录 {allValues[0]?.date||'-'} → {allValues[allValues.length-1]?.date||'-'}，共 {allValues.length} 个观察期；图表显示范围见各图。</p>
+  {firstNonzero>0&&<p className="muted small fund-zero-prefix">图表已收起起始 {firstNonzero} 期零值或空值，从 {chartRows[0].date} 的首个非零统计开始；数据源返回零值不代表已核实当时没有资金。原始记录保留在下方明细。</p>}
+  {rows.length>0&&<div className="studio-summary studio-funds-summary">
+   <div><span>{names[view][0]} · 亿元</span><strong>{num(latestStock?.stock)}</strong><small>{latestStock?.date||'尚无有效记录'}</small></div>
+   <div><span>{names[view][1]} · 亿元</span><strong className={trendClass(latestFlow?.[flowKey])}>{num(latestFlow?.[flowKey])}</strong><small>{latestFlow?`${latestFlow.date} · ${view==='capitalization'?'最近存量变化':'最近完整披露期'}`:'尚无完整披露期；不以存量差补净流量'}</small></div>
+  </div>}
+  {rows.length?<div className="two-columns">
+   <FundSeriesChart rows={chartRows} field="stock" name={names[view][0]} changes={false}/>
+   <FundSeriesChart rows={chartRows} field={flowKey} name={names[view][1]} changes/>
+  </div>:<Empty title="尚无该类有效数据">请检查订阅模块、权限与实际覆盖，缺失不补零。</Empty>}
+  <details className="fund-observations"><summary>实际日期与完整度</summary><div className="table-wrap"><table>
+   <thead><tr><th>实际日期</th><th>存量 · 亿元</th><th>净流量 · 亿元</th><th>存量变化 · 亿元</th><th>流量完整度</th></tr></thead>
+   <tbody>{[...rows].reverse().map((r:Obj)=><tr key={r.date}>
+    <td>{r.date}</td><td>{num(r.stock)}</td><td className={trendClass(r.flow)}>{num(r.flow)}</td><td className={trendClass(r.change)}>{num(r.change)}</td><td>{r.complete?'完整':'缺失或未完成'}</td>
+   </tr>)}</tbody>
+  </table></div></details>
+ </Panel>;
 }
 
 

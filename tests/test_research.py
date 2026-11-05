@@ -77,6 +77,14 @@ class MetricTests(unittest.TestCase):
         r=financial_totals(rows,members,'2025-12-31')['profit']
         self.assertEqual(r['status'],'nonpositive_base');self.assertIsNone(r['growth']);self.assertEqual(r['change'],'20')
 
+    def test_monthly_change_uses_last_close_before_month_boundary(self):
+        rows = [dict(date='2026-01-30', close='100'), dict(date='2026-02-02', close='110'), dict(date='2026-02-03', close='121')]
+        result = price_changes(rows, '2026-02-03')
+        self.assertEqual(result['monthly']['ratio'], '0.21')
+        self.assertEqual(result['monthly']['from_date'], '2026-01-30')
+        self.assertIsNone(price_changes(rows[1:], '2026-02-03')['monthly'])
+        self.assertIsNone(price_changes(rows, '2026-03-02')['monthly'])
+
     def test_calendar_returns_and_missing_anchors(self):
         rows=[dict(date='2025-12-31',close='100'),dict(date='2026-10-23',close='110'),dict(date='2026-10-29',close='120'),dict(date='2026-10-30',close='132')]
         c=price_changes(rows,'2026-10-30')
@@ -109,6 +117,28 @@ class ResearchTests(unittest.TestCase):
         body=dict(scopes=['index_prices','memberships','valuations','financials'],targets=[iid],request_id=request)
         job=self.r.updates.run(body,trigger='index_create')
         return dict(id=iid,basis=p['input_basis'],existing=existing,research_revision=self.r.revision(),job_id=job['job_id']),body
+    def test_old_new_year_gap_flags_are_corrected_without_rewriting_snapshot(self):
+        from backend.trading_calendar import no_expected_session
+        self.assertTrue(no_expected_session('CN', '2025-12-31', '2026-01-04'))
+        self.assertFalse(no_expected_session('CN', '2025-12-31', '2026-01-05'))
+        self.assertFalse(no_expected_session('CN', '2026-12-31', '2027-01-01'))
+        result, _ = self.add()
+        iid = result['id']
+        value = price_payload(providers.identity('000905'), 'price')
+        value['rows'] = [r for r in value['rows'] if r['date'] not in ('2026-01-01', '2026-01-02', '2026-02-03')]
+        value['missing_dates'] = ['2026-01-01', '2026-02-03']
+        snapshot = self.r.publish(iid, 'price', value)
+        self.assertEqual(self.r.publish(iid, 'price', value), snapshot)
+        current = self.r.module(iid, 'price')
+        self.assertEqual(current['missing_dates'], ['2026-02-03'])
+        computed = moving_averages(current['rows'], 0, current['missing_dates'])
+        january = next(r for r in computed if r['date']=='2026-01-05')
+        self.assertTrue(all(january['ma'+str(n)] is not None for n in (51,120,250,850)))
+        self.assertIsNone(next(r for r in computed if r['date']=='2026-02-04')['ma51'])
+        with self.store.connection() as db:
+            row = db.execute('SELECT data,sha256 FROM research_snapshots WHERE id=?',(snapshot,)).fetchone()
+            self.assertEqual(decode(row[0],row[1])['missing_dates'], value['missing_dates'])
+
     def test_listing_reuses_all_thirteen_summaries_without_loading_company_history(self):
         for p in providers.CATALOG:self.add(p['code'],'synthetic-'+p['code'])
         with patch.object(self.r,'module',wraps=self.r.module) as load:

@@ -141,7 +141,8 @@ class LocalAccess:
         if endpoint not in ENDPOINTS or 'token' in params: raise DomainError('不允许的理杏仁请求')
         with self.files() as fd:
             value = self.state(fd)
-            if not value['enabled'] or automatic and not value['automatic']: raise DomainError('试用采集未启用；请先在本机核对调用预算')
+            if automatic and (not value['enabled'] or not value['automatic']):
+                raise DomainError('理杏仁自动采集未启用；可在数据来源页手动更新')
             if value['blocked'].get(endpoint): raise DomainError('该理杏仁端点已暂停；请先核对权限/额度再恢复')
             if value['counts'].get(endpoint, 0) >= value['limit']: raise DomainError('该理杏仁端点已到本机预算上限；本次未请求')
             raw = self.read(fd, 'token')

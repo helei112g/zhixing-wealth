@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'index-studio-4'
+METHOD_VERSION = 'index-studio-5'
 WINDOWS = (3, 5, 10)
 
 
@@ -114,10 +114,11 @@ def quantiles(values):
 
 
 def price_changes(rows,asof):
-    """Calendar week/YTD anchors use the last close strictly before the boundary."""
-    if not rows:return {k:None for k in ('daily','weekly','ytd')}
+    """Calendar week/month/YTD anchors use the last close before the boundary."""
+    if not rows:return {k:None for k in ('daily','weekly','monthly','ytd')}
     latest=rows[-1];end=day(latest['date']);at=day(asof)
     monday=at-timedelta(days=at.weekday());year=at.replace(month=1,day=1)
+    month = at.replace(day=1)
     def change(base):
         if not base:return None
         return dict(ratio=ds(dec(latest['close'])/dec(base['close'])-1),from_date=base['date'],to_date=latest['date'])
@@ -126,6 +127,7 @@ def price_changes(rows,asof):
         before=[r for r in rows if day(r['date'])<boundary]
         return before[-1] if before and (boundary-day(before[-1]['date'])).days<=15 else None
     return dict(daily=change(previous),weekly=change(anchor(monday)) if end>=monday else None,
+                monthly=change(anchor(month)) if end>=month else None,
                 ytd=change(anchor(year)) if end>=year else None)
 
 

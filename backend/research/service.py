@@ -100,11 +100,18 @@ class ResearchService:
             self.publish(iid,'official_reference',value)
         return value
 
-    def module(self, iid, module):
+    def module(self, iid, module, *, raw=False):
         with self.store.connection() as db:
             row=db.execute('SELECT s.id,s.created_at,s.sha256,s.data FROM research_heads h JOIN research_snapshots s ON s.id=h.snapshot_id WHERE h.index_id=? AND h.module=?',(iid,module)).fetchone()
             value=decode(row[3],row[2]) if row else None
             if value is not None and module in ('price','total_return'):value=price_chunks.expand(db,value)
+        if not raw and value is not None and module in ('price', 'total_return') and 'missing_dates' in value:
+            from ..trading_calendar import no_expected_session
+            # Reinterpret derived gap flags after calendar corrections; immutable source versions stay intact.
+            value['missing_dates'] = [
+                d for d in value.get('missing_dates', [])
+                if not no_expected_session('CN', str(day(d) - timedelta(days=1)), d)
+            ]
         return dict(snapshot_id=row[0],fetched_at=row[1],sha256=row[2],**value) if row else None
 
     def publish(self, iid, module, value):
@@ -112,7 +119,7 @@ class ResearchService:
         value={k:v for k,v in value.items() if k not in ('snapshot_id','fetched_at','sha256')}
         validate_snapshot(module,value)
         digest,content,blocks=price_chunks.prepare(wire(value)) if module in ('price','total_return') else (*encode(wire(value)),{})
-        current=self.module(iid,module)
+        current=self.module(iid,module,raw=True)
         # Fetched timestamps are provenance, not financial values; unchanged source versions remain idempotent.
         def meaningful(v):
             if isinstance(v,dict): return {k:meaningful(x) for k,x in v.items() if k not in ('fetched_at','snapshot_id','sha256','evidence')}

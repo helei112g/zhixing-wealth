@@ -114,10 +114,10 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start)` 展示指数家族、范围、预计调用数和原research_revision；在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交enabled与expected_research_revision，再按id回读。保存不启动采集；使用原有 `refresh_index` 或精确resource提交带稳定request_id的更新任务。
 
-`research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口与1/3/5年回测。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
+`research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口；不再提供收益回测或指数重叠。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
 
-Token只能由用户在本机「本机Token与预算」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。默认每端点20次本机预算，失败也消耗尝试；1000次是供应商试用上限，不是本机已知余额。试用自动采集默认关闭，不自动提高预算或解除权限阻断。
+Token只能由用户在本机「全局设置 → 理杏仁数据源」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。默认每端点20次本机预算，失败也消耗尝试；1000次是供应商试用上限，不是本机已知余额。试用自动采集默认关闭，不自动提高预算或解除权限阻断。
 
-详情与快照历史读取不触发网络；只有显式更新或已启用的应用定时策略调用供应商。价格、估值、权重、财报和披露日各自保留。回测基于当前可得历史，不能声称严格PIT；mcw条件试算须明确接受全部成分同比例变化假设，不声称已核验实际点位映射。完整规范见 [研究合同](research.md) 与 [API](api.md)。
+详情与快照历史读取不触发网络；只有显式更新或已启用的应用定时策略调用供应商。价格、估值、权重、财报和披露日各自保留。财务按年度/一季度/半年/三季度跨年读取；源端曲线按历史当期成分加总，当前可得版本不是严格PIT；mcw条件试算须明确接受全部成分同比例变化假设，不声称已核验实际点位映射。完整规范见 [研究合同](research.md) 与 [API](api.md)。
 
 `research_source_check(index_id, analysis_id)` 仅在明确授权联网核验时调用；先以mcw价格口径读取analysis_id，结果保存在独立官方参考快照，不改变理杏仁历史或估值分母映射。

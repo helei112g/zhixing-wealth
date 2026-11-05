@@ -150,8 +150,8 @@ def router(service):
     @api.get('/api/research/catalog')
     def catalog():
         from .providers import CATALOG
-        from .lixinger import MODULES,DEFAULT_MODULES
-        return dict(items=CATALOG,modules=MODULES,default_modules=DEFAULT_MODULES,subscriptions=service.profiles(),research_revision=service.revision())
+        from .lixinger import MODULES,DEFAULT_MODULES,MODULE_SOURCES
+        return dict(items=CATALOG,modules=MODULES,module_sources=MODULE_SOURCES,default_modules=DEFAULT_MODULES,subscriptions=service.profiles(),research_revision=service.revision())
     @api.post('/api/research/collection/preview')
     def collection_preview(body:CollectionPreview):return service.collection.preview(body.code,body.modules,body.history_start)
     @api.put('/api/research/collection')
@@ -167,9 +167,9 @@ def router(service):
         if not service.writes_allowed():raise DomainError('系统处于只读状态')
         return service.access.configure(body.expected_revision,body.enabled,body.limit,body.automatic,body.clear_block)
     @api.get('/api/research/indices/{index_id}/studio')
-    def studio(index_id:str,basis:Basis='price',method:Method='mcw',window:int=Query(3),metric:Literal['pe','pb','ps','dividend_yield']='pe',holding:int=Query(1,json_schema_extra={'enum':[1,3,5]}),independent:bool=False):
+    def studio(index_id:str,basis:Basis='price',method:Method='mcw',window:int=Query(3),metric:Literal['pe','pb','ps','dividend_yield']='pe'):
         from .analytics import studio_analysis
-        return studio_analysis(service,index_id,basis,method,window,metric,holding,independent)
+        return studio_analysis(service,index_id,basis,method,window,metric)
     @api.get('/api/research/indices/{index_id}/versions')
     def versions(index_id:str):return service.versions(index_id)
     @api.post('/api/research/indices/{index_id}/source-check')

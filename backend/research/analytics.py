@@ -1,5 +1,5 @@
 """Local daily calculations. Supplier requests are deliberately unavailable here."""
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 from collections import defaultdict
 from decimal import Decimal
 from math import sqrt
@@ -65,44 +65,6 @@ def valuation_curve(series, prices, window):
     return sample(out)
 
 
-def backtest(series, prices, window, holding, independent=False, allow_zero=False, missing_dates=()):
-    all_rows=sorted([r for r in series.get('rows',[]) if r.get('value') is not None],key=lambda r:r['date'])
-    valid=lambda v: dec(v)>=0 if allow_zero else dec(v)>0
-    rows=[r for r in all_rows if valid(r['value'])]
-    prices=sorted(prices,key=lambda r:r['date']); dates=[r['date'] for r in prices]
-    if not rows or not prices: return dict(trades=[],groups=[],reason='缺少同源估值或所选收益口径的日线')
-    # Ignore the unfinished valuation month. Last available sample is not necessarily month end.
-    months={r['date'][:7]:r for r in all_rows if r['date'][:7]<all_rows[-1]['date'][:7]}
-    price_months={r['date'][:7]:r['date'] for r in prices}
-    trades=[]; occupied=''
-    for signal in months.values():
-        if not valid(signal['value']) or signal['date']!=price_months.get(signal['date'][:7]):continue
-        at=signal['date']; h,_=history_window(rows,at,window,series.get('frequency','daily'))
-        if not h: continue
-        vals=[dec(r['value']) for r in h]; v=dec(signal['value'])
-        rank=(sum(x<v for x in vals)+Decimal('.5')*sum(x==v for x in vals))/len(vals)
-        enter=bisect_right(dates,at); record=dict(signal_date=at,rank=ds(rank),thresholds=quantiles(vals),status='missing',entry_date=None,exit_date=None,return_ratio=None)
-        if enter>=len(prices) or (day(dates[enter])-day(at)).days>15 or any(at<dt<dates[enter] for dt in missing_dates):
-            trades.append(record);continue
-        entry=prices[enter]; record['entry_date']=entry['date']
-        # Independence is checked across the whole signal stream, not separately per outcome bucket.
-        if independent and entry['date']<=occupied: continue
-        mature=str(years_before(entry['date'],-holding)); leave=bisect_left(dates,mature)
-        if mature>dates[-1]: record['status']='immature'
-        elif leave<len(prices) and (day(dates[leave])-day(mature)).days<=15 and not any(mature<=dt<dates[leave] for dt in missing_dates):
-            record.update(status='mature',exit_date=dates[leave],return_ratio=ds(dec(prices[leave]['close'])/dec(entry['close'])-1))
-        occupied=mature if independent else occupied; trades.append(record)
-    groups=[]
-    for label,low,high in (('≤P30',None,Decimal('.3')),('P30–P70',Decimal('.3'),Decimal('.7')),('≥P70',Decimal('.7'),None),('≤P25',None,Decimal('.25')),('≥P75',Decimal('.75'),None)):
-        selected=[r for r in trades if (low is None or dec(r['rank'])>=low) and (high is None or dec(r['rank'])<=high) and (label!='P30–P70' or low<dec(r['rank'])<high)]
-        vals=[dec(r['return_ratio']) for r in selected if r['status']=='mature']
-        q=quantiles(vals) if vals else {}
-        groups.append(dict(label=label,mature=len(vals),immature=sum(r['status']=='immature' for r in selected),missing=sum(r['status']=='missing' for r in selected),
-                           median=q.get('p50'),p25=q.get('p25'),p75=q.get('p75'),positive_ratio=ds(Decimal(sum(v>0 for v in vals))/len(vals)) if vals else None))
-    return dict(trades=trades,groups=groups,holding_years=holding,independent=independent,
-                limitation='按当前可获取历史复盘，历史估值可能重述；下一有效日收盘入场，已知缺日或超过15天无收盘记缺失；未计费税，历史交易日历未全核验；重叠样本非独立交易，不是严格PIT')
-
-
 def flow_months(rows, prices, stock_field, flow_field, quarterly=False, missing_dates=()):
     groups=defaultdict(list)
     for r in sorted(rows,key=lambda r:r['date']): groups[r['date'][:7]].append(r)
@@ -122,8 +84,7 @@ def flow_months(rows, prices, stock_field, flow_field, quarterly=False, missing_
     return output
 
 
-def studio_analysis(service,iid,basis,method,window,metric,holding,independent):
-    if holding not in (1,3,5): raise DomainError('持有年限无效')
+def studio_analysis(service,iid,basis,method,window,metric):
     if window not in (0,3,5,10): raise DomainError('显示窗口无效')
     with service.store.lock:
         d=service.detail(iid,basis,method,window)
@@ -131,24 +92,6 @@ def studio_analysis(service,iid,basis,method,window,metric,holding,independent):
         series=v.get('series',{}).get(metric,{}).get(method,{})
         # Official older sequences remain readable; unsupported methods do not silently fall back.
         price_rows=price.get('rows',[]); activity=d['market_activity']; fundamental=d['fundamental_activity']
-        overlaps=[]; own={r['code']:r for r in d['companies']}
-        for profile in service.profiles():
-            if profile['id']==iid:continue
-            other=service.module(profile['id'],'memberships') or {}; members={r['code']:r for r in other.get('rows',[])}
-            common=set(own)&set(members)
-            comparable=bool(d['memberships_complete'] and other.get('weights_complete',True) and d['membership_date'] and d['membership_date']==other.get('effective_date'))
-            overlap=sum((min(dec(own[c]['weight']),dec(members[c]['weight']))/100 for c in common),Decimal(0)) if comparable else None
-            overlaps.append(dict(id=profile['id'],name=profile['name'],common_count=len(common),weighted_overlap=overlap,
-                                 own_date=d['membership_date'],other_date=other.get('effective_date'),comparable=comparable))
-        normal=service.module(iid,'price') or {}; total=service.module(iid,'total_return') or {}
-        normal_map={r['date']:r['close'] for r in normal.get('rows',[])};total_map={r['date']:r['close'] for r in total.get('rows',[])}
-        common_dates=sorted(set(normal_map)&set(total_map));gap=None
-        if common_dates:
-            if window: common_dates=[dt for dt in common_dates if dt>=str(years_before(common_dates[-1],window))]
-            if len(common_dates)>1:
-                start,end=common_dates[0],common_dates[-1]
-                a=dec(normal_map[end])/dec(normal_map[start])-1;b=dec(total_map[end])/dec(total_map[start])-1
-                gap=dict(start=start,end=end,price_return=a,total_return=b,difference=b-a)
     changes=[float(dec(b['close'])/dec(a['close'])-1) for a,b in zip(price_rows,price_rows[1:])][-250:]
     vol=None
     if len(changes)>=250:
@@ -160,7 +103,7 @@ def studio_analysis(service,iid,basis,method,window,metric,holding,independent):
                northbound=flow_months([r for r in activity.get('northbound',[]) if r['date']>='2024-08-16'],price_rows,'shareholdingsMoney','netBuyAmount',True),
                northbound_daily=flow_months([r for r in activity.get('northbound',[]) if r['date']<'2024-08-16'],price_rows,'shareholdingsMoney','netBuyAmount'),
                capitalization={k:flow_months(fundamental,price_rows,k,None) for k in ('mc','cmc','ecmc')})
-    return wire(dict(analysis_id=d['analysis_id'],metric=metric,method=method,window=window,basis=basis,
+    return wire(dict(analysis_id=d['analysis_id'],research_revision=d['research_revision'],metric=metric,method=method,window=window,basis=basis,
                      ranks=ranks(series,allow_zero=metric=='dividend_yield'),valuation_curve=valuation_curve(series,price_rows,window),
-                     backtest=backtest(series,price_rows,window,holding,independent,allow_zero=metric=='dividend_yield',missing_dates=price.get('missing_dates',[])),funds=funds,
-                     volatility_250=vol,concentration_hhi=hhi,overlaps=overlaps,total_return_comparison=gap))
+                     funds=funds,
+                     volatility_250=vol,concentration_hhi=hhi))

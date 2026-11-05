@@ -14,6 +14,20 @@ MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships',
            'historical_memberships', 'index_financials', 'market_activity', 'tracking_funds',
            'stock_valuations', 'financials', 'historical_financials')
 DEFAULT_MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships')
+MODULE_SOURCES = {
+    'index_info': '理杏仁 · 指数信息',
+    'price': '理杏仁 · 日线；已支持的跨市场指数使用编制机构官方数据',
+    'total_return': '理杏仁 · 全收益日线；已支持的跨市场指数使用编制机构官方数据',
+    'valuations': '理杏仁 · 基础数据（估值、场内基金金额、市值）',
+    'memberships': '理杏仁 · 成分与权重；已支持的跨市场指数使用编制机构官方名单',
+    'historical_memberships': '理杏仁 · 历史成分与权重（最多近十年）',
+    'index_financials': '理杏仁 · 指数财报（按指数类型选择财报端点）',
+    'market_activity': '理杏仁 · 融资融券、互联互通',
+    'tracking_funds': '理杏仁 · 跟踪基金（旧订阅兼容）',
+    'stock_valuations': '东方财富 · 指定交易日公司历史估值',
+    'financials': '东方财富 · 公司利润表、现金流量表',
+    'historical_financials': '理杏仁历史名单 + 东方财富公司财报及历史行业',
+}
 FINANCIAL_FIELDS = {
     'revenue': 'ps.oi', 'profit': 'ps.npatoshopc', 'adjusted_profit': 'ps.npadnrpatoshaopc',
     'operating_cf': 'cfs.ncffoa', 'assets': 'bs.ta', 'liabilities': 'bs.tl', 'equity': 'bs.toe',

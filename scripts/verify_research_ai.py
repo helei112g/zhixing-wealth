@@ -22,8 +22,10 @@ def main():
     except RuntimeError as e:check('409' in str(e),'stale subscription rejected')
     else:raise AssertionError('stale subscription accepted')
     d=c.research_index(saved['id'],window=0);check(d['latest'] and d['valuation']['pe']['source']=='理杏仁','reads synthetic cached Lixinger sequence')
-    a=c.research_studio(saved['id'],method='mcw',window=3,metric='pe',holding=1)
+    a=c.research_studio(saved['id'],method='mcw',window=3,metric='pe')
     check(a['analysis_id']==c.research_index(saved['id'])['analysis_id'],'UI and AI share analysis snapshot')
+    check(a['research_revision']==d['research_revision'],'independent chart windows remain bound to the same research revision')
+    check('backtest' not in a and 'overlaps' not in a and 'total_return_comparison' not in a,'retired return backtest and cross-index comparisons are absent')
     check(c.request('/api/settings/lixinger')['counts']==counts,'analysis reads are offline')
     for part in ('series','constituents','financials','sources'):
         check(c.research_part(saved['id'],part,analysis_id=d['analysis_id'],window=0)['analysis_id']==d['analysis_id'],'versioned '+part)

@@ -15,7 +15,7 @@ from backend.common import ConflictError,DomainError
 from backend.research.lixinger_access import LocalAccess
 from backend.research.collection import merge
 from backend.research import lixinger
-from backend.research.analytics import backtest,ranks,flow_months
+from backend.research.analytics import ranks,flow_months
 from backend.research.metrics import moving_averages
 from backend.research.service import ResearchService,validate_backup
 from backend.service import Service
@@ -46,6 +46,16 @@ class AccessTests(unittest.TestCase):
         self.assertNotIn(SYNTHETIC,str(caught.exception));self.assertIsNone(caught.exception.__context__)
         with self.assertRaises(DomainError):self.a.request('cn/index',{},transport=lambda *args:(403,{'message':SYNTHETIC}))
         self.assertEqual(self.a.status()['counts']['cn/index'],2)
+    def test_saved_token_allows_only_explicit_manual_collection(self):
+        self.a.save_token(SYNTHETIC, 0)
+        state = self.a.status()
+        self.assertFalse(state['enabled'])
+        self.assertFalse(state['automatic'])
+        self.a.request('cn/index', {'stockCodes': ['000905']}, transport=transport)
+        self.assertEqual(self.a.status()['counts']['cn/index'], 1)
+        with self.assertRaises(DomainError):
+            self.a.request('cn/index', {}, automatic=True, transport=transport)
+
     def test_limit_and_automatic_gate_prevent_transport(self):
         self.enable(1)
         with self.assertRaises(DomainError):self.a.request('cn/index',{},automatic=True,transport=transport)
@@ -219,25 +229,13 @@ class AnalyticsTests(unittest.TestCase):
             if d.weekday()<5:rows.append(dict(date=str(d),value='10',close=str(100+len(rows)/10)))
             d+=timedelta(days=1)
         return rows
-    def test_ties_expanding_history_and_no_future_in_signal(self):
-        rows=self.rows();s=dict(rows=rows,frequency='daily');self.assertEqual(ranks(s)['0']['rank'],'0.5')
-        a=backtest(s,rows,3,1);future=copy.deepcopy(s);future['rows'][-1]['value']='1000';b=backtest(future,rows,3,1)
-        self.assertEqual(a,b);self.assertTrue(any(t['status']=='immature' for t in a['trades']))
-        self.assertTrue(all(t['entry_date']>t['signal_date'] for t in a['trades'] if t['entry_date']))
-        self.assertLess(len(backtest(s,rows,3,1,True)['trades']),len(a['trades']))
-    def test_zero_dividend_yield_is_a_valid_observation(self):
-        rows=[dict(r,value='0') for r in self.rows()]
-        series=dict(rows=rows,frequency='daily')
-        self.assertIsNone(ranks(series)['0']['rank'])
-        self.assertEqual(ranks(series,allow_zero=True)['0']['rank'],'0.5')
-        self.assertTrue(backtest(series,rows,3,1,allow_zero=True)['trades'])
-    def test_long_market_holiday_is_not_a_missing_next_close(self):
-        rows=self.rows();prices=[r for r in rows if not '2026-10-01'<=r['date']<='2026-10-07']
-        result=backtest(dict(rows=rows,frequency='daily'),prices,3,1)
-        signal=next(r for r in result['trades'] if r['signal_date']=='2026-09-30')
-        self.assertEqual(signal['entry_date'],'2026-10-08')
-        result=backtest(dict(rows=rows,frequency='daily'),prices,3,1,missing_dates=['2026-10-05'])
-        self.assertEqual(next(r for r in result['trades'] if r['signal_date']=='2026-09-30')['status'],'missing')
+    def test_ties_expanding_history_and_zero_yield(self):
+        rows = self.rows()
+        self.assertEqual(ranks(dict(rows=rows, frequency='daily'))['0']['rank'], '0.5')
+        zero = dict(rows=[dict(r, value='0') for r in rows], frequency='daily')
+        self.assertIsNone(ranks(zero)['0']['rank'])
+        self.assertEqual(ranks(zero, allow_zero=True)['0']['rank'], '0.5')
+
     def test_missing_known_session_invalidates_ma(self):
         rows=self.rows()[-100:];missing=rows[20]['date'];rows.pop(20)
         out=moving_averages(rows,0,[missing]);self.assertIsNone(out[60]['ma51']);self.assertIsNotNone(out[-1]['ma51'])
@@ -282,6 +280,8 @@ class LocalApiTests(unittest.TestCase):
                     for name in z.namelist():self.assertNotIn(SYNTHETIC.encode(),z.read(name))
                 r=app.state.research
                 iid=r.collection.save('000905',['price'],'2026-10-01',True,r.revision())['id']
-                response=c.get('/api/research/indices/'+iid+'/studio?holding=3&window=0')
+                response=c.get('/api/research/indices/'+iid+'/studio?window=0')
                 self.assertEqual(response.status_code,200,response.text)
-                self.assertEqual(c.get('/api/research/indices/'+iid+'/studio?holding=2').status_code,422)
+                self.assertNotIn('backtest',response.json())
+                self.assertNotIn('overlaps',response.json())
+                self.assertEqual(c.get('/api/research/indices/'+iid+'/studio?window=2').status_code,422)

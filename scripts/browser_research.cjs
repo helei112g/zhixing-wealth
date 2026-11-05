@@ -81,6 +81,45 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByRole('tab',{name:'观察台',exact:true}).click();
   await ready();
   check(await page.getByRole('heading',{name:'点位走势',exact:true}).count()===1&&await page.getByRole('heading',{name:'估值走势',exact:true}).count()===1,'price and valuation use separate cards');
+  check(await page.locator('.studio-valuation-panel').evaluate(node=>Boolean(node.compareDocumentPosition(document.querySelector('.studio-price-panel'))&Node.DOCUMENT_POSITION_FOLLOWING)),'valuation card appears before price card');
+  const currentRanks=page.getByLabel('当前估值历史分位',{exact:true});
+  const valuation=await api('/research/indices/csi%3A000905/studio?method=mcw&window=3&metric=pe');
+  for(const years of [3,5,10]){
+   const row=currentRanks.locator(':scope > div').filter({has:page.getByText(years+'年分位',{exact:true})});
+   const expected=(Number(valuation.ranks[years].rank)*100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+   check(await row.isVisible()&&(await row.locator('strong').innerText()).startsWith(expected),years+' year current percentile is visible without expanding details');
+  }
+
+  const valuationPanel=page.locator('.studio-valuation-panel');
+  const valuationChart=page.locator('.studio-valuation-chart');
+  const chartNode=await valuationChart.locator('svg.recharts-surface[role=application]').elementHandle();
+  const previousHeight=(await valuationPanel.boundingBox()).height;
+  let releaseWindow;
+  const delayedWindow=new Promise(resolve=>{releaseWindow=resolve;});
+  const studioRoute='**/api/research/indices/*/studio?*';
+  await page.route(studioRoute,async route=>{
+   if(new URL(route.request().url()).searchParams.get('window')==='5')await delayedWindow;
+   await route.continue();
+  });
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'5年',exact:true}).click();
+  await page.getByText('正在读取5年，暂显示3年曲线…',{exact:true}).waitFor();
+  check(await chartNode.evaluate(node=>node.isConnected)&&Math.abs((await valuationPanel.boundingBox()).height-previousHeight)<1,'delayed window update keeps the same chart mounted and card height stable');
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'10年',exact:true}).click();
+  await ready();
+  const lateResponse=page.waitForResponse(response=>response.url().includes('/studio?')&&new URL(response.url()).searchParams.get('window')==='5');
+  releaseWindow();
+  await lateResponse;
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  check(await valuationChart.getAttribute('data-valuation-window')==='10','late response cannot replace the latest selected window');
+  await page.unroute(studioRoute);
+
+  await page.route(studioRoute,route=>route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'合成读取失败'})}));
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'5年',exact:true}).click();
+  await page.getByText('未完成切换，仍显示10年曲线。',{exact:true}).waitFor();
+  check(await valuationChart.getAttribute('data-valuation-window')==='10'&&await chartNode.evaluate(node=>node.isConnected),'failed window request keeps the previous curve and identifies its window');
+  await page.unroute(studioRoute);
+  await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'3年',exact:true}).click();
+  await ready();
   check(await page.getByRole('img',{name:'日收盘与51、120、250、850日均线',exact:true}).locator('.recharts-line').count()===5,'close and all four MAs render');
   const summary=await page.locator('.studio-overview-summary').innerText();
   check(['最近交易日','本周','本月','本年','前十大股票权重'].every(s=>summary.includes(s)),'summary includes all calendar changes and top ten weight');
@@ -93,7 +132,15 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await ready();
   assert.deepEqual(await methods.getByRole('button').allTextContents(),initialOrder);
   check(true,'selected valuation method stays in its original position');
+  let releaseMetric;
+  const delayedMetric=new Promise(resolve=>{releaseMetric=resolve;});
+  await page.route(studioRoute,async route=>{await delayedMetric;await route.continue();});
   await page.getByLabel('观察指标',{exact:true}).getByRole('button',{name:'PB',exact:true}).click();
+  await page.getByText('正在读取估值分析…',{exact:true}).waitFor();
+  check(await valuationChart.locator('svg.recharts-surface[role=application]').count()===0&&(await valuationChart.boundingBox()).height>=350,'metric change never relabels the previous metric curve and preserves chart space');
+  releaseMetric();
+  await ready();
+  await page.unroute(studioRoute);
   await page.getByLabel('估值历史窗口',{exact:true}).getByRole('button',{name:'全历史',exact:true}).click();
   await ready();
   check(await page.getByLabel('点位历史窗口',{exact:true}).locator('button[aria-pressed=true]').innerText()==='3年','valuation history window does not change price window');
@@ -114,6 +161,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
 
   await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
   await page.getByRole('img',{name:'指数财务金额趋势',exact:true}).waitFor();
+  check(await page.locator('.research-weight').evaluateAll(rows=>rows.length>0&&rows.every(row=>row.clientWidth>300&&row.querySelector('span').scrollWidth<=row.querySelector('span').clientWidth+1)),'industry rows leave readable space for full names and weights');
   check(await page.getByRole('button',{name:'历史调样',exact:true}).count()===0&&await page.getByRole('button',{name:'篮子对照',exact:true}).count()===0,'financial pages are unified');
   for(const [label,suffix] of [['年度历史','12-31'],['一季度历史','03-31'],['半年历史','06-30'],['三季度历史','09-30']]){
    await page.getByRole('button',{name:label,exact:true}).click();

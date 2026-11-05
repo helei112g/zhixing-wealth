@@ -81,32 +81,49 @@ function ValuationRanks({analysis}:Obj){
  </details>;
 }
 
+function CurrentValuationRanks({analysis,pending}:Obj){
+ return <div className="studio-current-ranks" aria-label="当前估值历史分位">
+  {[3,5,10].map(years=>{
+   const rank=analysis?.ranks?.[years];
+   return <div key={years}>
+    <span>{years}年分位</span><strong>{pct(rank?.rank)}{rank?.partial&&<sup>*</sup>}</strong>
+    <small>{!analysis?(pending?'正在读取…':'暂无结果'):rank?.rank==null?'有效历史不足':rank.partial?'历史不足整窗，按已有历史计算':`${rank.count} 个前序观测`}</small>
+    <small>{rank?.start||'-'} → {rank?.end||'-'}</small>
+   </div>;
+  })}
+ </div>;
+}
+
 export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
  const [hidden,Hidden]=useState<string[]>([]);
  const [metric,Metric]=useState('pe');
  const [valuationWindow,ValuationWindow]=useState(3);
  const [analysis,Analysis]=useState<Obj|null>(null);
- const [error,Error]=useState('');
+ const [failure,Failure]=useState<Obj|null>(null);
  const methods=['mcw','ew','median','overall','arithmetic'].filter(m=>(d.valuation_methods||[]).includes(m)||method===m);
+ const context=JSON.stringify([d.id,d.basis,method,metric,d.research_revision]);
+ const requestKey=JSON.stringify([context,valuationWindow]);
+ const currentAnalysis=analysis?.context===context?analysis:null;
+ const error=failure?.requestKey===requestKey?failure.message:'';
+ const pending=currentAnalysis?.requestKey!==requestKey&&!error;
 
  useEffect(()=>{
   let active=true;
-  Analysis(null);
-  Error('');
+  Failure(null);
   api('/research/indices/'+encodeURIComponent(d.id)+'/studio?'+query({basis:d.basis,method,window:valuationWindow,metric}))
    .then(v=>{
     if(!active)return;
     if(v.research_revision!==d.research_revision){
-     Error('数据版本已变化，等待本地档案同步后重算。');
+     Failure({requestKey,message:'数据版本已变化，等待本地档案同步后重算。'});
      return;
     }
-    Analysis(v);
+    Analysis({...v,context,requestKey});
    })
-   .catch(e=>{if(active)Error(e.message);});
+   .catch(e=>{if(active)Failure({requestKey,message:e.message});});
   return()=>{active=false;};
- },[d.analysis_id,d.id,d.basis,method,valuationWindow,metric]);
+ },[requestKey]);
 
- const curve=(analysis?.valuation_curve||[]).map((r:Obj)=>Object.fromEntries(
+ const curve=(currentAnalysis?.valuation_curve||[]).map((r:Obj)=>Object.fromEntries(
   Object.entries(r).map(([k,v])=>[k,k==='date'?v:v==null?null:Number(v)*(metric==='dividend_yield'&&k!=='close'?100:1)])
  ));
  return <>
@@ -120,10 +137,6 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
    <div><span>{metricNames[metric]} · {methodNames[method]}</span><strong>{metric==='dividend_yield'?pct(d.valuation[metric]?.current):num(d.valuation[metric]?.current)}</strong><small>估值 {d.valuation[metric]?.date||'尚无此方法数据'}</small></div>
    <div><span>前十大股票权重</span><strong>{num(d.top10_weight)}%</strong><small>权重日期 {d.membership_date||'-'}</small></div>
   </Panel>
-  <Panel title="点位走势" className="studio-price-panel" right={<HistoryWindow value={window} onChange={setWindow} label="点位历史窗口"/>}>
-   <p className="muted small">{windowName(window)} · 本地行情 {d.daily_series[0]?.date||'-'} → {d.latest?.date||'-'}；切换只读取本地数据。</p>
-   <LinkedHistory d={d} window={window}/>
-  </Panel>
   <Panel title="估值走势" className="studio-valuation-panel" right={<HistoryWindow value={valuationWindow} onChange={ValuationWindow} label="估值历史窗口"/>}>
    <div className="studio-controls">
     <div className="studio-choice"><span>估值方法</span><div className="segmented" aria-label="估值方法">
@@ -133,8 +146,11 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
      {Object.entries(metricNames).map(([k,v])=><button key={k} aria-pressed={metric===k} className={metric===k?'active':''} onClick={()=>Metric(k)}>{String(v)}</button>)}
     </div></div>
    </div>
+   <CurrentValuationRanks analysis={currentAnalysis} pending={pending}/>
    <ErrorBox error={error}/>
-   {!analysis&&!error?<p className="muted small" role="status">正在读取估值分析…</p>:curve.length?<>
+   <p className="studio-valuation-status muted small" role="status">{pending?(currentAnalysis?`正在读取${windowName(valuationWindow)}，暂显示${windowName(currentAnalysis.window)}曲线…`:'正在读取估值分析…'):error&&currentAnalysis?`未完成切换，仍显示${windowName(currentAnalysis.window)}曲线。`:'\u00a0'}</p>
+   <div className="studio-valuation-chart" aria-busy={pending} data-valuation-window={currentAnalysis?.window}>
+   {curve.length?<>
     <div role="img" aria-label="估值与三五十年滚动均值"><ResponsiveContainer width="100%" height={350} minWidth={0}>
      <LineChart accessibilityLayer data={curve}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="date" minTickGap={80}/>
       <YAxis yAxisId="valuation" width={60} domain={['auto','auto']}/><YAxis yAxisId="price" orientation="right" width={70} domain={['auto','auto']}/><Tooltip/>
@@ -143,13 +159,18 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
       <Line yAxisId="price" dataKey="close" hide={hidden.includes('close')} name="同日指数点位 · 右轴" stroke={colors[4]} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false}/>
      </LineChart>
     </ResponsiveContainer></div>
-    <p className="muted small">估值每日等权滚动平均，包含当日；不足整窗留空。点位使用独立右轴。</p>
-   </>:<Notice>尚无所选方法的估值序列；可在数据来源页查看采集状态。</Notice>}
-   <ValuationRanks analysis={analysis}/>
+   </>:pending?null:<Notice>{error?'估值分析读取失败。':'尚无所选方法的估值序列；可在数据来源页查看采集状态。'}</Notice>}
+   </div>
+   <p className="muted small">分位不含当日观测；估值每日等权滚动平均包含当日，不足整窗留空。点位使用独立右轴。</p>
+   <ValuationRanks analysis={currentAnalysis}/>
+  </Panel>
+  <Panel title="点位走势" className="studio-price-panel" right={<HistoryWindow value={window} onChange={setWindow} label="点位历史窗口"/>}>
+   <p className="muted small">{windowName(window)} · 本地行情 {d.daily_series[0]?.date||'-'} → {d.latest?.date||'-'}；切换只读取本地数据。</p>
+   <LinkedHistory d={d} window={window}/>
   </Panel>
   <Scenario key={d.analysis_id+method} d={d} method={method} setMethod={setMethod}/>
-  <div className="studio-risk" data-studio-ready={Boolean(analysis)}>
-   <span>250日年化波动率 {pct(analysis?.volatility_250)}</span><span>全量权重 HHI {num(analysis?.concentration_hhi,4)}</span>
+  <div className="studio-risk" data-studio-ready={Boolean(currentAnalysis)&&!pending&&!error}>
+   <span>250日年化波动率 {pct(currentAnalysis?.volatility_250)}</span><span>全量权重 HHI {num(currentAnalysis?.concentration_hhi,4)}</span>
   </div>
  </>;
 }

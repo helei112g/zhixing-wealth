@@ -6,12 +6,13 @@ import threading
 import time
 from datetime import datetime,timedelta
 from ..common import ConflictError,DomainError,day,json_dumps,now,today
-from . import providers,history
+from . import providers
 from .snapshots import encode,decode
+from .collection import subscription
 
 SCOPES=('quotes','fx','index_prices','memberships','valuations','financials')
-MODULES={'index_prices':('price','total_return'),'memberships':('memberships','historical_memberships'),
-         'valuations':('valuations','stock_valuations'),'financials':('financials','historical_financials')}
+MODULES={'index_prices':('index_info','price','total_return'),'memberships':('memberships','historical_memberships','tracking_funds'),
+         'valuations':('valuations','market_activity','stock_valuations'),'financials':('index_financials','financials','historical_financials')}
 
 
 def key(resource):return hashlib.sha256(json_dumps(resource).encode()).hexdigest()
@@ -65,14 +66,14 @@ class UpdateJobs:
         if targets is not None and (not isinstance(targets,list) or not targets or any(not isinstance(t,str) for t in targets)):raise DomainError('更新对象无效')
         if targets:
             for iid in targets:self.research.profile(iid)
-        targets=targets or [p['id'] for p in self.research.profiles()]
+        targets=targets or [p['id'] for p in self.research.profiles() if subscription(p)['enabled']]
         if resources is None:
             resources=[]
             for scope in SCOPES:
                 if scope not in scopes:continue
                 if scope=='fx':resources += [dict(scope=scope,currency=c) for c in ('HKD','USD')]
                 elif scope=='quotes':resources.append(dict(scope=scope,instrument_id=None))
-                else:resources += [dict(scope=scope,target=iid,module=m) for iid in targets for m in MODULES[scope]]
+                else:resources += [dict(scope=scope,target=iid,module=m) for iid in targets for m in MODULES[scope] if subscription(self.research.profile(iid))['enabled'] and m in subscription(self.research.profile(iid))['modules']]
         if not isinstance(resources,list) or not resources or len(resources)>200:raise DomainError('没有可更新的对象，或任务超过200项')
         for r in resources:
             if not isinstance(r,dict) or r.get('scope') not in scopes:raise DomainError('资源与更新范围不一致')
@@ -86,6 +87,7 @@ class UpdateJobs:
             else:
                 if set(r)!={'scope','target','module'} or r['module'] not in MODULES[scope]:raise DomainError('指数模块资源无效')
                 self.research.profile(r['target'])
+                self.research.collection.active(r['target'],r['module'])
         return sorted({key(r):r for r in resources}.values(),key=lambda r:(SCOPES.index(r['scope']),r.get('target',''),MODULES.get(r['scope'],('',)).index(r.get('module','')) if r['scope'] in MODULES else r.get('currency','')))
 
     def run(self,body,trigger='manual'):
@@ -148,36 +150,10 @@ class UpdateJobs:
     def execute(self,r):
         if r['scope'] in ('quotes','fx'):return self._legacy(r)
         iid,module=r['target'],r['module']
-        p=self.research.profile(iid)
-        # Prices keep completed-day semantics; announcements may be published today.
         cutoffs=self.current_job or {}
         asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','stock_valuations') else (cutoffs.get('information_cutoff') or str(today()))
-        capability=providers.module_capabilities(p)[module]
-        if not capability['supported']:
-            return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='unsupported',error=capability['reason'])]
-        if module in ('price','total_return'):value=providers.prices(p,module,asof)
-        elif module=='memberships':value=providers.constituents(p,asof)
-        elif module=='historical_memberships':
-            value=history.memberships(p,asof)
-            old=self.research.module(iid,module)
-            if value.get('status')=='unavailable' and old and any(b['members'] for b in old.get('baskets',[])):raise DomainError('官方历史名单暂不可用，保留已核验版本')
-        elif module=='historical_financials':
-            baskets=self.research.module(iid,'historical_memberships')
-            if not baskets:raise DomainError('缺少核验的历史成分版本，请先更新成分名单')
-            members={m['code']:m for b in baskets['baskets'] if b['status']=='official' for m in b['members']}
-            finance=self.research.module(iid,'financials') or {}
-            cached={r['code'] for r in finance.get('rows',[])}
-            extra=[m for c,m in members.items() if c not in cached]
-            fetched=providers.financials(extra,asof) if extra else dict(rows=[],evidence=[])
-            rows=finance.get('rows',[])+fetched['rows']
-            value=dict(years=history.totals(rows,baskets['baskets']),rows=rows,evidence=fetched.get('evidence',[]),membership_snapshot_id=baskets['snapshot_id'],source_snapshot_ids=[finance['snapshot_id']] if finance.get('snapshot_id') else [],effective_date=asof,version_basis='current_restated')
-        elif module=='valuations':value=providers.valuations(p,asof)
-        else:
-            members=self.research.module(iid,'memberships')
-            if not members:raise DomainError('缺少有效成分，请先更新成分名单')
-            value=(providers.stock_valuations if module=='stock_valuations' else providers.financials)(members['rows'],asof)
-        sid=self.research.publish(iid,module,value)
-        return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='complete',snapshot_id=sid,date=value.get('effective_date'))]
+        value=self.research.collection.collect(iid,module,asof,automatic=self.current_trigger in ('schedule','startup'))
+        return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='complete',snapshot_id=value.get('snapshot_id'),date=value.get('effective_date'))]
 
     def _work(self):
         try:
@@ -226,6 +202,9 @@ class UpdateJobs:
             elif p['cadence']=='weekly':slot-=timedelta(days=slot.weekday())
             if p['scope'] in ('quotes','fx') and not populated:continue
             if p['scope'] not in ('quotes','fx') and not self.research.profiles():continue
+            if p['scope'] not in ('quotes','fx'):
+                access=self.research.access.status()
+                if not access['enabled'] or not access['automatic'] or not any(subscription(v)['enabled'] for v in self.research.profiles()):continue
             request_id='schedule:'+slot.isoformat()+':'+p['scope']+':'+str(self.research.revision('settings_revision'))
             with self.store.connection() as db:
                 if db.execute('SELECT 1 FROM data_update_receipts WHERE id=?',(hashlib.sha256(request_id.encode()).hexdigest(),)).fetchone():continue

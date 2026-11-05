@@ -1,21 +1,20 @@
 """Independent research revisions and durable single-worker update planning."""
-import base64
 import hashlib
-import hmac
 import json
 import secrets
 import threading
-import time
 from collections import OrderedDict
 from copy import deepcopy
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime,timedelta
 from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, today, wire
 from . import providers,price_chunks
 from .snapshots import encode,decode
 from .validation import validate as validate_snapshot,public_url
-from .updates import UpdateJobs,SCOPES,MODULES,key as resource_key
+from .updates import UpdateJobs,SCOPES,MODULES
 from .metrics import WINDOWS, METHOD_VERSION, clean_prices, drawdown, valuation, financial_totals,price_changes,moving_averages
+from .lixinger_access import LocalAccess
+from .collection import Collection, subscription
 
 TABLES = {'research_meta','research_price_chunks','research_indices','research_snapshots','research_heads','data_update_policies','data_update_tasks','data_update_receipts'}
 
@@ -24,7 +23,8 @@ class ResearchService:
     def __init__(self, store, legacy_service, writes_allowed=lambda: True):
         self.store, self.legacy = store, legacy_service
         self.writes_allowed = writes_allowed
-        self.secret = secrets.token_bytes(32)
+        self.access = LocalAccess(store.directory)
+        self.collection = Collection(self)
         self.updates = UpdateJobs(self)
         self.worker_lock = self.updates.worker_lock
         self.cache = OrderedDict()
@@ -53,87 +53,7 @@ class ResearchService:
             return int(row[0]) if row else 0
 
     def resolve(self, code):
-        p = providers.identity(code); expires = int(time.time())+600
-        digest = hashlib.sha256(json_dumps(p).encode()).hexdigest()
-        message = f'{p["code"]}:{p["input_basis"]}:{expires}:{digest}'
-        token = message+':'+hmac.new(self.secret,message.encode(),'sha256').hexdigest()
-        saved=next((v for v in self.profiles() if v['id']==p['provider']+':'+p['code']),None)
-        default=providers.valuation_code(saved or p)
-        return dict(profile=p, resolve_token=token, expires_at=expires, research_revision=self.revision(),
-                    valuation_options=list(providers.VALUATION_SUFFIXES),
-                    default_valuation_suffix=default.rsplit('.',1)[-1] if default else None,
-                    valuation_disabled=bool(saved is not None and 'valuation_code' in saved and saved['valuation_code'] is None))
-
-    def valuation_preview(self, code, suffix):
-        p=providers.identity(code)
-        if suffix is None:
-            result=dict(code=None,status='skipped',metrics={})
-        elif suffix not in providers.VALUATION_SUFFIXES:
-            raise DomainError('估值后缀不在候选列表中')
-        elif p['code']=='H11136':
-            result=dict(code=p['code']+'.'+suffix,status='unavailable',metrics={},reason='境外指数估值口径尚未支持，请选择暂不接入估值')
-        else:
-            result=providers.probe_valuations(p,suffix)
-        token=None;expires=int(time.time())+600
-        if result['status'] in ('available','skipped'):
-            payload=dict(profile=hashlib.sha256(json_dumps(p).encode()).hexdigest(),suffix=suffix,expires=expires)
-            content=base64.urlsafe_b64encode(json_dumps(payload).encode()).decode()
-            token=content+':'+hmac.new(self.secret,('valuation:'+content).encode(),'sha256').hexdigest()
-        return dict(result,valuation_token=token,expires_at=expires)
-
-    def _valuation_selection(self, token, profile):
-        try:
-            if not isinstance(token,str) or len(token)>4096:raise ValueError()
-            content,signature=token.split(':')
-            if not hmac.compare_digest(signature,hmac.new(self.secret,('valuation:'+content).encode(),'sha256').hexdigest()):raise ValueError()
-            value=json.loads(base64.urlsafe_b64decode(content))
-            if value['expires']<time.time() or value['profile']!=hashlib.sha256(json_dumps(profile).encode()).hexdigest():raise ValueError()
-            suffix=value['suffix']
-            if suffix is not None and suffix not in providers.VALUATION_SUFFIXES:raise ValueError()
-        except (ValueError,KeyError,TypeError):raise DomainError('估值验证缺失、已过期或与指数不匹配，请重新选择并验证PE、PB') from None
-        return profile['code']+'.'+suffix if suffix else None
-
-    def add(self, body):
-        request_id=body.get('request_id')
-        if not isinstance(request_id,str) or not request_id or len(request_id)>160:raise DomainError('建档须携带request_id')
-        receipt=hashlib.sha256(('add:'+request_id).encode()).hexdigest()
-        digest=hashlib.sha256(json_dumps({k:v for k,v in body.items() if k!='request_id'}).encode()).hexdigest()
-        with self.worker_lock,self.transaction() as db:
-            old=db.execute('SELECT digest,result FROM data_update_receipts WHERE id=?',(receipt,)).fetchone()
-            if old:
-                if old[0]!=digest:raise ConflictError('request_id已用于其他建档请求')
-                result=json.loads(old[1])
-            else:
-                token=body.get('resolve_token','')
-                try:
-                    code,basis,expires,identity_digest,signature=token.split(':');message=':'.join((code,basis,expires,identity_digest))
-                    if int(expires)<time.time() or not hmac.compare_digest(signature,hmac.new(self.secret,message.encode(),'sha256').hexdigest()):raise ValueError()
-                    p=providers.identity(code);p['input_basis']=basis
-                    if hashlib.sha256(json_dumps(p).encode()).hexdigest()!=identity_digest:raise ValueError()
-                except (ValueError,TypeError):raise DomainError('身份预览已失效，请重新识别') from None
-                selected_code=self._valuation_selection(body.get('valuation_token'),p)
-                row=db.execute("SELECT value FROM research_meta WHERE key='revision'").fetchone();revision=int(row[0]) if row else 0
-                if type(body.get('expected_research_revision')) is not int or body['expected_research_revision']!=revision:raise ConflictError('资料已变化，请重新识别并核对')
-                iid=p['provider']+':'+p['code']
-                existing=db.execute('SELECT data FROM research_indices WHERE id=?',(iid,)).fetchone()
-                if existing and providers.valuation_code(json.loads(existing[0]))!=selected_code:
-                    raise ConflictError('该指数已建档，估值配置与已有档案不同；本次未覆盖配置，请保留原选择')
-                p['valuation_code']=selected_code
-                inserted=db.execute('INSERT OR IGNORE INTO research_indices VALUES (?,?)',(iid,json_dumps(dict(p,id=iid,created_at=now())))).rowcount
-                if inserted:
-                    revision+=1
-                    db.execute("INSERT INTO research_meta VALUES ('revision',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(str(revision),))
-                resources=[dict(scope=scope,target=iid,module=m) for scope in SCOPES if scope in MODULES for m in MODULES[scope]]
-                generation=providers.cutoff();task_digest=resource_key(dict(resources=resources,generation=generation))
-                match=next((r for r in db.execute("SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running')") if json.loads(r[1])['digest']==task_digest),None)
-                jid=match[0] if match else secrets.token_hex(16)
-                if not match:
-                    job=dict(id=jid,created_order=time.time_ns(),digest=task_digest,generation=generation,resources=resources,scopes=list(MODULES),trigger='index_create',started_at=now(),items=[],completed_resources=[])
-                    db.execute('INSERT INTO data_update_tasks VALUES (?,?,?)',(jid,'pending',json_dumps(job)))
-                result=dict(id=iid,basis=basis,research_revision=revision,job_id=jid,existing=not inserted)
-                db.execute('INSERT INTO data_update_receipts VALUES (?,?,?,?)',(receipt,digest,jid,json_dumps(result)))
-        self.cache.clear();self.updates.start()
-        return result
+        return dict(profile=providers.identity(code), research_revision=self.revision())
 
     def profiles(self):
         with self.store.connection() as db: return [json.loads(r[0]) for r in db.execute('SELECT data FROM research_indices ORDER BY id')]
@@ -142,6 +62,43 @@ class ResearchService:
         p=next((p for p in self.profiles() if p['id']==iid),None)
         if not p: raise DomainError('指数档案不存在')
         return p
+
+    def versions(self,iid):
+        self.profile(iid)
+        with self.store.connection() as db:
+            rows=db.execute("SELECT id,module,created_at,sha256 FROM research_snapshots WHERE index_id=? AND module NOT LIKE 'stage.%' ORDER BY rowid DESC LIMIT 100",(iid,)).fetchall()
+        return dict(items=[dict(id=r[0],module=r[1],created_at=r[2],sha256=r[3]) for r in rows],limit=100)
+
+    def frozen(self,iid,sid):
+        self.profile(iid)
+        with self.store.connection() as db:
+            row=db.execute("SELECT module,created_at,sha256,data FROM research_snapshots WHERE index_id=? AND id=? AND module NOT LIKE 'stage.%'",(iid,sid)).fetchone()
+            if not row:raise DomainError('该指数的来源版本不存在')
+            value=decode(row[3],row[2])
+            if row[0] in ('price','total_return'):value=price_chunks.expand(db,value)
+        return dict(snapshot_id=sid,module=row[0],created_at=row[1],sha256=row[2],data=value)
+
+    def check_source(self,iid,expected):
+        """One explicit official-source check; never merges reference values into history."""
+        d=self.detail(iid,method='mcw')
+        if d['analysis_id']!=expected:raise ConflictError('分析版本已变化，请重新读取后核对')
+        if not d['latest']:raise DomainError('请先采集价格日线')
+        official=providers.prices(d['profile'],'price',d['asof'],str(day(d['asof'])-timedelta(days=45)))
+        local={r['date']:r for r in (self.module(iid,'price') or {}).get('rows',[])}
+        vals=((self.module(iid,'valuations') or {}).get('series',{}).get('pe',{}).get('mcw',{}).get('rows',[]))
+        pe={r['date']:r['value'] for r in vals};rows=[]
+        for r in official['rows']:
+            if r['date'] not in local:continue
+            difference=abs(dec(r['close'])-dec(local[r['date']]['close']))
+            rows.append(dict(date=r['date'],official_close=r['close'],local_close=local[r['date']]['close'],difference=ds(difference),
+                             close_matches=difference<=dec('.01'),official_pe=r.get('reference_pe'),lixinger_pe=pe.get(r['date'])))
+        if not rows:raise DomainError('官方与本地日线没有同日观测，未生成校验结果')
+        value=dict(rows=rows,effective_date=rows[-1]['date'],source=official['source'],evidence=official['evidence'],
+                   methodology_note='收盘仅核对同日价格身份，容差0.01点。官方PE与理杏仁mcw口径尚未证实可比，仅并列，不据此开启条件试算；PB参考缺项。')
+        with self.store.lock:
+            if self.detail(iid,method='mcw')['analysis_id']!=expected:raise ConflictError('校验期间输入版本变化，未发布')
+            self.publish(iid,'official_reference',value)
+        return value
 
     def module(self, iid, module):
         with self.store.connection() as db:
@@ -152,6 +109,7 @@ class ResearchService:
 
     def publish(self, iid, module, value):
         # Provenance stays inside the same SQLite snapshot/backup. No external file references.
+        value={k:v for k,v in value.items() if k not in ('snapshot_id','fetched_at','sha256')}
         validate_snapshot(module,value)
         digest,content,blocks=price_chunks.prepare(wire(value)) if module in ('price','total_return') else (*encode(wire(value)),{})
         current=self.module(iid,module)
@@ -172,7 +130,7 @@ class ResearchService:
         return sid
 
     def detail(self, iid, basis='price', method='overall', window=3, *, summary=False):
-        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic') or window not in WINDOWS: raise DomainError('指数口径、估值方法或窗口无效')
+        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
         with self.store.lock:
             p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff()
             recent=[] if summary else self.updates.jobs()
@@ -181,19 +139,17 @@ class ResearchService:
             if key in self.cache:
                 self.cache.move_to_end(key)
                 return deepcopy(self.cache[key])
-            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials')
+            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials','index_info','index_financials','market_activity','tracking_funds','official_reference')
             resources={name:self.module(iid,name) for name in names}
         price=resources[basis];v=resources['valuations'];members=resources.get('memberships');stocks=resources.get('stock_valuations');finance=resources.get('financials')
         asof=price['effective_date'] if price else providers.cutoff()
         prices=clean_prices(price['rows'],asof) if price else []
-        calendar={r['date'] for r in (resources['price'] or {}).get('rows',[])}
         valuations={}
-        for metric in ('pe','pb'):
+        for metric in ('pe','pb','ps','dividend_yield'):
             series=(v or {}).get('series',{}).get(metric,{}).get(method)
             if series:
-                series=dict(series,rows=[r for r in series['rows'] if r['date'] in calendar])
-                valuations[metric]=valuation(series,asof)
-        dd={str(w):drawdown(prices,asof,w) for w in WINDOWS}
+                valuations[metric]=valuation(series,str(today()),allow_zero=metric=='dividend_yield')
+        dd={str(w):drawdown(prices,asof,w,allow_partial=(price or {}).get('provider_id')=='lixinger') for w in (*WINDOWS,0)}
         sample=dd[str(window)]
         curve=sample.get('curve',[])
         # Keep complete data for math; only the display curve is downsampled.
@@ -212,7 +168,7 @@ class ResearchService:
         main=max(qualified,default=max(periods,default=None)); summary=totals.get(main)
         company_rows={}
         for row in (finance or {}).get('rows',[]):company_rows.setdefault(row['code'],{})[row['period']]=row
-        companies=sorted([dict(r,financials=company_rows.get(r['code'],{})) for r in companies],key=lambda r:(-dec(r['weight']),r['code']))
+        companies=sorted([dict(r,financials=company_rows.get(r['code'],{})) for r in companies],key=lambda r:(r.get('weight') is None,-dec(r.get('weight') or '0'),r['code']))
         for rank,r in enumerate(companies,1):r['weight_rank']=rank
         annual=[]
         for year in range(int(asof[:4])-10,int(asof[:4])):
@@ -220,16 +176,21 @@ class ResearchService:
             annual.append(dict(period=period,membership_status='current_basket',metrics={m:dict(amount=v['current']['amount'],growth=v['growth'],count=v['current']['count'],denominator=v['current']['denominator'],count_coverage=v['current']['count_coverage'],weight_coverage=v['current']['coverage'],previous_amount=v['previous']['amount'],previous_coverage=v['previous']['coverage'],change=v['change'],status=v['status']) for m,v in metrics.items()}))
         sources=[dict(module=name,snapshot_id=m['snapshot_id'],fetched_at=m['fetched_at'],sha256=m['sha256'],effective_date=m.get('effective_date'),evidence=m.get('evidence',[]),limitation=m.get('limitation') or m.get('methodology_note') or m.get('theoretical_history_note')) for name,m in resources.items() if m]
         module_status={}
-        for module, capability in providers.module_capabilities(p).items():
+        for module in (n for n in names if n != 'total_return' or not summary):
+            capability=providers.module_capabilities(p).get(module,dict(supported=True,reason=None))
             snapshot=resources.get(module)
             last=next((i for job in recent for i in reversed(job.get('items',[])) if i.get('target')==iid and i.get('module')==module),None)
-            module_status[module]=dict(supported=capability['supported'],status='unsupported' if not capability['supported'] else 'available' if snapshot else 'error' if last and last.get('status')=='error' else 'missing',
+            module_status[module]=dict(supported=capability['supported'],status='error' if last and last.get('status')=='error' else 'available' if snapshot else 'unsupported' if not capability['supported'] else 'missing',
                                        reason=capability['reason'] or (last.get('error') if last else None), date=snapshot.get('effective_date') if snapshot else None)
         result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=p['return_code'] if basis=='total_return' else p['code'],asof=asof,latest=prices[-1] if prices else None,
             research_revision=revision,method=method,window=window,method_version=METHOD_VERSION,analysis_id=hashlib.sha256(json_dumps([m['snapshot_id'] if m else None for m in resources.values()]+[basis,method,METHOD_VERSION]).encode()).hexdigest(),
-            valuation=valuations,drawdown=dd,curve=chart,daily_series=moving_averages(prices,window),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
+            valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=moving_averages(prices,window,(price or {}).get('missing_dates',[])),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
-            sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and method=='overall' and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb')))))
+            sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('mapping_verified')) and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb'))),
+            collection=self.collection.status(iid),official_reference=resources.get('official_reference'),source_coverage=(price or {}).get('coverage'),memberships_complete=(members or {}).get('weights_complete',True),
+            historical_memberships=(resources.get('historical_memberships') or {}).get('baskets',[]),membership_comparison_coverage=(resources.get('historical_memberships') or {}).get('comparison_coverage',[]),index_info=(resources.get('index_info') or {}).get('info'),
+            index_financials=(resources.get('index_financials') or {}).get('rows',[]),fundamental_activity=(v or {}).get('activity_rows',[]),
+            market_activity=(resources.get('market_activity') or {}).get('series',{}),tracking_funds=(resources.get('tracking_funds') or {}).get('rows',[])))
         return self._remember(key,result,revision)
 
     def _remember(self,key,result,revision):
@@ -243,9 +204,9 @@ class ResearchService:
     def scenario(self,iid,body):
         basis=body.get('basis','price');metric=body.get('metric','pe')
         if metric not in ('pe','pb'):raise DomainError('试算指标无效')
-        d=self.detail(iid,basis)
+        d=self.detail(iid,basis,body.get('method','overall'))
         if body.get('analysis_id')!=d['analysis_id']:raise ConflictError('分析版本已变化，请重新读取并核对假设')
-        if not d['mapping_available']:raise DomainError('仅同日价格序列与整体法估值可试算；全收益缺少未来分红再投资假设')
+        if not d['mapping_available']:raise DomainError('仅同日价格序列与已核验分母映射的估值可试算；全收益缺少未来分红再投资假设')
         if body.get('accept_fixed_basket_assumption') is not True:raise DomainError('请明确接受固定成分、权重及除数的条件假设')
         change=dec(body.get('change_ratio'));target=dec(body.get('target_multiple'),positive=True)
         if change<=-1:raise DomainError('分母变化须大于-100%')

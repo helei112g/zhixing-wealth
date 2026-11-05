@@ -1,104 +1,45 @@
 #!/usr/bin/env python3
-"""Real HTTP AI-client contract on the explicitly marked synthetic research server."""
-import json
+"""Local HTTP research contract using a guarded synthetic test server; no credential reads."""
 import os
-import subprocess
-import sys
-import tempfile
 import time
-from pathlib import Path
 from ai_client import Client
 
 
 def main():
-    c=Client(os.environ['PORTFOLIO_TEST_URL'],environment='test',expected_data_dir=os.environ['PORTFOLIO_TEST_DATA_DIR']);checks=[]
-    def check(v,label):
-        if not v:raise AssertionError(label)
-        checks.append(label);print('PASS research AI',len(checks),label,flush=True)
-    cap=c.request('/api/capabilities');check(cap['research']['windows']==[3,5,10],'capability discovery')
-    before=c.connect()['revision'];preview=c.resolve_index('H00300');check(c.connect()['revision']==before,'resolve does not change ledger')
-    original=(c.request('/api/research/revision'),c.request('/api/data-updates/jobs'))
-    validation=c.validate_index_valuation('H00300',preview['default_valuation_suffix'])
-    check(validation['status']=='available' and set(validation['metrics'])=={'pe','pb'},'AI validates both selected valuation metrics')
-    check((c.request('/api/research/revision'),c.request('/api/data-updates/jobs'))==original,'valuation validation does not publish snapshots or jobs')
-    check(cap['research']['valuation_preview']['suffixes']==['CSI','SH','SZ','LG'],'AI discovers explicit suffix list')
-    body=dict(resolve_token=preview['resolve_token'],valuation_token=validation['valuation_token'],expected_research_revision=preview['research_revision'],request_id='synthetic-ai-add')
-    saved=c.write('/api/research/indices',body,'POST');check(c.write('/api/research/indices',body,'POST')==saved,'replayed add returns original result')
-    end=time.monotonic()+20
-    while time.monotonic()<end:
-        jobs=c.request('/api/data-updates/jobs')['jobs'];job=next(j for j in jobs if j['id']==saved['job_id'])
-        if job['state'] not in ('pending','running'):break
+    c=Client(os.environ['PORTFOLIO_TEST_URL'],environment='test',expected_data_dir=os.environ['PORTFOLIO_TEST_DATA_DIR'])
+    count=0
+    def check(value,label):
+        nonlocal count
+        if not value:raise AssertionError(label)
+        count+=1;print('PASS research AI',count,label,flush=True)
+    cap=c.request('/api/capabilities');check(cap['research']['windows']==[0,3,5,10],'discover complete windows')
+    before=c.connect()['revision'];counts=c.request('/api/settings/lixinger')['counts']
+    p=c.collection_preview('000905',['index_info','price','total_return','valuations','memberships'],'2026-10-01')
+    check(c.request('/api/settings/lixinger')['counts']==counts,'preview uses no supplier calls')
+    body=dict(code='000905',modules=p['modules'],history_start=p['history_start'],enabled=True,expected_research_revision=p['research_revision'])
+    saved=c.write('/api/research/collection',body,'PUT');check(c.request('/api/research/catalog')['subscriptions'][0]['subscription']['enabled'],'subscription read back')
+    try:c.write('/api/research/collection',body,'PUT')
+    except RuntimeError as e:check('409' in str(e),'stale subscription rejected')
+    else:raise AssertionError('stale subscription accepted')
+    d=c.research_index(saved['id'],window=0);check(d['latest'] and d['valuation']['pe']['source']=='理杏仁','reads synthetic cached Lixinger sequence')
+    a=c.research_studio(saved['id'],method='mcw',window=3,metric='pe',holding=1)
+    check(a['analysis_id']==c.research_index(saved['id'])['analysis_id'],'UI and AI share analysis snapshot')
+    check(c.request('/api/settings/lixinger')['counts']==counts,'analysis reads are offline')
+    for part in ('series','constituents','financials','sources'):
+        check(c.research_part(saved['id'],part,analysis_id=d['analysis_id'],window=0)['analysis_id']==d['analysis_id'],'versioned '+part)
+    versions=c.request('/api/research/indices/'+saved['id']+'/versions')['items'];v=versions[-1]
+    check(c.request('/api/research/indices/'+saved['id']+'/versions/'+v['id'])['sha256']==v['sha256'],'immutable older snapshot read')
+    job=c.refresh_index(saved['id'],'synthetic-ai-refresh');check(c.refresh_index(saved['id'],'synthetic-ai-refresh')['job_id']==job['job_id'],'update receipt idempotence')
+    deadline=time.monotonic()+30
+    while time.monotonic()<deadline:
+        value=c.request('/api/data-updates/jobs/'+job['job_id'])
+        if value['state'] not in ('pending','running'):break
         time.sleep(.05)
-    check(job['state']=='complete','initial update task completes over HTTP')
-    d=c.research_index(saved['id']);check(d['latest'] is not None and len(d['drawdown'])==3,'read back actual created identity and windows')
-    check(d['top10_weight']=='95' and d['companies'][0]['weight_rank']==1,'full-basket top10 and deterministic ranks')
-    check('2025-12-31' in d['companies'][0]['financials'] and len(d['financials']['current_years'])==10,'company financial periods and ten annual aggregates')
-    check(d['daily_series'][-1]['ma850'] is not None and d['changes']['ytd']['ratio']=='0.2','full-history moving average and calendar YTD')
-    scenario=c.research_scenario(saved['id'],dict(analysis_id=d['analysis_id'],metric='pe',target_multiple='10',change_ratio='0.25',reference_window=3,accept_fixed_basket_assumption=True))
-    check(scenario['point']=='150' and len(scenario['curve'])==21 and 'p10' in scenario['reference_points'],'scenario curve and reference band use the same backend response')
-    cli=[sys.executable,str(Path(__file__).with_name('ai_client.py')),'--environment','test',
-         '--base-url',os.environ['PORTFOLIO_TEST_URL'],'--expected-data-dir',os.environ['PORTFOLIO_TEST_DATA_DIR']]
-    original=(c.connect()['revision'],c.request('/api/research/revision'),c.update_settings(),c.request('/api/data-updates/jobs'))
-    with tempfile.TemporaryDirectory(prefix='scenario-cli-',dir=os.environ['PORTFOLIO_TEST_OUTPUT']) as temp:
-        request=Path(temp)/'request.json'
-        payload=dict(analysis_id=d['analysis_id'],metric='pe',target_multiple='10',change_ratio='0.25',reference_window=3,accept_fixed_basket_assumption=True)
-        request.write_text(json.dumps(payload))
-        result=subprocess.run([*cli,'scenario',saved['id'],str(request)],capture_output=True,text=True,timeout=20)
-        check(result.returncode==0 and json.loads(result.stdout)==scenario,'CLI scenario returns canonical result without a write-confirmation flag')
-        for changes,status in [(dict(analysis_id='old'),409),(dict(accept_fixed_basket_assumption=False),422)]:
-            request.write_text(json.dumps(dict(payload,**changes)))
-            result=subprocess.run([*cli,'scenario',saved['id'],str(request)],capture_output=True,text=True,timeout=20)
-            check(result.returncode!=0 and 'HTTP '+str(status) in result.stderr and not result.stdout,'CLI preserves stale analysis or unaccepted assumptions instead of silently replacing them')
-    check((c.connect()['revision'],c.request('/api/research/revision'),c.update_settings(),c.request('/api/data-updates/jobs'))==original,'CLI scenarios do not write ledger research settings or update jobs')
-    check(cap['research']['moving_averages']==[51,120,250,850] and cap['research']['valuation_methods']==['overall','median','arithmetic'],'enhanced research is machine discoverable')
-    windows=[c.research_index(saved['id'],window=w) for w in (3,5,10)]
-    check([v['window'] for v in windows]==[3,5,10] and len({v['analysis_id'] for v in windows})==1 and len({len(v['daily_series']) for v in windows})==3,'all windows return distinct series under one immutable analysis version')
-    variants=[c.research_index(saved['id'],basis=b,method=m) for b in ('price','total_return') for m in ('overall','median','arithmetic')]
-    check(all(v['basis']==b and v['method']==m for v,(b,m) in zip(variants,[(b,m) for b in ('price','total_return') for m in ('overall','median','arithmetic')])),'both bases and all valuation methods work through the standard client')
-    parts=[c.research_part(saved['id'],part,analysis_id=d['analysis_id']) for part in ('series','constituents','financials','sources')]
-    check(all(v['analysis_id']==d['analysis_id'] for v in parts) and parts[1]['total']==12 and parts[2]['total']>0 and len(parts[3]['items'])==8,'all four projections preserve versioned series companies financials and sources')
-    pages=[c.research_part(saved['id'],'constituents',analysis_id=d['analysis_id'],page=n,page_size=5) for n in (1,2,3)]
-    check([r['weight_rank'] for v in pages for r in v['items']]==list(range(1,13)),'company pagination preserves the full weight ranking')
-    for metric in ('pe','pb'):
-        for ref in (3,5,10):
-            v=c.research_scenario(saved['id'],dict(analysis_id=d['analysis_id'],metric=metric,target_multiple=d['valuation'][metric]['current'],change_ratio='0',reference_window=ref,accept_fixed_basket_assumption=True))
-            assert v['point']==d['latest']['close'] and v['reference_window']==ref and 'p90' in v['reference_points']
-    check(True,'PE PB scenarios support every reference window and reset to current close')
-    settings=c.update_settings();payload=dict(policies=settings['policies'],expected_settings_revision=settings['settings_revision']);c.write('/api/settings/data-updates',payload,'PUT')
-    try:c.write('/api/settings/data-updates',payload,'PUT')
-    except RuntimeError as e:check('409' in str(e),'stale settings CAS rejected')
-    else:raise AssertionError('stale settings accepted')
-    resource=dict(scope='index_prices',target=saved['id'],module='total_return');task=dict(scopes=['index_prices'],resources=[resource],request_id='synthetic-ai-exact')
-    queued=c.write('/api/data-updates/run',task,'POST');check(c.write('/api/data-updates/run',task,'POST')['job_id']==queued['job_id'],'update receipt remains idempotent')
-    check(c.request('/api/data-updates/jobs/'+queued['job_id'])['resources']==[resource],'typed update request preserves the exact resource through HTTP')
-    try:c.write('/api/data-updates/run',dict(scopes=['quotes'],resources=[dict(scope='quotes')],request_id='synthetic-invalid-resource'),'POST')
-    except RuntimeError as e:check('422' in str(e),'missing quote identity cannot silently expand into a full update')
-    else:raise AssertionError('incomplete resource accepted')
-    check(c.connect()['revision']==before,'research and update metadata do not invalidate ledger previews')
-    try:c.request('/api/research/indices/'+saved['id']+'/constituents?analysis_id=old')
-    except RuntimeError as e:check('409' in str(e),'cross-version page rejected')
-    else:raise AssertionError('stale analysis page accepted')
-    queued=c.refresh_index(saved['id'],'synthetic-ai-current-index')
-    full_job=c.request('/api/data-updates/jobs/'+queued['job_id'])
-    check({r['target'] for r in full_job['resources']}=={saved['id']} and len(full_job['resources'])==8,'current-index client updates exactly eight index modules')
-    check(c.refresh_index(saved['id'],'synthetic-ai-current-index')['job_id']==queued['job_id'],'current-index update retains idempotent receipt')
-    check(c.update_history()['limit']==5 and len(c.update_history()['jobs'])<=5,'unified history contract')
-    check('bounds' in c.family_bounds(),'lightweight family date navigation through HTTP')
-    check(all((Path(__file__).resolve().parents[1]/'.agents/skills'/name/'SKILL.md').is_file() for name in ('zhixing-research','zhixing-portfolios')),'project skill paths exist')
-    for code,tr in [('930955','H20955'),('399998','H20596'),('000991','H00991')]:
-        count=c.request('/api/research/indices')['total']
-        for identity,basis in ((code,'price'),(tr,'total_return')):
-            preview=c.resolve_index(identity)
-            validation=c.validate_index_valuation(identity,preview['default_valuation_suffix'])
-            check(preview['profile']['provider']=='csi' and preview['profile']['input_basis']==basis,'exact CSI identity and basis through HTTP '+identity)
-            added=c.write('/api/research/indices',dict(resolve_token=preview['resolve_token'],valuation_token=validation['valuation_token'],expected_research_revision=preview['research_revision'],request_id='synthetic-ai-csi-'+identity),'POST')
-            check(added['id']=='csi:'+code and added['existing'],'both CSI codes reuse the browser-created family '+identity)
-            value=c.research_index(added['id'],basis=basis)
-            check(value['series_code']==identity and value['latest'] is not None,'new CSI series reads back through standard client '+identity)
-        check(c.request('/api/research/indices')['total']==count,'duplicate CSI additions do not add a family '+code)
-    check(c.research_index('csi:930955')['module_status']['valuations']['status']=='unsupported','AI reads the same dividend valuation gap as UI')
-    check(any(m['market']=='BJ' for m in c.research_index('csi:000991')['companies']),'AI preserves Beijing member identity')
-    Path(os.environ['PORTFOLIO_TEST_OUTPUT'],'research-ai-checks.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2))
-
+    check(value['state']=='complete','explicit subscribed refresh completes')
+    check(len(value['resources'])==5 and all(r['target']==saved['id'] for r in value['resources']),'refresh limited to exact subscribed index modules')
+    check(c.connect()['revision']==before,'research does not change ledger revision')
+    try:c.write('/api/settings/lixinger/token',{'token':'never-sent'},'PUT')
+    except ValueError:check(True,'AI client does not accept credential mutation')
+    else:raise AssertionError('AI credential mutation accepted')
 
 if __name__=='__main__':main()

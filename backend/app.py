@@ -181,21 +181,22 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                                'omitted_or_null': 'preserve', 'empty_string': 'clear'},
                                'preview': 'review the current values and proposed changes; no dedicated preview endpoint'},
                 'research': {'resolve':'/api/research/indices/resolve','indices':'/api/research/indices','detail':'/api/research/indices/{id}',
-                             'valuation_preview': {'path':'/api/research/indices/valuation-preview','method':'POST','read_only':True,
-                                                   'suffixes':['CSI','SH','SZ','LG'],'null_suffix':'explicitly opt out of valuation',
-                                                   'save_requires':'original valuation_token from successful PE and PB validation or explicit opt-out; no suffix guessing'},
+                             'catalog':'/api/research/catalog','collection_preview':'/api/research/collection/preview',
+                             'collection':{'path':'/api/research/collection','method':'PUT','revision':'expected_research_revision','enqueue':False},
+                             'source_check':'/api/research/indices/{id}/source-check','studio':'/api/research/indices/{id}/studio','versions':'/api/research/indices/{id}/versions',
+                             'local_credentials':{'status':'/api/settings/lixinger','token_entry':'user_local_UI_only','never_read_token':True},
                              'parts':['series','constituents','financials','sources'],'scenarios':'/api/research/indices/{id}/scenarios',
                              'projection': '/api/research/indices/{id}/{part}',
                              'scenario': {'method': 'POST', 'read_only': True, 'cli': 'scenario INDEX_ID REQUEST.json',
                                           'required_context': ['analysis_id', 'accept_fixed_basket_assumption'],
-                                          'basis': 'same-date price series and overall valuation; no total-return mapping'},
-                             'revision_field':'expected_research_revision','request_id_required':True,'scope':'verified index registry including cross-market families; consult module_status; no name or prefix guessing',
-                             'windows':[3,5,10],'bases':['price','total_return'],'valuation_methods':['overall','median','arithmetic'],
-                             'detail_fields':['module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources'],
-                             'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-library-2','missing':'null with status; UI -'},
+                                          'basis': 'same-date price and verified denominator mapping; mcw is disabled until verified; no total-return mapping'},
+                             'revision_field':'expected_research_revision','request_id_required':False,'scope':'verified index registry including cross-market families; consult module_status; no name or prefix guessing',
+                             'windows':[0,3,5,10],'bases':['price','total_return'],'valuation_methods':['mcw','ew','median'],'legacy_read_methods':['overall','arithmetic'],
+                             'detail_fields':['module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources','collection','index_financials','market_activity','tracking_funds'],
+                             'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-studio-3','missing':'null with status; UI -'},
                 'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
                                  'job': '/api/data-updates/jobs/{job_id}', 'history':'/api/data-updates/history', 'history_limit':5, 'request_id_required': True,
-                                 'current_index': {'targets':'one exact index ID','scopes':['index_prices','memberships','valuations','financials'],
+                                 'current_index': {'targets':'one exact index ID','scopes':['index_prices','memberships','valuations','financials'],'subscribed_modules_only':True,
                                                    'cutoffs':'completed trading day for prices; today for published information; inspect actual module dates'},
                                  'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials'],
                                  'retry':'unknown outcome: read back and preserve original request_id/payload; confirmed failed resource: submit a new request_id with the exact failed item.resource',
@@ -523,7 +524,6 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
             if research.updating(): raise DomainError('研究数据仍在更新，请结束后恢复备份')
             value = service.restore(content)
             research.cache.clear()
-            research.secret=secrets.token_bytes(32)
         household_notifications.invalidate()
         value['notifications'] = household_notifications.reconcile(True)
         return reply(value)

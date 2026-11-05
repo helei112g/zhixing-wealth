@@ -5,7 +5,8 @@ from ..common import DomainError,day,dec
 from .metrics import clean_prices
 
 MODULES={'price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials'}
-HOSTS={'www.csindex.com.cn','oss-ch.csindex.com.cn','hq.cnindex.com.cn','www.cnindex.com.cn','legulegu.com','push2.eastmoney.com','datacenter-web.eastmoney.com'}
+MODULES.update(('index_info','index_financials','market_activity','tracking_funds','official_reference'))
+HOSTS={'www.csindex.com.cn','oss-ch.csindex.com.cn','hq.cnindex.com.cn','www.cnindex.com.cn','legulegu.com','push2.eastmoney.com','datacenter-web.eastmoney.com','www.lixinger.com'}
 
 
 def public_url(value):
@@ -14,6 +15,9 @@ def public_url(value):
 
 
 def validate(module,value):
+    if module.startswith('stage.') and module[6:] in MODULES:
+        if not isinstance(value,dict) or value.get('phase') not in ('collecting','complete','validation_failed') or not isinstance(value.get('parts'),list):raise DomainError('采集检查点无效')
+        return
     if module not in MODULES or not isinstance(value,dict):raise DomainError('研究模块或结构无效')
     effective=value.get('effective_date')
     if effective is not None:day(effective)
@@ -35,7 +39,7 @@ def validate(module,value):
             if r.get('date'):day(r['date'])
             for field in (('weight',) if module=='memberships' else ('pe','pb')):
                 if r.get(field) is not None:dec(r[field],nonnegative=field=='weight')
-        if module=='memberships' and (not rows or abs(sum(dec(r['weight']) for r in rows)-100)>dec('.5')):raise DomainError('成分权重不完整')
+        if module=='memberships' and (not rows or value.get('weights_complete',True) and (any(r.get('weight') is None for r in rows) or abs(sum(dec(r['weight']) for r in rows)-100)>dec('.5'))):raise DomainError('成分权重不完整')
     if module=='financials':
         for r in value.get('rows',[]):
             day(r['period'])

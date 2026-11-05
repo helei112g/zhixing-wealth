@@ -42,8 +42,8 @@ class AICoverageTests(unittest.TestCase):
         paths, models = schema['paths'], schema['components']['schemas']
         params = {p['name']: p['schema'] for p in paths['/api/research/indices/{index_id}']['get']['parameters']}
         self.assertEqual(params['basis']['enum'], ['price', 'total_return'])
-        self.assertEqual(params['method']['enum'], ['overall', 'median', 'arithmetic'])
-        self.assertEqual(params['window']['enum'], [3, 5, 10])
+        self.assertEqual(params['method']['enum'], ['overall', 'median', 'arithmetic','mcw','ew'])
+        self.assertEqual(params['window']['enum'], [0,3,5,10])
         self.assertIn('409', paths['/api/research/indices/{index_id}/scenarios']['post']['responses'])
         self.assertIn('ScenarioResult', models)
         self.assertIn('holding_profit', models['CapitalSummary']['properties'])

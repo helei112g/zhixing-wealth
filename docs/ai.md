@@ -31,10 +31,10 @@ Codex 查找当前目录和向上的技能目录，不递归搜索任意子项�
 1. 读取原记录、作用域及 revision；同名结果不猜ID。
 2. 资产和交易使用服务端 preview。组合资料、笔记没有独立 preview 时展示原值和拟保存差异，不能声称服务端已预览。
 3. 核对用户对目标、金额、日期和操作的授权。已有明确授权无需重复确认；新范围或覆盖需要核对。
-4. 使用预览/读取的原版本号提交：账本用 expected_revision，研究建档用 expected_research_revision，更新设置用 expected_settings_revision。不能混用，不能以重新连接时的新版本替换。`--confirm-write` 只是调用者声明授权，不能替代人的授权。
+4. 使用预览/读取的原版本号提交：账本用 expected_revision，研究订阅用 expected_research_revision，更新设置用 expected_settings_revision。不能混用，不能以重新连接时的新版本替换。`--confirm-write` 只是调用者声明授权，不能替代人的授权。
 5. 按保存响应的正式 ID 回读并核对。新记录预览 ID 是暂定值，不能直接拿来查提交结果。
 
-409表示未写入，应重新读取、比较变化并重新核对；不自动换版本覆盖。网络超时结果未知，先回读核实，禁止盲目重试。账本接口没有通用幂等键，不自动设置 allow_duplicate。研究建档和公共数据更新支持 request_id：同一 ID 与原负载只返回已受理结果，不会重新执行；负载改变返回409。结果未知时保留原 ID，先按正式 ID/job_id 回读。已确认失败后另发一次精确重试，使用新 request_id 并保留失败项原 resource；客户端不会自动重试。
+409表示未写入，应重新读取、比较变化并重新核对；不自动换版本覆盖。网络超时结果未知，先回读核实，禁止盲目重试。账本接口没有通用幂等键，不自动设置 allow_duplicate。公共数据更新支持 request_id：同一 ID 与原负载只返回已受理结果，不会重新执行；负载改变返回409。结果未知时保留原 ID，先按正式 ID/job_id 回读。已确认失败后另发一次精确重试，使用新 request_id 并保留失败项原 resource；客户端不会自动重试。
 
 ## 资产快照示例
 
@@ -72,7 +72,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 | 持仓分类与分布 | holding_labels(P,I)、holding_distribution(P,basis) | 独立labels PUT或计划PUT；只影响当前组合同标的，不改历史流水 |
 | 保留实际分红并完成核对 | dividends候选、recorded_event、review_basis | POST dividends/ID/review；原revision、原依据及原因，回读原流水与审计 |
 | 按日期归档／恢复资产 | family/catalog、command-schema及preview | family/commands 的archive/restore；不删除历史、不自动产生收款 |
-| 指数建档与资料分页 | resolve_index、research_index、research_part | preview识别后write建档；跨页固定analysis_id |
+| 指数建档与资料分页 | collection_preview、research_index、research_part | preview范围后原研究版本保存订阅；跨页固定analysis_id |
 | 指数条件试算 | 当前analysis_id及用户指定假设 | `scenario INDEX_ID REQUEST.json`；只读，无需写入确认开关 |
 | 公共数据更新 | update_settings、data-updates/jobs及单个job_id | write保存策略或提交更新；区分settings版本与request_id |
 
@@ -112,28 +112,12 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 ## 指数研究
 
-通过 [zhixing-research](../.agents/skills/zhixing-research/SKILL.md) 与 [研究合同](research.md) 操作。客户端新增resolve_index、validate_index_valuation、research_index、update_settings、research_scenario；CLI preview支持 `/api/research/indices/resolve` 和 `/api/research/indices/valuation-preview`，scenario支持只读条件试算，write支持建档、更新策略及显式更新任务。研究建档用expected_research_revision，设置用expected_settings_revision，计划/标签继续用expected_revision，不能混用。
+读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start)` 展示指数家族、范围、预计调用数和原research_revision；在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交enabled与expected_research_revision，再按id回读。保存不启动采集；使用原有 `refresh_index` 或精确resource提交带稳定request_id的更新任务。
 
-建档与更新需稳定request_id，未知结果保留原ID先回读，不盲目重试。研究GET不联网抓取；analysis_id变更后重新读取全部分页。接口null不补零，区分来源日期、财报期、权重日与当前重述版本。应用不运行时不承诺更新。
+`research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口与1/3/5年回测。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
 
-指数增强返回changes的真实基准日期；不要把缺少年初基准的表现改称年度涨跌幅。companies按全体权重排序并携带报告期财务，零值与null分开。current_years是当前篮子回溯，historical_years才使用各年有效名单，不能互相替代。scenario可传reference_window（3/5/10），曲线和历史参考点都用同一次API响应；P10–P90区间不代表主观研究结论或未来到达概率。
+Token只能由用户在本机「本机Token与预算」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。默认每端点20次本机预算，失败也消耗尝试；1000次是供应商试用上限，不是本机已知余额。试用自动采集默认关闭，不自动提高预算或解除权限阻断。
 
+详情与快照历史读取不触发网络；只有显式更新或已启用的应用定时策略调用供应商。价格、估值、权重、财报和披露日各自保留。回测基于当前可得历史，不能声称严格PIT；mcw条件试算关系未核验时禁用。完整规范见 [研究合同](research.md) 与 [API](api.md)。
 
-研究客户端支持 `research_index(index_id, basis='price', window=3, method='overall')`，可选价格／全收益、3／5／10年及整体法／中位数／算术平均。`research_part(index_id, part, analysis_id=..., page=..., page_size=...)`读取series、constituents、financials、sources四种投影；分页携带原analysis_id，409后重读，不拼接不同版本。capabilities公开这些选择、完整日线均线期数与新增数据字段。条件试算的PE/PB与3／5／10年参考窗口通过真实HTTP回归，不依赖页面状态。
-
-当前持仓收益读取`holding_profit`，剩余成本读取`holdings[].cost_including_fees_base`，已卖出收益读取`realized_sale_profit`；不要把累计收益冒充当前份额浮盈亏。交易按`kind`先筛选后分页。资产归档与恢复从`family.command_schema`发现archive/restore，必须明确对象和日期、预览、原revision提交、回读；归档不自动产生收款，关联归档不等于组合归档或删除，不能用清零替代。catalog.archive_entries用于查找已归档的精确ID。
-
-标的近期行情可用客户端 `instrument_detail(P,I)` 读取 `market_changes`，返回最近交易日及本自然周涨跌幅、取价日期、同一序列口径与缺失原因；不把它当作个人收益。计划试算用 `plan_check(P,I,target_pct)`：同时核对 `total_target_pct`、`unallocated_target_pct/amount`（负值为超配）及独立的 `shortfall`。尚可分配预算不等于可用现金；读取与预览不写入，保存仍使用原revision。
-
-月度收支 `Client.cashflow(year)` 默认包含全部收入（含公积金）。`income_summary` 为全年已录入收入，不依赖开支确认；`summary` 仅包含同组已核对月份的实际收支及储蓄率，不能混用两者分母。
-
-指数建档先`resolve_index(code)`读取后缀列表与明确默认值，再按用户核对的选择调用`validate_index_valuation(code, valuation_suffix)`。CSI/SH/SZ/LG只表示估值来源编码，不改变官方指数身份；不得按编制方或代码前缀推断。两项PE/PB验证通过才可使用返回的原valuation_token；无法取数时展示逐项原因，可由用户明确选择None暂不接入估值，不能自动降级为None。提交同时携带原resolve_token、valuation_token、expected_research_revision、稳定request_id；token过期或选择改变后重新验证并核对。所有后续正常采集只读取明确保存/注册的完整来源代码，不尝试其他后缀。
-
-
-### 当前页面与更新任务
-
-`Client.family_bounds()` 读取日期选项，完整资产编辑再读 catalog。持仓分析默认配置进度，API仍分别提供allocation_analysis与holding_distribution。
-
-在用户授权更新当前指数后，调用 `Client.refresh_index(index_id, request_id)`；ID来自指数读取，request_id由调用方保留。该方法提交当前指数八个模块，不修改自动策略，也不涉及其他指数或组合行情。随后按返回job_id轮询到终态，并回读指数详情；分别报告市场截止、公告查询日和实际来源日期。`Client.update_history()` 返回统一的最近5条展示记录，不能代替按ID确认较早任务结果。未知结果先查证，不换request_id扩大或重复执行。
-
-macOS 通知设置位于提醒中心。Yahoo微小参考值变化可能继续更新来源，但已确认流水保持原值；查看review_changes确认是否发生实质变化，不能删除确认决定或原流水来消除提醒。
+`research_source_check(index_id, analysis_id)` 仅在明确授权联网核验时调用；先以mcw价格口径读取analysis_id，结果保存在独立官方参考快照，不改变理杏仁历史或估值分母映射。

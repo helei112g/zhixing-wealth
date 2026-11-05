@@ -20,7 +20,7 @@ from backend.research.service import ResearchService,validate_backup
 from backend.research.snapshots import encode,decode,MAX_PAYLOAD
 from backend.service import Service
 from backend.store import Store
-from tests.research_fixtures import ASOF,price_payload,valuation_payload,valuation_probe_payload,member_payload,stock_payload,finance_payload
+from tests.research_fixtures import ASOF,price_payload,valuation_payload,member_payload,stock_payload,finance_payload
 
 
 class MetricTests(unittest.TestCase):
@@ -101,11 +101,14 @@ class ResearchTests(unittest.TestCase):
         self.no_start=patch.object(self.r.updates,'start');self.no_start.start()
     def tearDown(self):self.no_start.stop();self.r.shutdown();self.temp.cleanup()
     def add(self,code='000905',request='synthetic-add'):
-        p=self.r.resolve(code)
-        with patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload):
-            validated=self.r.valuation_preview(code,p['default_valuation_suffix'])
-        body=dict(resolve_token=p['resolve_token'],valuation_token=validated['valuation_token'],expected_research_revision=p['research_revision'],request_id=request)
-        return self.r.add(body),body
+        from backend.research.lixinger import MODULES
+        p=providers.identity(code);iid=p['provider']+':'+p['code'];existing=any(v['id']==iid for v in self.r.profiles())
+        if not existing:
+            with self.r.transaction(bump=True) as db:
+                db.execute('INSERT INTO research_indices VALUES (?,?)',(iid,json_dumps(dict(p,id=iid,subscription=dict(enabled=True,modules=list(MODULES),history_start=None)))))
+        body=dict(scopes=['index_prices','memberships','valuations','financials'],targets=[iid],request_id=request)
+        job=self.r.updates.run(body,trigger='index_create')
+        return dict(id=iid,basis=p['input_basis'],existing=existing,research_revision=self.r.revision(),job_id=job['job_id']),body
     def test_listing_reuses_all_thirteen_summaries_without_loading_company_history(self):
         for p in providers.CATALOG:self.add(p['code'],'synthetic-'+p['code'])
         with patch.object(self.r,'module',wraps=self.r.module) as load:
@@ -140,13 +143,11 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual([r['id'] for r in rows],[r['id'] for r in self.r.updates.history()['jobs']])
 
     def test_update_uses_completed_prices_and_today_announcements(self):
-        p=self.populate()
-        self.r.updates.current_job={'market_cutoff':'2026-10-30','information_cutoff':'2026-11-04'}
-        with patch.object(providers,'prices',side_effect=price_payload) as prices,patch.object(providers,'financials',side_effect=finance_payload) as finance:
+        p=self.populate();self.r.updates.current_job={'market_cutoff':'2026-10-30','information_cutoff':'2026-11-04'}
+        with patch.object(self.r.collection,'collect',return_value={}) as collect:
             self.r.updates.execute(dict(scope='index_prices',target=p['id'],module='price'))
             self.r.updates.execute(dict(scope='financials',target=p['id'],module='financials'))
-            self.assertEqual(prices.call_args.args[-1],'2026-10-30')
-            self.assertEqual(finance.call_args.args[-1],'2026-11-04')
+            self.assertEqual([c.args[2] for c in collect.call_args_list],['2026-10-30','2026-11-04'])
 
     def populate(self):
         added,_=self.add();p=self.r.profile(added['id'])
@@ -157,8 +158,8 @@ class ResearchTests(unittest.TestCase):
         self.r.tick('2026-10-30T23:59:00+08:00');self.assertEqual(self.r.jobs(),[])
     def test_add_pairs_both_codes_and_atomic_durable_update_intent(self):
         revision=self.store.state()['revision'];a,body=self.add('H00905');self.assertEqual(a['basis'],'total_return');self.assertEqual(self.r.profile(a['id'])['return_code'],'H00905')
-        self.assertEqual(self.store.state()['revision'],revision);self.assertEqual(len(self.r.jobs()[0]['resources']),8)
-        self.assertEqual(self.r.add(body),a)
+        self.assertEqual(self.store.state()['revision'],revision);self.assertEqual(len(self.r.jobs()[0]['resources']),12)
+        self.assertEqual(self.r.run(body)['job_id'],a['job_id'])
         a2,_=self.add('000905','same-family');self.assertTrue(a2['existing']);self.assertEqual(len(self.r.profiles()),1);self.assertEqual(self.r.revision(),1)
     def test_unknown_and_similar_code_never_guessed(self):
         for code in ('000906','399999','中证500','399005'):
@@ -180,47 +181,28 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(len(self.r.profiles()),3)
         self.assertEqual(self.store.state()['revision'],ledger_revision)
         with self.store.connection() as db:validate_backup(db)
-    def test_dividend_low_volatility_valuation_gap_is_reported_without_fetching(self):
+    def test_dividend_trial_without_token_is_blocked_without_provider_request(self):
         added,_=self.add('930955')
-        with patch.object(providers,'valuations') as fetch:
-            outcome=self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
+        with patch('requests.Session.post') as fetch,self.assertRaises(DomainError):
+            self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
         fetch.assert_not_called()
-        self.assertEqual(outcome[0]['status'],'unsupported')
-        status=self.r.detail(added['id'])['module_status']
-        self.assertFalse(status['valuations']['supported'])
-        self.assertIn('未覆盖',status['valuations']['reason'])
-        self.assertTrue(status['stock_valuations']['supported'])
-    def test_existing_dividend_profile_fetches_verified_valuation_mapping_without_rewrite(self):
-        added,_=self.add('000922')
-        old=self.r.profile(added['id']);old.pop('valuation_code')
-        with self.r.transaction() as db:
-            db.execute('UPDATE research_indices SET data=? WHERE id=?',(json_dumps(old),added['id']))
-        self.r.publish(added['id'],'price',price_payload(old,'price'))
-        ledger_revision=self.store.state()['revision'];research_revision=self.r.revision()
-        data=[dict(date=ASOF,addTtmPe=12,middleTtmPe=13,ttmPe=14,addPb=1,middlePb=2,pb=3)]
-        with patch.object(providers,'legu_session',return_value={}),patch('requests.get') as get:
-            get.return_value.json.return_value=dict(data=data);get.return_value.content=b'synthetic dividend valuation'
-            outcome=self.r.updates.execute(dict(scope='valuations',target=added['id'],module='valuations'))
-        self.assertEqual([call.kwargs['params']['indexCode'] for call in get.call_args_list],['000922.CSI','000922.CSI'])
-        self.assertEqual(outcome[0]['status'],'complete')
-        detail=self.r.detail(added['id'])
-        self.assertEqual(detail['module_status']['valuations']['status'],'available')
-        self.assertEqual((detail['valuation']['pe']['current'],detail['valuation']['pb']['current']),('12','1'))
-        self.assertEqual(self.r.profile(added['id']),old)
-        self.assertEqual(self.store.state()['revision'],ledger_revision)
-        self.assertEqual(self.r.revision(),research_revision+1)
-    def test_resolve_tamper_expiry_identity_drift_and_cas(self):
-        preview=self.r.resolve('000905')
-        with patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload):validation=self.r.valuation_preview('000905','SH')
-        body=dict(resolve_token=preview['resolve_token']+'x',valuation_token=validation['valuation_token'],expected_research_revision=0,request_id='bad')
-        with self.assertRaises(DomainError):self.r.add(body)
-        with patch('backend.research.service.time.time',return_value=preview['expires_at']+1):
-            with self.assertRaises(DomainError):self.r.add(dict(body,resolve_token=preview['resolve_token']))
+        self.assertEqual(self.r.detail(added['id'])['module_status']['valuations']['status'],'missing')
+
+    def test_existing_dividend_legacy_snapshot_remains_readable_without_profile_rewrite(self):
+        added,_=self.add('000922');old=self.r.profile(added['id']);self.r.publish(added['id'],'price',price_payload(old,'price'))
+        self.r.publish(added['id'],'valuations',valuation_payload(old));detail=self.r.detail(added['id'])
+        self.assertEqual(detail['valuation']['pe']['source'],'synthetic');self.assertEqual(self.r.profile(added['id']),old)
+        with patch('requests.Session.post') as post:self.r.detail(added['id'],method='mcw');post.assert_not_called()
+
+    def test_collection_preview_identity_and_cas(self):
+        p=self.r.collection.preview('H00905',['price'],None)
+        self.assertEqual(p['profile']['code'],'000905');self.assertEqual(self.r.profiles(),[])
         self.add('399006','other')
-        with self.assertRaises(ConflictError):self.r.add(dict(body,resolve_token=preview['resolve_token']))
+        with self.assertRaises(ConflictError):self.r.collection.save('000905',['price'],None,True,p['research_revision'])
+
     def test_request_id_cannot_change_payload(self):
         _,body=self.add()
-        with self.assertRaises(ConflictError):self.r.add(dict(body,expected_research_revision=999))
+        with self.assertRaises(ConflictError):self.r.run(dict(body,scopes=['index_prices']))
     def test_publish_is_immutable_idempotent_and_a_b_a_is_new_version(self):
         a,_=self.add();value=price_payload(self.r.profile(a['id']),'price');sid=self.r.publish(a['id'],'price',value);revision=self.r.revision()
         self.assertEqual(self.r.publish(a['id'],'price',dict(value,evidence=[dict(fetched_at='other') ])),sid);self.assertEqual(self.r.revision(),revision)
@@ -281,16 +263,16 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(capture(self.path),before);migrate(self.store.path);self.assertTrue(verify(before,capture(self.path,before))['preserved'])
     def test_exact_failed_module_retry_does_not_call_other_sources(self):
         p=self.populate();self.r.updates.recover(False)
-        with patch.object(providers,'prices',side_effect=lambda p,b,a:price_payload(p,b,a)) as prices,patch.object(providers,'valuations') as val:
+        with patch.object(self.r.collection,'collect',return_value={}) as prices:
             job=self.r.run(dict(scopes=['index_prices'],resources=[dict(scope='index_prices',target=p['id'],module='total_return')],request_id='exact'))
-            self.r.updates._work();prices.assert_called_once();self.assertEqual(prices.call_args.args[1],'total_return');val.assert_not_called()
+            self.r.updates._work();prices.assert_called_once();self.assertEqual(prices.call_args.args[1],'total_return')
         self.assertEqual(next(j for j in self.r.jobs() if j['id']==job['job_id'])['state'],'complete')
     def test_manual_scheduled_coalescing_keeps_both_request_receipts(self):
         self.add();self.r.updates.recover(False)
         b=dict(scopes=['index_prices']);one=self.r.run(dict(b,request_id='manual'));two=self.r.run(dict(b,request_id='schedule:slot'))
         self.assertEqual(one['job_id'],two['job_id'])
-        with patch.object(providers,'prices',side_effect=lambda p,b,a:price_payload(p,b,a)) as f:
-            self.r.updates._work();again=self.r.run(dict(b,request_id='schedule:slot'));self.r.updates._work();self.assertEqual(f.call_count,2)
+        with patch.object(self.r.collection,'collect',return_value={}) as f:
+            self.r.updates._work();again=self.r.run(dict(b,request_id='schedule:slot'));self.r.updates._work();self.assertEqual(f.call_count,3)
         self.assertEqual(again['job_id'],one['job_id'])
     def test_restart_resume_retains_successful_resources(self):
         a,_=self.add();job=self.r.jobs()[0]
@@ -385,12 +367,11 @@ class ResearchApiTests(unittest.TestCase):
     def test_authenticated_api_revision_projection_scenario_and_readonly_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
             app=create_app(tmp,testing=True,auto_sync=False)
-            with patch.object(app.state.research.updates,'start'),patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload),TestClient(app) as c:
+            with patch.object(app.state.research.updates,'start'),TestClient(app) as c:
                 b=c.get('/api/bootstrap').json();h={'X-CSRF-Token':b['csrf_token']}
                 self.assertEqual(c.post('/api/research/indices/resolve',json={'code':'000905'}).status_code,403)
                 preview=c.post('/api/research/indices/resolve',headers=h,json={'code':'000905'}).json()
-                validated=c.post('/api/research/indices/valuation-preview',headers=h,json=dict(code='000905',valuation_suffix='SH')).json()
-                a=c.post('/api/research/indices',headers=h,json=dict(resolve_token=preview['resolve_token'],valuation_token=validated['valuation_token'],expected_research_revision=0,request_id='api-add'));self.assertEqual(a.status_code,200,a.text)
+                a=c.put('/api/research/collection',headers=h,json=dict(code='000905',modules=['price','valuations','memberships'],history_start=None,enabled=True,expected_research_revision=0));self.assertEqual(a.status_code,200,a.text)
                 iid=a.json()['id'];r=app.state.research;p=r.profile(iid)
                 r.publish(iid,'price',price_payload(p,'price'));r.publish(iid,'valuations',valuation_payload(p));r.publish(iid,'memberships',member_payload(p))
                 d=c.get('/api/research/indices/'+iid).json();self.assertEqual(c.get('/api/research/indices/'+iid+'/constituents?page_size=1&analysis_id='+d['analysis_id']).json()['total'],2)
@@ -425,10 +406,10 @@ class ReviewRegressions(unittest.TestCase):
         with patch.object(self.r,'detail',side_effect=swap):page=self.r.projection(p['id'],'financials',analysis_id=old['analysis_id'])
         self.assertEqual(page['analysis_id'],old['analysis_id']);self.assertNotEqual(page['items'][0]['profit'],'999')
     def test_slot_resource_change_does_not_break_future_schedule(self):
-        self.add();policies=self.r.settings()['policies']
+        self.add();access=self.r.access.save_token('synthetic-token-local-only',0);self.r.access.configure(access['revision'],True,20,True);policies=self.r.settings()['policies']
         for p in policies:p['enabled']=p['scope']=='index_prices'
         self.r.save_settings(dict(policies=policies,expected_settings_revision=0));self.r.tick('2026-10-30T23:59:00+08:00');self.add('399006','second');self.r.tick('2026-10-30T23:59:30+08:00');self.r.tick('2026-10-31T23:59:00+08:00')
-        schedules=[j for j in self.r.jobs() if j['trigger']=='schedule'];self.assertEqual(len(schedules),2);self.assertEqual(sorted(len(j['resources']) for j in schedules),[2,4])
+        schedules=[j for j in self.r.jobs() if j['trigger']=='schedule'];self.assertEqual(len(schedules),2);self.assertEqual(sorted(len(j['resources']) for j in schedules),[3,6])
     def test_normal_shutdown_interrupted_resources_resume(self):
         self.add();calls=[]
         def one(resource):
@@ -439,7 +420,7 @@ class ReviewRegressions(unittest.TestCase):
         self.assertEqual(new.jobs()[0]['state'],'pending');self.assertEqual(len(new.jobs()[0]['completed_resources']),1)
         remaining=[]
         with patch.object(new.updates,'execute',side_effect=lambda r:remaining.append(r) or [dict(scope=r['scope'],resource=r,status='complete')]):new.updates._work()
-        self.assertEqual(len(remaining),7);self.assertNotIn(calls[0],remaining);self.assertEqual(new.jobs()[0]['state'],'complete')
+        self.assertEqual(len(remaining),11);self.assertNotIn(calls[0],remaining);self.assertEqual(new.jobs()[0]['state'],'complete')
     def test_replayed_global_body_keeps_original_targets_and_new_day_is_distinct(self):
         self.add();body=dict(scopes=['index_prices'],request_id='stable-global')
         with patch.object(providers,'cutoff',return_value='2026-10-29'):one=self.r.run(body)
@@ -554,16 +535,8 @@ class RegisteredIdentityTests(unittest.TestCase):
     def test_dividend_mapping_is_shared_by_price_and_total_return_inputs(self):
         for code in ('000922','H00922'):
             profile=providers.identity(code)
-            self.assertEqual(profile['valuation_code'],'000922.CSI')
+            self.assertEqual(profile['code'],'000922')
             self.assertEqual(profile['provider'],'csi')
-            data=[dict(date=ASOF,addTtmPe=12,middleTtmPe=13,ttmPe=14,addPb=1,middlePb=2,pb=3)]
-            with patch.object(providers,'legu_session',return_value={}),patch('requests.get') as get:
-                get.return_value.json.return_value=dict(data=data);get.return_value.content=b'synthetic valuation'
-                result=providers.valuations(profile,ASOF)
-            self.assertEqual([call.kwargs['params']['indexCode'] for call in get.call_args_list],['000922.CSI','000922.CSI'])
-            self.assertTrue(all(e['parameters']['indexCode']=='000922.CSI' for e in result['evidence']))
-            self.assertEqual(set(result['series']['pe']),{'overall','median','arithmetic'})
-            self.assertEqual(set(result['series']['pb']),{'overall','median','arithmetic'})
     def test_registered_csi_pairs_resolve_bidirectionally(self):
         for code,tr,name in [('000510','000510CNY010','中证A500'),('000993','H00993','全指信息'),
                              ('930955','H20955','红利低波100'),('399998','H20596','中证煤炭'),('000991','H00991','全指医药')]:
@@ -599,15 +572,8 @@ class RegisteredIdentityTests(unittest.TestCase):
                     self.assertEqual([r['date'] for r in result['rows']],[profile['launch'],ASOF])
                 with patch.object(providers,'request',return_value=(dict(data=[dict(indexCode='WRONG',tradeDate=ASOF,close='100')]),{})):
                     with self.assertRaises(providers.market.ProviderError):providers.prices(profile,basis,ASOF)
-    def test_coal_valuation_uses_verified_sz_code_with_csi_price_provider(self):
-        profile=providers.identity('399998')
-        data=[dict(date=ASOF,addTtmPe=12,middleTtmPe=13,ttmPe=14,addPb=1,middlePb=2,pb=3)]
-        with patch.object(providers,'legu_session',return_value={}),patch('requests.get') as get:
-            get.return_value.json.return_value=dict(data=data);get.return_value.content=b'synthetic valuation'
-            result=providers.valuations(profile,ASOF)
-        self.assertEqual([call.kwargs['params']['indexCode'] for call in get.call_args_list],['399998.SZ','399998.SZ'])
-        self.assertEqual(result['series']['pe']['overall']['rows'][0]['value'],'12')
-        self.assertEqual(result['series']['pb']['overall']['rows'][0]['value'],'1')
+    def test_coal_legacy_source_mapping_remains_documented(self):
+        p=providers.identity('399998');self.assertEqual(p['provider'],'csi')
     def test_beijing_member_preserves_official_exchange_and_uses_a_share_adapters(self):
         profile=providers.identity('000991')
         row=[ASOF,profile['code'],'合成医药指数',None,'920201','合成北交所公司',None,'北京证券交易所',None,'100']
@@ -626,99 +592,12 @@ class RegisteredIdentityTests(unittest.TestCase):
         self.assertEqual(request.call_count,2);self.assertEqual(value['rows'],[])
 
 
-class ValuationSelectionTests(unittest.TestCase):
-    setUp=ResearchTests.setUp
-    tearDown=ResearchTests.tearDown
-    add=ResearchTests.add
-
-    def validated(self,code='000922',suffix='CSI'):
-        with patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload):
-            return self.r.valuation_preview(code,suffix)
-
-    def command(self,code,validation,request='synthetic-selected'):
-        resolved=self.r.resolve(code)
-        return dict(resolve_token=resolved['resolve_token'],valuation_token=validation['valuation_token'],
-                    expected_research_revision=resolved['research_revision'],request_id=request)
-
-    def test_unmapped_identity_does_not_guess_or_fetch(self):
-        p=providers.identity('000985')
-        self.assertIsNone(self.r.resolve('000985')['default_valuation_suffix'])
-        self.assertEqual(self.r.resolve('000985')['valuation_options'],['CSI','SH','SZ','LG'])
-        with patch('requests.get') as get:
-            with self.assertRaises(providers.market.ProviderError):providers.valuations(p,ASOF)
-            get.assert_not_called()
-        # An explicit saved None also prevents falling back to a registered default.
-        with patch('requests.get') as get:
-            with self.assertRaises(providers.market.ProviderError):providers.valuations(dict(providers.identity('000922'),valuation_code=None),ASOF)
-            get.assert_not_called()
-
-    def test_validation_is_read_only_and_selected_code_persists(self):
-        before=capture(self.path);validation=self.validated()
-        self.assertEqual(capture(self.path),before)
-        self.assertEqual(validation['status'],'available')
-        command=self.command('000922',validation);saved=self.r.add(command)
-        self.assertEqual(self.r.profile(saved['id'])['valuation_code'],'000922.CSI')
-        self.assertEqual(self.r.add(command),saved)
-
-    def test_missing_tampered_expired_and_cross_identity_proof_are_rejected(self):
-        valid=self.validated();body=self.command('000922',valid)
-        for token in (None,'fake',valid['valuation_token']+'x'):
-            with self.assertRaises(DomainError):self.r.add(dict(body,valuation_token=token))
-        for code in ('000905','H00922'):
-            with self.assertRaises(DomainError):self.r.add(self.command(code,valid))
-        with patch('backend.research.service.time.time',return_value=valid['expires_at']+1):
-            with self.assertRaises(DomainError):self.r.add(self.command('000922',valid))
-        self.assertEqual(self.r.profiles(),[])
-
-    def test_explicit_opt_out_never_probes_and_keeps_valuation_unsupported(self):
-        with patch.object(providers,'probe_valuations') as probe:
-            validation=self.r.valuation_preview('000922',None)
-        probe.assert_not_called()
-        saved=self.r.add(self.command('000922',validation))
-        self.assertIsNone(self.r.profile(saved['id'])['valuation_code'])
-        with patch.object(providers,'valuations') as fetch:
-            outcome=self.r.updates.execute(dict(scope='valuations',target=saved['id'],module='valuations'))
-        fetch.assert_not_called();self.assertEqual(outcome[0]['status'],'unsupported')
-
-    def test_existing_configuration_is_not_silently_replaced(self):
-        saved,_=self.add('000922');before=self.r.profile(saved['id'])
-        with self.assertRaises(ConflictError):self.r.add(self.command('000922',self.r.valuation_preview('000922',None)))
-        self.assertEqual(self.r.profile(saved['id']),before)
-
-    def test_probes_both_metrics_and_partial_or_zero_data_cannot_authorize_save(self):
-        profile=providers.identity('000922');payload=valuation_payload(profile)
-        for failed_metric in ('pe','pb'):
-            def fetch(p,asof,metrics):
-                if metrics[0]==failed_metric:raise providers.market.ProviderError('synthetic missing metric')
-                return payload
-            with patch.object(providers,'fetch_valuations',side_effect=fetch) as call:
-                validation=self.r.valuation_preview('000922','SH')
-            self.assertEqual(call.call_count,2)
-            self.assertEqual(validation['status'],'unavailable');self.assertIsNone(validation['valuation_token'])
-            self.assertTrue(all(c.args[0]['valuation_code']=='000922.SH' for c in call.call_args_list))
-        zero=copy.deepcopy(payload)
-        zero['series']['pb']['overall']['rows'][-1]['value']='0'
-        with patch.object(providers,'fetch_valuations',return_value=zero):
-            self.assertIsNone(self.r.valuation_preview('000922','CSI')['valuation_token'])
-
-    def test_api_requires_explicit_choice_and_proof_and_preserves_preview_state(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            app=create_app(tmp,testing=True,auto_sync=False)
-            with patch.object(app.state.research.updates,'start'),patch.object(providers,'probe_valuations',side_effect=valuation_probe_payload),TestClient(app) as c:
-                boot=c.get('/api/bootstrap').json();headers={'X-CSRF-Token':boot['csrf_token']}
-                resolved=c.post('/api/research/indices/resolve',headers=headers,json={'code':'000922'}).json()
-                path='/api/research/indices/valuation-preview'
-                for body in ({'code':'000922'},{'code':'000922','valuation_suffix':'FAKE'}):
-                    self.assertEqual(c.post(path,headers=headers,json=body).status_code,422)
-                before=capture(app.state.store.directory)
-                bad=c.post(path,headers=headers,json=dict(code='000922',valuation_suffix='SH')).json()
-                self.assertIsNone(bad['valuation_token'])
-                good=c.post(path,headers=headers,json=dict(code='000922',valuation_suffix='CSI')).json()
-                self.assertEqual(capture(app.state.store.directory),before)
-                body=dict(resolve_token=resolved['resolve_token'],expected_research_revision=resolved['research_revision'],request_id='synthetic-api-proof')
-                self.assertEqual(c.post('/api/research/indices',headers=headers,json=body).status_code,422)
-                saved=c.post('/api/research/indices',headers=headers,json=dict(body,valuation_token=good['valuation_token']))
-                self.assertEqual(saved.status_code,200,saved.text)
-                read=c.get('/api/research/indices/'+saved.json()['id']).json()
-                self.assertEqual(read['profile']['valuation_code'],'000922.CSI')
-                self.assertEqual(c.get('/api/bootstrap').json()['revision'],boot['revision'])
+class RetiredValuationSelectionTests(unittest.TestCase):
+    def test_legacy_write_routes_are_retired_without_network_or_mutation(self):
+        with tempfile.TemporaryDirectory() as root:
+            app=create_app(root,testing=True,auto_sync=False)
+            with TestClient(app) as c,patch('requests.Session.post') as post,patch('requests.get') as get:
+                headers={'X-CSRF-Token':c.get('/api/bootstrap').json()['csrf_token']}
+                for path in ('/api/research/indices','/api/research/indices/valuation-preview'):
+                    self.assertEqual(c.post(path,headers=headers,json={}).status_code,410)
+                post.assert_not_called();get.assert_not_called();self.assertEqual(app.state.research.profiles(),[])

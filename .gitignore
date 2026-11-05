@@ -45,3 +45,6 @@ notes/
 # macOS launchers are generated locally from public source and logo.
 *.app/
 native-build/
+
+# Local-only data-source credentials and cumulative trial budgets.
+private-lixinger/

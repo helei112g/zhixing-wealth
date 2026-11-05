@@ -54,7 +54,7 @@ function IndustryDistribution({d}:Obj){
  return <Panel title="行业分布" right={<small className="muted">权重日期 {d.membership_date||'-'}</small>}>
   {entries.length?<div className="industry-grid" style={{gridTemplateColumns:`repeat(${Math.ceil(entries.length/2)},minmax(0,1fr))`}}>
    {entries.map(([name,weight],i)=><div className="industry-tile" key={name}>
-    <span>{name}</span><b style={{color:colors[i%colors.length]}}>{num(weight)}%</b>
+    <span>{name}</span><b title={num(weight)+'%'} style={{color:colors[i%colors.length]}}>{num(weight,Number(weight)>=10?1:2)}%</b>
     <div><i style={{width:Math.min(100,Number(weight))+'%',background:colors[i%colors.length]}}/></div>
    </div>)}
   </div>:<p className="muted">缺少全量同日权重，暂不计算行业分布。</p>}

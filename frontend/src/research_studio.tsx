@@ -7,7 +7,7 @@ import {LinkedHistory,Scenario,ValuationTrend} from './research_charts';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d),pct=(v:any)=>v==null?'-':percent(v);
 export const moduleLabels:Obj={index_info:'指数基本信息',price:'价格日线',total_return:'全收益日线',valuations:'日频估值与场内基金/市值',memberships:'当前成分与权重',historical_memberships:'十年历史成分',index_financials:'指数季度/TTM财务',market_activity:'融资与北向持仓',tracking_funds:'跟踪基金',stock_valuations:'公司估值',financials:'公司财务',historical_financials:'历史财务备用汇总'};
-const methodNames:Obj={mcw:'总市值加权',ew:'等权',median:'中位数',overall:'旧源整体法',arithmetic:'旧源算术平均'};
+const methodNames:Obj={mcw:'总市值加权',ew:'等权',ewpvo:'正数等权',median:'中位数',overall:'旧源整体法',arithmetic:'旧源算术平均'};
 const metricNames:Obj={pe:'PE TTM',pb:'PB',ps:'PS TTM',dividend_yield:'股息率'};
 const methodExplanations:Record<string,{purpose:string;algorithm:string;example:string}>={
  mcw:{
@@ -19,6 +19,11 @@ const methodExplanations:Record<string,{purpose:string;algorithm:string;example:
   purpose:'看等额组合与规模加权组合有什么差异。',
   algorithm:'假设每家公司投入相同金额，先汇总这些投资对应的财务份额，再计算组合估值。',
   example:'以 PE TTM 为例：公司数 ÷ 各公司 PE 倒数之和，包含负值；不是把 PE 直接做算术平均。',
+ },
+ ewpvo:{
+  purpose:'观察盈利公司组成的等额组合估值。',
+  algorithm:'按理杏仁口径剔除该指标非正的样本，再计算等额组合估值。',
+  example:'PE TTM 先剔除亏损公司，再对盈利收益率等权平均并取倒数。',
  },
  median:{
   purpose:'看估值是否扩散到典型公司。',
@@ -79,8 +84,8 @@ export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
  return <Modal title={profile?'管理指数采集':'添加指数采集'} onClose={onClose} busy={busy}><ErrorBox error={error}/><Field label="指数代码或名称"><input aria-label="采集指数代码" list="index-catalog-options" value={code} disabled={busy||Boolean(profile)} onChange={e=>{Code(e.target.value);invalidate();}}/><datalist id="index-catalog-options">{catalog.items.map((p:Obj)=><option key={p.code} value={p.code}>{p.name}</option>)}</datalist></Field><p className="muted small">目录只用于身份识别，未添加的指数不会采集。试用先从一个指数、较小日期范围开始。</p><div className="collection-modules">{catalog.modules.filter((m:string)=>m!=='tracking_funds').map((m:string)=><label className="check" key={m}><input type="checkbox" aria-label={moduleLabels[m]} checked={modules.includes(m)} disabled={busy||m==='index_info'} onChange={e=>{Modules(e.target.checked?[...modules,m]:modules.filter(x=>x!==m));invalidate();}}/><span><b>{moduleLabels[m]}</b><small>{catalog.module_sources?.[m]}</small></span></label>)}</div><div className="segmented" aria-label="采集历史范围"><button type="button" disabled={busy} aria-pressed={!limited} className={!limited?'active':''} onClick={()=>{Limited(false);invalidate();}}>全历史</button><button type="button" disabled={busy} aria-pressed={limited} className={limited?'active':''} onClick={()=>{Limited(true);invalidate();}}>指定起始日</button></div>{limited&&<Field label="采集起始日"><input aria-label="采集起始日" type="date" value={start} disabled={busy} onChange={e=>{Start(e.target.value);invalidate();}}/></Field>}<label className="check"><input type="checkbox" checked={enabled} disabled={busy} onChange={e=>Enabled(e.target.checked)}/>启用此指数；关闭即暂停并保留历史</label><Button disabled={busy||!code||!modules.length} onClick={inspect}>预览范围与调用量</Button>{preview&&<div className="collection-preview"><h3>{preview.profile.name} · {preview.profile.code}</h3><p>价格 {preview.profile.code} / 全收益 {preview.profile.return_code}</p><p>{preview.effective_start} → {preview.end}；历史成分最多十年。</p><div className="table-wrap"><table><thead><tr><th>端点</th><th>预计首次调用</th><th>本机余量</th></tr></thead><tbody>{preview.endpoint_budget.map((r:Obj)=><tr key={r.endpoint}><td>{r.endpoint}</td><td>{r.calls}</td><td>{r.remaining}</td></tr>)}</tbody></table></div>{preview.endpoint_budget.some((r:Obj)=>r.calls>r.remaining)&&<Notice>完整回填超过当前预算。可缩小模块/范围；分片会保留进度，额度不足不会继续请求。</Notice>}<p className="muted small">{preview.limitation}{preview.unsupported_modules?.length>0&&` 未纳入采集：${preview.unsupported_modules.map((m:string)=>moduleLabels[m]).join('、')}（跨市场尚未核验）。`}</p><Button primary disabled={busy} onClick={save}>确认保存采集设置</Button></div>}</Modal>;
 }
 
-function HistoryWindow({value,onChange,label}:Obj){
- return <div className="segmented" aria-label={label}>{[3,5,10,0].map(w=>
+export function HistoryWindow({value,onChange,label,windows=[3,5,10,0]}:{value:number;onChange:(value:number)=>void;label:string;windows?:number[]}){
+ return <div className="segmented" aria-label={label}>{windows.map(w=>
   <button key={w} aria-pressed={value===w} className={value===w?'active':''} onClick={()=>onChange(w)}>{windowName(w)}</button>
  )}</div>;
 }
@@ -148,7 +153,7 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
  const [valuationWindow,ValuationWindow]=useState(3);
  const [analysis,Analysis]=useState<Obj|null>(null);
  const [failure,Failure]=useState<Obj|null>(null);
- const methods=['mcw','ew','median','overall','arithmetic'].filter(m=>(d.valuation_methods||[]).includes(m)||method===m);
+ const methods=['mcw','ew','ewpvo','median','overall','arithmetic'].filter(m=>(d.valuation_methods||[]).includes(m)||method===m);
  const context=JSON.stringify([d.id,d.basis,method,metric,d.research_revision,d.analysis_id]);
  const requestKey=JSON.stringify([context,valuationWindow]);
  const currentAnalysis=analysis?.context===context?analysis:null;

@@ -146,7 +146,7 @@ class ResearchService:
         return sid
 
     def detail(self, iid, basis='price', method='overall', window=3, *, summary=False):
-        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
+        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew','ewpvo') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
         with self.store.lock:
             p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff()
             recent=[] if summary else self.updates.jobs()

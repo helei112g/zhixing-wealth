@@ -10,7 +10,7 @@ class ResolveRequest(BaseModel):
 Scope=Literal['quotes','fx','index_prices','memberships','valuations','financials','market']
 PolicyScope=Literal['quotes','fx','index_prices','memberships','valuations','financials']
 Basis=Literal['price','total_return']
-Method=Literal['overall','median','arithmetic','mcw','ew']
+Method=Literal['overall','median','arithmetic','mcw','ew','ewpvo']
 Part=Literal['series','constituents','financials','sources']
 
 

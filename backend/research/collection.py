@@ -88,9 +88,14 @@ class Collection:
             start = max(start, str(years_before(end, 10)))
         full = (not old or old.get('provider_id') != 'lixinger' or not state.get('last_reconciled') or
                 (today()-day(state['last_reconciled'][:10])).days >= 15 or state.get('generation') != p.get('collection_generation', 0))
+        needs_valuation_backfill = (module == 'valuations' and old
+                                    and 'ewpvo' not in old.get('series', {}).get('pe', {}))
+        full = full or bool(needs_valuation_backfill)
         if not full and old.get('effective_date'): start = max(start, str(day(old['effective_date'])-timedelta(days=15)))
         # Resume the interrupted cycle with its original fixed cutoff and exact shards.
-        if state.get('phase') == 'collecting' and state.get('generation') == p.get('collection_generation',0):
+        if (state.get('phase') == 'collecting' and state.get('generation') == p.get('collection_generation',0)
+                and (not needs_valuation_backfill or (state['mode'] == 'reconcile' and
+                     'pe_ttm.ewpvo' in state['calls'][0]['params']['metricsList']))):
             start, end = state['range_start'], state['range_end']
             full = state['mode'] == 'reconcile'
         info = (self.research.module(iid, 'index_info') or {}).get('info')

@@ -381,7 +381,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 | POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。返回逐端点预计调用量、预算余量、依赖缺项和原 research_revision；无供应商请求。 |
 | PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。只保存，显式更新才入队。 |
 | GET `/api/research/indices` | 兼容每页20的本地摘要读取，kind/page可选；页面首页改用选择器。 |
-| GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
+| GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/ewpvo/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
 | GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield。返回日频估值均值、分位、资金观察、波动率和集中度；收益回测、成分重叠、区间收益比较已退役，含同一analysis_id。 |
 | GET `.../{id}/{part}` | series/constituents/financials/sources；analysis_id 防混版本，page/page_size 分页。 |
 | GET `.../{id}/versions`、`.../versions/{snapshot_id}` | 最近100个非检查点来源版本及精确版本回读；跨指数版本拒绝，旧来源历史不删除。 |

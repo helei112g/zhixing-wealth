@@ -1,4 +1,4 @@
-"""Subscribed, budgeted, resumable collection using existing versioned snapshots."""
+"""Subscribed, resumable collection using existing versioned snapshots."""
 import hashlib
 from copy import deepcopy
 from datetime import timedelta
@@ -37,17 +37,17 @@ class Collection:
         unsupported=[m for m in modules if not providers.module_capabilities(p)[m]['supported']]
         chosen = [m for m in modules if m not in unsupported] if overseas else list(dict.fromkeys(['index_info', *modules]))
         if not chosen: raise DomainError('所选模块的跨市场身份与币种尚未核验')
-        budget = {}; pending = []
+        calls_by_endpoint = {}; pending = []
         for m in collection_modules(p, chosen):
             if overseas: continue
             if m in ('index_financials', 'stock_valuations', 'financials', 'historical_financials'):
                 pending.append(m); continue
             for call in lixinger.request_plan(p, m, start, end):
-                e = call['endpoint']; budget[e] = budget.get(e, 0)+1
+                e = call['endpoint']; calls_by_endpoint[e] = calls_by_endpoint.get(e, 0)+1
         state = self.research.access.status()
         return dict(profile=p, modules=chosen, history_start=history_start, effective_start=start, end=end,
                     research_revision=self.research.revision(), endpoint_budget=[dict(endpoint=e, calls=n,
-                    remaining=max(0, state['limit']-state['counts'].get(e, 0))) for e, n in sorted(budget.items())],
+                    remaining=None) for e, n in sorted(calls_by_endpoint.items())],
                     dependencies_pending=pending, unsupported_modules=unsupported, configured=state['configured'], enabled=state['enabled'],
                     limitation='公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。添加仅保存订阅，点击更新才请求接口。')
 

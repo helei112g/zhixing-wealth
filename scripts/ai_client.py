@@ -142,6 +142,7 @@ class Client:
         return self.preview({'code':code},'/api/research/indices/resolve')
 
     def collection_preview(self,code,modules,history_start=None):
+        """Offline call estimates; endpoint_budget.remaining is null (no local cap)."""
         return self.preview(dict(code=code,modules=modules,history_start=history_start),'/api/research/collection/preview')
 
     def research_studio(self,index_id,**options):

@@ -13,9 +13,11 @@ def main():
         if not value:raise AssertionError(label)
         count+=1;print('PASS research AI',count,label,flush=True)
     cap=c.request('/api/capabilities');check(cap['research']['windows']==[0,3,5,10],'discover complete windows')
+    check(cap['research']['local_credentials']['local_request_limit'] is None,'discover no local request cap')
     before=c.connect()['revision'];counts=c.request('/api/settings/lixinger')['counts']
     p=c.collection_preview('000905',['index_info','price','total_return','valuations','memberships'],'2026-10-01')
     check(c.request('/api/settings/lixinger')['counts']==counts,'preview uses no supplier calls')
+    check(p['endpoint_budget'] and all(row['remaining'] is None for row in p['endpoint_budget']),'call estimates have no local quota')
     body=dict(code='000905',modules=p['modules'],history_start=p['history_start'],enabled=True,expected_research_revision=p['research_revision'])
     saved=c.write('/api/research/collection',body,'PUT');check(c.request('/api/research/catalog')['subscriptions'][0]['subscription']['enabled'],'subscription read back')
     try:c.write('/api/research/collection',body,'PUT')

@@ -28,7 +28,7 @@ SYNTHETIC='synthetic-local-only-credential'
 class AccessTests(unittest.TestCase):
     def setUp(self):self.temp=tempfile.TemporaryDirectory();self.a=LocalAccess(Path(self.temp.name))
     def tearDown(self):self.temp.cleanup()
-    def enable(self,limit=3):
+    def enable(self,limit=None):
         s=self.a.save_token(SYNTHETIC,0);return self.a.configure(s['revision'],True,limit)
     def test_local_file_permissions_cas_no_echo_and_no_counter_reset(self):
         self.assertFalse(self.a.status()['configured']);s=self.enable()
@@ -57,11 +57,56 @@ class AccessTests(unittest.TestCase):
         with self.assertRaises(DomainError):
             self.a.request('cn/index', {}, automatic=True, transport=transport)
 
-    def test_limit_and_automatic_gate_prevent_transport(self):
+    def test_legacy_limit_cannot_reinstate_cap_and_automatic_gate_still_applies(self):
         self.enable(1)
-        with self.assertRaises(DomainError):self.a.request('cn/index',{},automatic=True,transport=transport)
-        self.a.request('cn/index',{'stockCodes':['000905']},transport=transport)
-        with self.assertRaises(DomainError):self.a.request('cn/index',{},transport=lambda *args:self.fail('request beyond budget'))
+        with self.assertRaises(DomainError):
+            self.a.request('cn/index', {}, automatic=True, transport=lambda *args: self.fail('automatic request'))
+        for _ in range(2):
+            self.a.request('cn/index', {'stockCodes': ['000905']}, transport=transport)
+        state = self.a.status()
+        self.assertEqual(state['counts']['cn/index'], 2)
+        self.assertIsNone(state['limit'])
+
+    def test_existing_exhausted_limits_are_ignored_without_resetting_state(self):
+        self.enable()
+        path = self.a.directory / 'budget.json'
+        for limit in (20, 1000):
+            with self.subTest(limit=limit):
+                with self.a.files() as fd:
+                    legacy = dict(self.a.state(fd), limit=limit, mode='trial',
+                                  counts={'cn/index': limit, 'cn/index/fundamental': 5},
+                                  blocked={'cn/index/fundamental': 'permission_or_quota'})
+                    self.a.store_state(fd, legacy)
+                before = path.read_bytes()
+                state = LocalAccess(Path(self.temp.name)).status()
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(state['revision'], legacy['revision'])
+                self.assertEqual(state['counts'], legacy['counts'])
+                self.assertEqual(state['blocked'], legacy['blocked'])
+                self.assertEqual(state['mode'], 'unlimited')
+                self.assertTrue(all(row['limit'] is None and row['remaining'] is None for row in state['endpoints']))
+
+                self.a.request('cn/index', {'stockCodes': ['000905']}, transport=transport)
+                saved = json.loads(path.read_bytes())
+                self.assertEqual(saved['counts'], {'cn/index': limit + 1, 'cn/index/fundamental': 5})
+                self.assertEqual(saved['revision'], legacy['revision'] + 1)
+                self.assertIsNone(saved['limit'])
+                self.assertEqual(saved['blocked'], legacy['blocked'])
+                with self.assertRaises(DomainError):
+                    self.a.request('cn/index/fundamental', {}, transport=lambda *args: self.fail('blocked request'))
+
+    def test_provider_quota_still_blocks_until_explicitly_cleared(self):
+        self.enable()
+        with self.assertRaisesRegex(DomainError, '权限或额度受限'):
+            self.a.request('cn/index', {}, transport=lambda *args: (429, {'message': 'quota'}))
+        state = self.a.status()
+        self.assertEqual(state['counts']['cn/index'], 1)
+        with self.assertRaises(DomainError):
+            self.a.request('cn/index', {}, transport=lambda *args: self.fail('blocked request'))
+        self.assertEqual(self.a.status()['counts'], state['counts'])
+        self.a.configure(state['revision'], True, clear_block='cn/index')
+        self.a.request('cn/index', {'stockCodes': ['000905']}, transport=transport)
+        self.assertEqual(self.a.status()['counts']['cn/index'], 2)
     def test_symlinks_hardlinks_and_corrupt_counters_fail_closed(self):
         self.enable();path=Path(self.a.status()['path']);path.unlink();path.symlink_to(Path(self.temp.name)/'elsewhere')
         with self.assertRaises(DomainError):self.a.save_token(SYNTHETIC,self.a.status()['revision'])
@@ -77,7 +122,7 @@ class AccessTests(unittest.TestCase):
 class CollectionTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.store=Store(Path(self.temp.name)/'test');self.r=ResearchService(self.store,Service(self.store));self.no_start=patch.object(self.r.updates,'start');self.no_start.start()
-        s=self.r.access.save_token(SYNTHETIC,0);self.r.access.configure(s['revision'],True,20)
+        s=self.r.access.save_token(SYNTHETIC,0);self.r.access.configure(s['revision'],True)
         self.calls=[]
         def request(e,p,**kw):
             self.calls.append((e,p));return LocalAccess.request(self.r.access,e,p,**dict(kw,transport=transport))
@@ -87,6 +132,8 @@ class CollectionTests(unittest.TestCase):
         return self.r.collection.save('000905',modules or list(lixinger.DEFAULT_MODULES),'2026-10-01',True,self.r.revision())['id']
     def test_read_preview_add_are_offline_and_pause_prevents_queue(self):
         before=self.store.state()['revision'];p=self.r.collection.preview('000905',['price'],None)
+        self.assertTrue(p['endpoint_budget'])
+        self.assertTrue(all(row['remaining'] is None for row in p['endpoint_budget']))
         self.assertEqual(self.r.profiles(),[]);self.assertFalse(self.calls)
         iid=self.add();self.r.detail(iid,method='mcw');self.r.listing();self.assertFalse(self.calls)
         self.r.collection.save('000905',['price'],'2026-10-01',False,self.r.revision())
@@ -219,15 +266,26 @@ class CollectionTests(unittest.TestCase):
         with self.store.connection() as db:
             validate_backup(db)
 
-    def test_checkpoint_resume_after_budget_failure_does_not_repeat_successful_shard(self):
-        iid=self.add(['market_activity']);self.r.collection.collect(iid,'index_info','2026-11-04');s=self.r.access.status();self.r.access.configure(s['revision'],True,1)
-        self.r.access.request('cn/index/mutual-market',{'stockCode':'000905','startDate':'2026-10-01','endDate':'2026-11-04'})
-        with self.assertRaises(DomainError):self.r.collection.collect(iid,'market_activity','2026-11-04')
-        self.assertIsNone(self.r.module(iid,'market_activity'));stage=self.r.module(iid,'stage.market_activity');self.assertEqual(len(stage['parts']),1)
-        s=self.r.access.status();self.r.access.configure(s['revision'],True,2)
-        self.r.collection.collect(iid,'market_activity','2026-11-05')
-        self.assertEqual(self.r.access.status()['counts']['cn/index/margin-trading-and-securities-lending'],1)
-        self.assertEqual(self.r.module(iid,'stage.market_activity')['range_end'],'2026-11-04')
+    def test_checkpoint_resume_after_transport_failure_does_not_repeat_successful_shard(self):
+        iid = self.add(['market_activity'])
+        self.r.collection.collect(iid, 'index_info', '2026-11-04')
+        def fail_northbound(endpoint, params):
+            if endpoint == 'cn/index/mutual-market':
+                raise TimeoutError('synthetic timeout')
+            return transport(endpoint, params)
+        def request(endpoint, params, **kwargs):
+            return LocalAccess.request(self.r.access, endpoint, params, **dict(kwargs, transport=fail_northbound))
+        with patch.object(self.r.access, 'request', side_effect=request), self.assertRaises(DomainError):
+            self.r.collection.collect(iid, 'market_activity', '2026-11-04')
+        self.assertIsNone(self.r.module(iid, 'market_activity'))
+        stage = self.r.module(iid, 'stage.market_activity')
+        self.assertEqual(len(stage['parts']), 1)
+
+        self.r.collection.collect(iid, 'market_activity', '2026-11-05')
+        counts = self.r.access.status()['counts']
+        self.assertEqual(counts['cn/index/margin-trading-and-securities-lending'], 1)
+        self.assertEqual(counts['cn/index/mutual-market'], 2)
+        self.assertEqual(self.r.module(iid, 'stage.market_activity')['range_end'], '2026-11-04')
     def test_pause_during_response_does_not_publish(self):
         iid=self.add(['price']);self.r.collection.collect(iid,'index_info','2026-11-04')
         def pause(e,p,**kw):
@@ -363,6 +421,34 @@ class AnalyticsTests(unittest.TestCase):
         self.assertIsNone(result[-1]['metrics']['revenue']['growth'])
 
 class LocalApiTests(unittest.TestCase):
+    def test_settings_accept_omitted_null_and_legacy_limits_without_enforcing_caps(self):
+        with tempfile.TemporaryDirectory() as root:
+            app = create_app(root, testing=True, auto_sync=False)
+            with TestClient(app) as c:
+                headers = {'X-CSRF-Token': c.get('/api/bootstrap').json()['csrf_token']}
+                access = app.state.research.access
+                access.save_token(SYNTHETIC, 0)
+                access.request('cn/index', {'stockCodes': ['000905']}, transport=transport)
+                for fields in ({}, {'limit': None}, {'limit': 1}, {'limit': 1001}):
+                    state = c.get('/api/settings/lixinger').json()
+                    body = dict(expected_revision=state['revision'], enabled=False, automatic=True, **fields)
+                    response = c.put('/api/settings/lixinger', json=body, headers=headers)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    saved = c.get('/api/settings/lixinger').json()
+                    self.assertEqual(saved, response.json())
+                    self.assertIsNone(saved['limit'])
+                    self.assertFalse(saved['automatic'])
+                    self.assertEqual(saved['counts'], state['counts'])
+                    self.assertEqual(c.put('/api/settings/lixinger', json=body, headers=headers).status_code, 409)
+                    access.request('cn/index', {'stockCodes': ['000905']}, transport=transport)
+                state = c.get('/api/settings/lixinger').json()
+                self.assertEqual(state['counts']['cn/index'], 5)
+                for limit in (True, '1', 1.5):
+                    response = c.put('/api/settings/lixinger', json=dict(
+                        expected_revision=state['revision'], enabled=False, limit=limit), headers=headers)
+                    self.assertEqual(response.status_code, 422)
+                self.assertEqual(c.get('/api/settings/lixinger').json(), state)
+
     def test_token_response_validation_and_backup_exclude_secret(self):
         with tempfile.TemporaryDirectory() as root:
             app=create_app(root,testing=True,auto_sync=False)

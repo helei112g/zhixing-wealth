@@ -143,7 +143,7 @@ class AccessSettings(BaseModel):
     model_config=ConfigDict(extra='forbid')
     expected_revision:int=Field(ge=0,strict=True)
     enabled:StrictBool
-    limit:int=Field(ge=1,le=1000,strict=True)
+    limit:int|None=Field(default=None,strict=True,description='兼容旧客户端，忽略该值；本机不设调用上限')
     automatic:StrictBool=False
     clear_block:str|None=None
 

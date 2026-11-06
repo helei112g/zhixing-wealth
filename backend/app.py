@@ -189,7 +189,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                              'studio_features':['valuation_curve','ranks','funds','volatility','concentration'],
                              'retired_features':['return_backtest','index_overlap'],
                              'financial_periods':['annual','first_quarter','half_year','third_quarter'],
-                             'local_credentials':{'location':'global_settings','manual_collection':'explicit_update_with_configured_token', 'status':'/api/settings/lixinger','token_entry':'user_local_UI_only','never_read_token':True},
+                             'local_credentials':{'location':'global_settings','manual_collection':'explicit_update_with_configured_token', 'status':'/api/settings/lixinger','token_entry':'user_local_UI_only','never_read_token':True,'local_request_limit':None,'request_counts':'cumulative_attempts_not_provider_balance'},
                              'parts':['series','constituents','financials','sources'],'scenarios':'/api/research/indices/{id}/scenarios',
                              'projection': '/api/research/indices/{id}/{part}',
                              'scenario': {'method': 'POST', 'read_only': True, 'cli': 'scenario INDEX_ID REQUEST.json',

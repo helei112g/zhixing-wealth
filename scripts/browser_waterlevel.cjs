@@ -87,8 +87,29 @@ const asof = '2026-10-30';
     await comparison.getByText('PB · 正数等权', {exact:true}).waitFor();
     check(await historicalMean.isVisible(), 'PB has its own historical mean');
     check(await page.locator('.waterlevel-comparison-chart .recharts-responsive-container').count() === 1, 'PB switches the existing chart');
-    await comparison.getByRole('button', {name:'等权', exact:true}).click();
+    const ewRequest = url => url.pathname === '/api/market-waterlevel' && url.searchParams.get('method') === 'ew';
+    let release;
+    const responseGate = new Promise(resolve => { release = resolve; });
+    await page.route(ewRequest, async route => {
+      await responseGate;
+      await route.continue();
+    });
+    const ewButton = comparison.getByRole('button', {name:'等权', exact:true});
+    const valuationCurve = comparison.locator('.recharts-line-curve[stroke="#365f91"]');
+    const previousPath = await valuationCurve.getAttribute('d');
+    try {
+      await ewButton.click();
+      check(await ewButton.getAttribute('aria-pressed') === 'true', 'requested method highlights before the API responds');
+      await comparison.getByText('正在读取等权，当前显示正数等权。', {exact:true}).waitFor();
+      check(await comparison.getByText('PB · 正数等权', {exact:true}).isVisible() &&
+            await valuationCurve.getAttribute('d') === previousPath, 'pending method preserves the label and curve of the loaded result');
+    } finally {
+      release();
+    }
     await comparison.getByText('PB · 等权', {exact:true}).waitFor();
+    await page.waitForFunction(path => document.querySelector('.waterlevel-comparison .recharts-line-curve[stroke="#365f91"]')?.getAttribute('d') !== path, previousPath);
+    await page.unroute(ewRequest);
+    check(await comparison.getByText('正在读取等权，当前显示正数等权。', {exact:true}).count() === 0, 'successful switch replaces the plotted series and clears the loading status');
     const ew = await api('/market-waterlevel?method=ew&asof=' + asof);
     check(ew.series.find(x=>x.id==='full_market_pb').statistics.current !== first.series.find(x=>x.id==='full_market_pb').statistics.current,
       'overview switches to separately sourced EW data');
@@ -123,13 +144,13 @@ const asof = '2026-10-30';
     check(await page.getByLabel('股票估值曲线窗口').getByRole('button',{name:'全历史'}).getAttribute('aria-pressed') === 'true',
       'stock comparison starts at its independent full-history window');
     await page.getByRole('button', {name: '等权', exact: true}).click();
-    await page.getByRole('button', {name: '等权', exact: true}).getAttribute('aria-pressed');
     await page.waitForFunction(() => document.querySelector('[aria-label="估值方法"] button[aria-pressed="true"]')?.textContent.trim()==='等权');
     const equal = await api('/market-waterlevel?method=ew&asof=' + asof);
     check(JSON.stringify(first.scores) === JSON.stringify(equal.scores), 'method switch leaves fixed scores unchanged');
     check(await page.getByText('当前值无效', {exact: false}).count() > 0, 'negative ew is shown as invalid rather than replaced');
     await page.getByRole('button', {name: '中位数', exact: true}).click();
     await page.waitForFunction(() => document.querySelector('[aria-label="估值方法"] button[aria-pressed="true"]')?.textContent.trim()==='中位数');
+    await page.locator('.studio-valuation-chart[aria-busy="false"]').waitFor();
     check(await page.locator('[aria-label="估值方法"]').evaluate(element =>
       getComputedStyle(element.querySelector('[aria-pressed="true"]')).backgroundColor !==
       getComputedStyle(element.querySelector('[aria-pressed="false"]')).backgroundColor), 'selected method has visible feedback');

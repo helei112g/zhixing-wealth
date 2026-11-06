@@ -72,7 +72,7 @@ function StatisticCard({label, statistics, unit, multiplier=1, window=10, asof, 
   </Panel>;
 }
 
-function ComparisonCard({data, metric, setMetric, setMethod, window, setWindow, loading}: Obj) {
+function ComparisonCard({data, metric, setMetric, setMethod, window, setWindow, loading, selectedMethod, methodStatus}: Obj) {
   const comparison = data.comparisons[metric];
   const statistics = data.series.find((item:Obj)=>item.id==='full_market_'+metric).statistics;
   const definitions:ValuationLine[] = [
@@ -92,11 +92,12 @@ function ComparisonCard({data, metric, setMetric, setMethod, window, setWindow, 
   }));
   return <Panel title="全市场估值走势" className="waterlevel-comparison studio-valuation-panel" right={<HistoryWindow label="全市场曲线窗口" value={window} onChange={setWindow} windows={[5,10,0]}/>}>
     <div className="studio-controls">
-      <div className="studio-choice"><span>估值方法</span><ValuationMethods methods={Object.keys(methods)} value={data.method} onChange={setMethod}/></div>
+      <div className="studio-choice"><span>估值方法</span><ValuationMethods methods={Object.keys(methods)} value={selectedMethod} onChange={setMethod}/></div>
       <div className="studio-choice"><span>观察指标</span><div className="segmented" aria-label="全市场观察指标">
         {['pe','pb'].map(key=><button type="button" key={key} aria-pressed={metric===key} className={metric===key?'active':''} onClick={()=>setMetric(key)}>{metricNames[key]}</button>)}
       </div></div>
     </div>
+    {methodStatus&&<p role="status" className="muted small waterlevel-method-status">{methodStatus}</p>}
     <div className="waterlevel-current"><strong>{number(statistics.current)}</strong><span>倍</span>
       <small>{statistics.date||'尚无观测'} · {states[statistics.status]}</small></div>
     <div className="studio-valuation-chart waterlevel-comparison-chart" aria-busy={loading}>
@@ -115,7 +116,7 @@ const broadIndices = [
   ['csi:000510','#08778d'],
 ];
 
-function BroadCard({data, window, setWindow, setMethod, loading}: Obj) {
+function BroadCard({data, window, setWindow, setMethod, loading, selectedMethod, methodStatus}: Obj) {
   const chart = (id:string) => data.series.find((item:Obj)=>item.id===id).statistics.chart;
   const indices = broadIndices.map(([key,color])=>{
     const index = data.indices.find((item:Obj)=>item.id===key);
@@ -138,8 +139,9 @@ function BroadCard({data, window, setWindow, setMethod, loading}: Obj) {
   const lines = series.filter(({key})=>rows.some(row=>row[key]!=null));
   return <Panel title="境内宽基指数 PE 对照" className="studio-valuation-panel" right={<HistoryWindow label="股票估值曲线窗口" value={window} onChange={setWindow} windows={[5,10,0]}/>}>
     <div className="studio-controls"><div className="studio-choice"><span>估值方法</span>
-      <ValuationMethods methods={Object.keys(methods)} value={data.method} onChange={setMethod}/>
+      <ValuationMethods methods={Object.keys(methods)} value={selectedMethod} onChange={setMethod}/>
     </div></div>
+    {methodStatus&&<p role="status" className="muted small waterlevel-method-status">{methodStatus}</p>}
     <div className="studio-valuation-chart" aria-busy={loading}>{lines.some(line=>line.key!=='bond')
       ? <ValuationTrend rows={rows} label="境内宽基指数 PE 对照" lines={lines} preserveBounds/>
       : <Notice>尚无所选口径的估值历史，可在指数库更新相关指数的估值模块。</Notice>}
@@ -251,18 +253,31 @@ export function WaterlevelPage({today,onIndices}: Obj) {
     finally{setSaving(false);}
   }
   function update(groups:string[]) {return submission.submit({scopes:['market'],resources:groups.map(group=>({scope:'market',group}))});}
+  function selectMethod(next: string) {
+    if (next === method && !error) return;
+    if (next === method) {
+      setRefreshRequest(value=>value+1);
+    }
+    setError('');
+    setLoading(true);
+    setMethod(next);
+  }
+  const selectedMethod = loading ? method : data?.method;
+  const methodStatus = data && method!==data.method
+    ? `${loading ? '正在读取' : '读取失败，未切换到'}${methods[method]}，当前显示${methods[data.method]}。`
+    : '';
   const blocked=loading||saving||submission.busy||running;
   const lines=(keys:string[],window=0,zoom=false)=>data?.series.filter((item:Obj)=>keys.includes(item.id)).map((item:Obj)=><StatisticCard key={item.id} label={item.label} statistics={item.statistics} unit={item.unit} window={window} zoom={zoom} asof={asof} zero={['money_gap','repo_spread','cn_term','us_term','erp'].includes(item.id)}/>);
   return <div className="waterlevel-page">
     <ErrorBox error={error||submission.error}/>
     {running&&<p className="muted small" role="status">更新正在执行，已有有效数据保留；结果与失败项可在数据来源中核对。</p>}
-    {loading&&<p role="status" className="muted small">正在读取所选研究口径…</p>}
+    {loading&&!data&&<p role="status" className="muted small">正在读取本地市场数据…</p>}
     {!data?<Empty title="市场水位尚未就绪">{error?'读取失败，请核对错误信息。':'正在读取本地资料。'}</Empty>:<>
       <div className="instrument-tabs" role="tablist" aria-label="市场水位栏目">{[['overview','水位总览'],['equity','股票估值'],['bonds','债券与资金'],['macro','宏观背景'],['sources','数据来源']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} onClick={()=>setTab(key)}>{label}</button>)}</div>
       {tab!=='sources'&&<p className="muted small waterlevel-view-options">截至 {data.asof} · 各指标实际日期独立显示 · 月末采样，当月显示最新观测</p>}
-      {tab==='overview'&&<><ScoreOverview data={data}/><ComparisonCard data={data} metric={fullMetric} setMetric={setFullMetric} setMethod={setMethod} window={overviewWindow} setWindow={setOverviewWindow} loading={loading}/><div className="waterlevel-grid">{lines(['erp','bond_inverse'],overviewWindow)}</div><details className="waterlevel-boundaries"><summary>当前覆盖与计算边界</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details></>}
+      {tab==='overview'&&<><ScoreOverview data={data}/><ComparisonCard data={data} metric={fullMetric} setMetric={setFullMetric} setMethod={selectMethod} window={overviewWindow} setWindow={setOverviewWindow} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/><div className="waterlevel-grid">{lines(['erp','bond_inverse'],overviewWindow)}</div><details className="waterlevel-boundaries"><summary>当前覆盖与计算边界</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details></>}
       {tab==='equity'&&<>
-        <BroadCard data={data} window={equityWindow} setWindow={setEquityWindow} setMethod={setMethod} loading={loading}/>
+        <BroadCard data={data} window={equityWindow} setWindow={setEquityWindow} setMethod={selectMethod} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/>
         <div className="waterlevel-view-options"><h3>主要指数估值</h3>
           <Field label="对照指标"><select aria-label="对照指标" value={metric} onChange={event=>setMetric(event.target.value)}>{Object.entries(metricNames).map(([key,label])=><option key={key} value={key}>{String(label)}</option>)}</select></Field></div>
         <p className="muted small">下方曲线沿用对照图的估值方法与窗口。均值使用连续的60/120个完整月末观测。</p>

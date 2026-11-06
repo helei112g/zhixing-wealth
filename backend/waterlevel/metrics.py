@@ -83,14 +83,20 @@ def analyze(rows, asof, *, positive=False, stale_days=14, frequency='daily'):
         while month <= max(months):
             chart_months.append(month)
             month = month_shift(month, 1)
+    points = []
     for month in chart_months:
         row = months.get(month, dict(date=month + '-01', value=None))
-        # Current month uses the last completed month; it never enters its own mean.
-        end = month if month < asof[:7] else completed
-        point = dict(date=row['date'], value=row['value'] if usable(row['value'], positive) else None)
+        points.append(dict(date=row['date'], value=row['value'] if usable(row['value'], positive) else None))
+    values = [dec(point['value']) if point['value'] is not None else None for point in points]
+    for index, point in enumerate(points):
+        # Dense calendar positions preserve gaps and allow each month to be parsed once.
+        end = index + 1 if chart_months[index] <= completed else index
         for years in (5, 10):
-            point[f'mean{years}'] = complete_mean(months, end, years * 12, positive)['value']
-        result['chart'].append(point)
+            count = years * 12
+            window = values[max(0, end - count):end]
+            point[f'mean{years}'] = (ds(sum(reversed(window)) / count)
+                                     if len(window) == count and None not in window else None)
+    result['chart'] = points
     return result
 
 

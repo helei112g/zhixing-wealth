@@ -40,6 +40,8 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(result['means']['5']['value'], '10')
         self.assertEqual(result['means']['5']['through_month'], '2026-09')
         self.assertEqual(result['means']['5']['deviation_ratio'], '99')
+        self.assertEqual(result['chart'][-1]['mean5'], '10')
+        self.assertEqual(result['chart'][-1]['mean10'], '10')
         for row in rows:
             if row['date'].startswith('2026-09'):
                 row['value'] = '30'
@@ -51,6 +53,8 @@ class MetricTests(unittest.TestCase):
         self.assertIsNone(result['means']['5']['value'])
         self.assertEqual(result['means']['5']['count'], 59)
         self.assertIsNone(next(row for row in result['chart'] if row['date'].startswith('2025-04'))['value'])
+        self.assertIsNone(result['chart'][-1]['mean5'])
+        self.assertIsNone(result['chart'][-1]['mean10'])
 
     def test_invalid_last_observation_does_not_resurrect_an_older_value(self):
         for value in ('0', '-2', None):

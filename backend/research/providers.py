@@ -26,11 +26,15 @@ CATALOG = [
     dict(code='930955', return_code='H20955', name='红利低波100', provider='csi', kind='策略', launch='2017-05-26'),
     dict(code='399998', return_code='H20596', name='中证煤炭', provider='csi', kind='行业', launch='2015-02-13'),
     dict(code='000991', return_code='H00991', name='全指医药', provider='csi', kind='行业', launch='2011-08-02'),
+    dict(code='399989', return_code='H20451', name='中证医疗', aliases=('中证医疗指数',),
+         provider='csi', kind='行业', launch='2014-10-31'),
 ]
 def identity(code):
     code = str(code).strip().upper()
-    found = next((p for p in CATALOG if code in (p['code'], p['return_code'])), None)
-    if not found: raise market.ProviderError('当前尚未支持这个指数的官方代码配对；不按代码前缀猜测')
+    found = next((p for p in CATALOG if code in
+                  (p['code'], p['return_code'], p['name'].upper(), *p.get('aliases', ()))), None)
+    if not found:
+        raise market.ProviderError('未找到已核验的指数，请核对代码或使用目录中的完整名称')
     p = dict(found, currency='CNY', input_basis='total_return' if code == found['return_code'] else 'price')
     p['method_url'] = (CNI + '/docs/gz_399006.pdf' if p['provider'] == 'cni' else
         'https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/' + p['code'] + 'factsheet.pdf')

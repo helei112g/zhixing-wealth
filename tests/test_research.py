@@ -139,12 +139,12 @@ class ResearchTests(unittest.TestCase):
             row = db.execute('SELECT data,sha256 FROM research_snapshots WHERE id=?',(snapshot,)).fetchone()
             self.assertEqual(decode(row[0],row[1])['missing_dates'], value['missing_dates'])
 
-    def test_listing_reuses_all_thirteen_summaries_without_loading_company_history(self):
+    def test_listing_reuses_all_catalog_summaries_without_loading_company_history(self):
         for p in providers.CATALOG:self.add(p['code'],'synthetic-'+p['code'])
         with patch.object(self.r,'module',wraps=self.r.module) as load:
             first=self.r.listing()
-            self.assertEqual(len(first['items']),13)
-            self.assertEqual(load.call_count,26)
+            self.assertEqual(len(first['items']),len(providers.CATALOG))
+            self.assertEqual(load.call_count,2*len(providers.CATALOG))
             self.assertTrue(all(call.args[1] in ('price','valuations') for call in load.call_args_list))
             load.reset_mock()
             self.assertEqual(first,self.r.listing())
@@ -192,7 +192,7 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(self.r.run(body)['job_id'],a['job_id'])
         a2,_=self.add('000905','same-family');self.assertTrue(a2['existing']);self.assertEqual(len(self.r.profiles()),1);self.assertEqual(self.r.revision(),1)
     def test_unknown_and_similar_code_never_guessed(self):
-        for code in ('000906','399999','中证500','399005'):
+        for code in ('000906','399999','中证50','399005','中证医疗科技'):
             with self.assertRaises(DomainError):self.r.resolve(code)
     def test_added_csi_families_deduplicate_both_bases_and_preserve_backup_identity(self):
         ledger_revision=self.store.state()['revision']

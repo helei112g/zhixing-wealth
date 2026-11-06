@@ -31,7 +31,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
   csrf = (await api('/bootstrap')).csrf_token;
   await page.goto(base);
-  await navigate('指数资料库');
+  await navigate('指数库');
   await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
   check((await api('/research/catalog')).subscriptions.length===0,'catalog does not subscribe automatically');
   check(await page.getByRole('button',{name:'本机Token与预算',exact:true}).count()===0,'credential controls removed from index page');
@@ -47,22 +47,28 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   // Larger synthetic-only test budget; no real credential or supplier is used.
   await api('/settings/lixinger',{expected_revision:access.revision,enabled:false,limit:200,automatic:false},'PUT');
 
-  await navigate('指数资料库');
-  await page.getByRole('button',{name:'添加采集',exact:true}).first().click();
-  const dialog = page.getByRole('dialog',{name:'添加指数采集'});
-  await dialog.getByLabel('采集指数代码',{exact:true}).fill('000905');
-  await dialog.getByRole('button',{name:'全历史',exact:true}).click();
-  check(await dialog.getByLabel('采集起始日',{exact:true}).count()===0,'full history removes the custom start field');
-  check(await dialog.locator('.collection-modules small').count()===(await api('/research/catalog')).modules.length-1,'each offered module names its source');
-  for(const name of ['十年历史成分','指数季度/TTM财务','融资与北向持仓','公司估值','公司财务','历史财务备用汇总']){
-   await dialog.getByRole('checkbox',{name,exact:true}).check();
-  }
-  await dialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
-  await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).waitFor();
+  await navigate('指数库');
+  await page.getByRole('button',{name:'添加指数',exact:true}).first().click();
+  const dialog = page.getByRole('dialog',{name:'添加指数'});
+  await dialog.getByLabel('指数代码或名称',{exact:true}).fill('中证500');
+  check(await dialog.getByRole('checkbox').count()===0 && await dialog.getByLabel('采集起始日',{exact:true}).count()===0,
+    'add dialog only needs the index identity');
+  await dialog.getByRole('button',{name:'核对指数',exact:true}).click();
+  await dialog.getByRole('button',{name:'确认添加指数',exact:true}).waitFor();
   check(Object.keys((await api('/settings/lixinger')).counts).length===0,'preview stays offline');
   await shot('studio-collection-preview');
-  await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
+  await dialog.getByRole('button',{name:'确认添加指数',exact:true}).click();
   await dialog.waitFor({state:'hidden'});
+  const catalog=await api('/research/catalog');
+  const added=catalog.subscriptions.find(profile=>profile.id==='csi:000905');
+  check(added.subscription.enabled && added.subscription.history_start===null &&
+    added.subscription.modules.length===catalog.modules.length-1,'new index enables every current module with full history');
+  await page.getByRole('button',{name:'添加指数',exact:true}).click();
+  await dialog.getByLabel('指数代码或名称',{exact:true}).fill('H00905');
+  await dialog.getByRole('button',{name:'核对指数',exact:true}).click();
+  await dialog.getByRole('button',{name:'查看已有指数',exact:true}).click();
+  await dialog.waitFor({state:'hidden'});
+  check((await api('/research/catalog')).research_revision===catalog.research_revision,'existing total-return alias opens the same index without writing');
   await page.getByRole('tab',{name:'数据来源',exact:true}).click();
   await page.getByRole('button',{name:'更新当前指数已订阅数据',exact:true}).click();
   await page.getByText('更新任务已受理，完成状态及实际数据日期见下方。',{exact:true}).waitFor();
@@ -244,7 +250,10 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(true,'immutable older snapshot remains readable');
   await page.getByRole('button',{name:'管理采集',exact:true}).click();
   const manage=page.getByRole('dialog',{name:'管理指数采集'});
-  await manage.getByRole('checkbox',{name:'启用此指数；关闭即暂停并保留历史',exact:true}).uncheck();
+  check(await manage.getByRole('button',{name:'全历史',exact:true}).getAttribute('aria-pressed')==='true' &&
+    await manage.locator('.collection-modules small').count()===added.subscription.modules.length,
+    'management shows the saved range and module sources');
+  await manage.getByRole('checkbox',{name:'启用此指数，关闭后暂停采集并保留历史',exact:true}).uncheck();
   await manage.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
   await manage.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
   await manage.waitFor({state:'hidden'});

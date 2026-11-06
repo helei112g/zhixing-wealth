@@ -14,6 +14,7 @@ MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships',
            'historical_memberships', 'index_financials', 'market_activity', 'tracking_funds',
            'stock_valuations', 'financials', 'historical_financials')
 DEFAULT_MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships')
+NEW_INDEX_MODULES = tuple(module for module in MODULES if module != 'tracking_funds')
 MODULE_SOURCES = {
     'index_info': '理杏仁 · 指数信息',
     'price': '理杏仁 · 日线；已支持的跨市场指数使用编制机构官方数据',

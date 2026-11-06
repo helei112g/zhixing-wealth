@@ -114,7 +114,8 @@ class ScenarioResult(BaseModel):
 class CollectionPreview(BaseModel):
     model_config=ConfigDict(extra='forbid')
     code:str=Field(min_length=1,max_length=16)
-    modules:list[str]=Field(min_length=1,max_length=12)
+    modules:list[str]|None=Field(default=None,min_length=1,max_length=12,
+                                description='省略或 null 时按全历史预览全部可用新建模块，保存仅允许新增。显式列表用于配置采集。')
     history_start:str|None=None
 
 

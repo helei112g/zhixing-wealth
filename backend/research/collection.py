@@ -18,6 +18,11 @@ class Collection:
 
     def preview(self, code, modules, history_start):
         p = providers.identity(code)
+        adding = modules is None
+        if adding:
+            if history_start is not None:
+                raise DomainError('添加指数默认使用全历史，请在管理采集中调整起始日')
+            modules = lixinger.NEW_INDEX_MODULES
         if not modules or len(modules) != len(set(modules)) or any(m not in lixinger.MODULES for m in modules):
             raise DomainError('请选择有效且不重复的采集模块')
         end = providers.cutoff()
@@ -35,17 +40,26 @@ class Collection:
             for call in lixinger.request_plan(p, m, start, end):
                 e = call['endpoint']; budget[e] = budget.get(e, 0)+1
         state = self.research.access.status()
+        iid = p['provider'] + ':' + p['code']
+        with self.research.store.connection() as db:
+            revision = self.research.revision()
+            existing = db.execute('SELECT id FROM research_indices WHERE id=?', (iid,)).fetchone()
         return dict(profile=p, modules=chosen, history_start=history_start, effective_start=start, end=end,
-                    research_revision=self.research.revision(), endpoint_budget=[dict(endpoint=e, calls=n,
+                    existing_id=existing[0] if existing else None, research_revision=revision, endpoint_budget=[dict(endpoint=e, calls=n,
                     remaining=max(0, state['limit']-state['counts'].get(e, 0))) for e, n in sorted(budget.items())],
                     dependencies_pending=pending, unsupported_modules=unsupported, configured=state['configured'], enabled=state['enabled'],
                     limitation='公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。添加仅保存订阅，点击更新才请求接口。')
 
     def save(self, code, modules, history_start, enabled, expected):
+        adding = modules is None
+        if adding and not enabled:
+            raise DomainError('新增指数默认启用采集，请在管理采集中暂停')
         plan = self.preview(code, modules, history_start)
         p = plan['profile']; iid = p['provider']+':'+p['code']
         with self.research.worker_lock, self.research.transaction(expected=expected, bump=True) as db:
             old = db.execute('SELECT data FROM research_indices WHERE id=?', (iid,)).fetchone()
+            if adding and old:
+                raise ConflictError('该指数已在指数库中，请打开已有档案或使用管理采集')
             import json
             value = json.loads(old[0]) if old else dict(p, id=iid, created_at=now())
             previous = subscription(value)

@@ -140,7 +140,8 @@ class Client:
     def resolve_index(self,code):
         return self.preview({'code':code},'/api/research/indices/resolve')
 
-    def collection_preview(self,code,modules,history_start=None):
+    def collection_preview(self,code,modules=None,history_start=None):
+        """Omit modules to preview a new index with full available history."""
         return self.preview(dict(code=code,modules=modules,history_start=history_start),'/api/research/collection/preview')
 
     def research_studio(self,index_id,**options):

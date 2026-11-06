@@ -209,7 +209,7 @@ class WaterlevelService:
         items.append(dict(id='bond_inverse', label='10Y国债收益率倒数（参考）', group='cross_asset', unit='倍',
                           statistics=inverse_stats, formula='100 / 中国10Y国债收益率(%)；不是债券PE'))
         comparisons = {metric: comparison(statistics['full_market_' + metric]['chart'], inverse_stats['chart'],
-                                         statistics['sh_composite']['chart'], statistics['sz_composite']['chart'])
+                                         statistics['sh_composite']['chart'], statistics['sz_composite']['chart'], asof=asof)
                        for metric in ('pe', 'pb')}
         scores = score(scoring)
         names = {'equity': '股票', 'rates': '利率债', 'credit': '信用债'}

@@ -7,7 +7,7 @@ from statistics import median
 from ..common import day, dec, ds
 from ..research.lixinger import METHODS
 
-METHOD_VERSION = 'waterlevel-v4'
+METHOD_VERSION = 'waterlevel-v5'
 
 
 def month_shift(month, offset):
@@ -108,15 +108,21 @@ def earnings_spread(pe, yields):
     return difference(inverse, yields)
 
 
-def comparison(valuation, bond, sh, sz):
+def comparison(valuation, bond, sh, sz, *, asof):
     """Align monthly references without filling gaps; normalize prices at one common month."""
     series = {key: {row['date'][:7]: row for row in rows}
               for key, rows in (('valuation', valuation), ('bond_inverse', bond), ('sh', sh), ('sz', sz))}
     base = next((month for month in sorted(series['valuation'])
                  if all(usable(series[key].get(month, {}).get('value'), True) for key in ('sh', 'sz'))), None)
     rows = []
-    for month, point in series['valuation'].items():
-        row = dict(point, date=month, valuation_date=point['date'])
+    total, count = Decimal(0), 0
+    current_month = asof[:7]
+    for month, point in sorted(series['valuation'].items()):
+        if month < current_month and point['value'] is not None:
+            total += dec(point['value'])
+            count += 1
+        row = dict(point, date=month, valuation_date=point['date'],
+                   historical_mean=ds(total / count) if count else None)
         for key in ('bond_inverse', 'sh', 'sz'):
             reference = series[key].get(month, {})
             value = reference.get('value')

@@ -56,6 +56,8 @@ def comparison_chart(metric, data, method=None):
     definitions = [('value', value_label, '#477da1', 'valuation', ''),
                    ('mean5', '5年平均', '#b77c59', 'valuation', '6 4'),
                    ('mean10', '10年平均', '#8e759f', 'valuation', '2 3')]
+    if any(row.get('historical_mean') is not None for row in rows):
+        definitions.append(('historical_mean', '历史平均', '#a75157', 'valuation', ''))
     if metric == 'pe':
         definitions.append(('bond_inverse', '10Y国债收益率倒数', '#a89963', 'valuation', '3 3'))
     definitions.extend([('sh', '上证综指', '#899b69', 'price', ''), ('sz', '深证综指', '#b57e84', 'price', '')])
@@ -119,7 +121,7 @@ def render(snapshot):
             '<div class="grid">' + ''.join(cards) + '</div><h2>规则摘要</h2><p>' + escape(data['commentary']['overall']) + '</p><ul>'
             + ''.join('<li>' + escape(text) + '</li>' for text in data['commentary']['evidence'])
             + '</ul><h2>全市场估值对照</h2>'
-            + ''.join(comparison_chart(key, item, data['method'] if data.get('method_version') in ('waterlevel-v3', 'waterlevel-v4') else None)
+            + ''.join(comparison_chart(key, item, data['method'] if data.get('method_version') in ('waterlevel-v3', 'waterlevel-v4', 'waterlevel-v5') else None)
                       for key, item in data.get('comparisons', {}).items())
             + '<h2>主要指数估值</h2><p>蓝色：月末观测；棕色：5年均值；绿色：10年均值。股息率保持接口比例单位。</p><div class="grid">'
             + ''.join(indices) + '</div><h2>利率、宏观与跨资产参照</h2><div class="grid">'

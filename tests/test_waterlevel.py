@@ -97,7 +97,7 @@ class MetricTests(unittest.TestCase):
         sh = [dict(date='2020-01-23',value='1000'), dict(date='2020-03-30',value='1200')]
         sz = [dict(date='2020-02-28',value='500'), dict(date='2020-03-31',value='550')]
         bond = [dict(date='2020-01-30',value='50')]
-        value = metrics.comparison(valuation, bond, sh, sz)
+        value = metrics.comparison(valuation, bond, sh, sz, asof='2020-04-01')
         self.assertEqual(value['base_month'], '2020-03')
         self.assertIsNone(value['chart'][0]['sh'])
         self.assertEqual(value['chart'][2]['sh'], '100')
@@ -106,6 +106,9 @@ class MetricTests(unittest.TestCase):
         self.assertIsNone(value['chart'][1]['bond_inverse'])
         self.assertEqual(value['chart'][0]['bond_inverse_date'], '2020-01-30')
         self.assertEqual(value['chart'][0]['mean5'], '15')
+        self.assertEqual([row['historical_mean'] for row in value['chart']], ['20', '20', '22.5'])
+        partial = metrics.comparison(valuation, bond, sh, sz, asof='2020-03-31')
+        self.assertEqual(partial['chart'][-1]['historical_mean'], '20')
 
 
 class SourceTests(unittest.TestCase):

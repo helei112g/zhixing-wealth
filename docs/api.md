@@ -420,7 +420,7 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 
 ## 市场水位（schema12）
 
-读取只用本地快照，无供应商请求。`method=mcw|ew|ewpvo|median`，默认mcw；`asof=YYYY-MM-DD`默认今天，不接受未来日期。历史日期仅截取当前可得版本，不提供严格PIT。页面与AI共同使用`waterlevel-v4`，完整公式及覆盖边界见[市场水位](waterlevel.md)。
+读取只用本地快照，无供应商请求。`method=mcw|ew|ewpvo|median`，默认mcw；`asof=YYYY-MM-DD`默认今天，不接受未来日期。历史日期仅截取当前可得版本，不提供严格PIT。页面与AI共同使用`waterlevel-v5`，完整公式及覆盖边界见[市场水位](waterlevel.md)。
 
 | 接口 | 请求与结果 |
 |---|---|

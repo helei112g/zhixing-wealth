@@ -79,6 +79,7 @@ function ComparisonCard({data, metric, setMetric, setMethod, window, setWindow, 
     {key:'value', label:metricNames[metric]+' · '+methods[data.method], color:'#365f91'},
     {key:'mean5', label:'5年完整月均值', color:'#bc8650'},
     {key:'mean10', label:'10年完整月均值', color:'#298879'},
+    {key:'historical_mean', label:'历史平均', color:'#a75157'},
   ];
   if(metric==='pe') definitions.push({key:'bond_inverse', label:'10Y国债收益率倒数', color:'#a89963', dash:'3 3'});
   definitions.push(
@@ -104,7 +105,7 @@ function ComparisonCard({data, metric, setMetric, setMethod, window, setWindow, 
         : <Notice>尚无所选口径的估值序列，可在数据来源手动更新理杏仁 A股全指。</Notice>}
     </div>
     <p className="muted small">估值来源为理杏仁 A股全指（1000002）。左轴为估值倍数。两综指使用独立右轴，以 {comparison.base_month||'首个共同有效月份'} 为基准100。
-      均值使用完整月末观测。{metric==='pe'?'国债收益率倒数仅作参考。':''}</p>
+      历史平均从该口径首个有效月起累计，只纳入已完成月份的有效月末观测，切换窗口沿用原起点。{metric==='pe'?'国债收益率倒数仅作参考。':''}</p>
   </Panel>;
 }
 

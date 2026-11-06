@@ -188,6 +188,37 @@ class CollectionTests(unittest.TestCase):
         for module in ('index_financials','market_activity'):
             self.assertEqual(self.r.module(iid,'stage.'+module)['range_start'],'2010-06-01')
 
+    def test_existing_financial_history_is_backfilled_for_added_fields(self):
+        iid = self.add(['index_financials'])
+        self.r.collection.save('000905', ['index_financials'], '2026-01-01', True, self.r.revision())
+        self.r.collection.collect(iid, 'index_info', '2026-11-04')
+        old = self.r.collection.collect(iid, 'index_financials', '2026-11-04')
+        old.pop('metrics')
+        self.r.publish(iid, 'index_financials', old)
+        current = self.r.collection.collect(iid, 'index_financials', '2026-11-05')
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-01-01')
+        self.assertTrue(all('q.m.roe.t' in row['values'] for row in current['rows']))
+        self.assertTrue(all('q.bs.gw.t' in row['values'] for row in current['rows']))
+
+    def test_retired_tracking_fund_subscription_and_codes_are_hidden(self):
+        iid = self.add(['price'])
+        with self.r.transaction(bump=True) as db:
+            profile = self.r.profile(iid)
+            profile['subscription']['modules'].append('tracking_funds')
+            db.execute('UPDATE research_indices SET data=? WHERE id=?', (json.dumps(profile), iid))
+        archived = self.r.publish(iid, 'tracking_funds', dict(rows=[dict(stockCode='510001')], evidence=[]))
+        self.assertNotIn('tracking_funds', self.r.profile(iid)['subscription']['modules'])
+        self.assertNotIn('tracking_funds', self.r.detail(iid))
+        self.assertFalse(self.r.versions(iid)['items'])
+        with self.assertRaises(DomainError):
+            self.r.frozen(iid, archived)
+        with self.assertRaises(DomainError):
+            self.r.updates.plan(dict(scopes=['memberships'], resources=[
+                dict(scope='memberships', target=iid, module='tracking_funds'),
+            ]))
+        with self.store.connection() as db:
+            validate_backup(db)
+
     def test_checkpoint_resume_after_budget_failure_does_not_repeat_successful_shard(self):
         iid=self.add(['market_activity']);self.r.collection.collect(iid,'index_info','2026-11-04');s=self.r.access.status();self.r.access.configure(s['revision'],True,1)
         self.r.access.request('cn/index/mutual-market',{'stockCode':'000905','startDate':'2026-10-01','endDate':'2026-11-04'})

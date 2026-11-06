@@ -58,7 +58,12 @@ class ResearchService:
         return dict(profile=providers.identity(code), research_revision=self.revision())
 
     def profiles(self):
-        with self.store.connection() as db: return [json.loads(r[0]) for r in db.execute('SELECT data FROM research_indices ORDER BY id')]
+        with self.store.connection() as db:
+            profiles = [json.loads(row[0]) for row in db.execute('SELECT data FROM research_indices ORDER BY id')]
+        for profile in profiles:
+            if profile.get('subscription'):
+                profile['subscription'] = subscription(profile)
+        return profiles
 
     def profile(self, iid):
         p=next((p for p in self.profiles() if p['id']==iid),None)
@@ -68,13 +73,13 @@ class ResearchService:
     def versions(self,iid):
         self.profile(iid)
         with self.store.connection() as db:
-            rows=db.execute("SELECT id,module,created_at,sha256 FROM research_snapshots WHERE index_id=? AND module NOT LIKE 'stage.%' ORDER BY rowid DESC LIMIT 100",(iid,)).fetchall()
+            rows=db.execute("SELECT id,module,created_at,sha256 FROM research_snapshots WHERE index_id=? AND module NOT LIKE 'stage.%' AND module <> 'tracking_funds' ORDER BY rowid DESC LIMIT 100",(iid,)).fetchall()
         return dict(items=[dict(id=r[0],module=r[1],created_at=r[2],sha256=r[3]) for r in rows],limit=100)
 
     def frozen(self,iid,sid):
         self.profile(iid)
         with self.store.connection() as db:
-            row=db.execute("SELECT module,created_at,sha256,data FROM research_snapshots WHERE index_id=? AND id=? AND module NOT LIKE 'stage.%'",(iid,sid)).fetchone()
+            row=db.execute("SELECT module,created_at,sha256,data FROM research_snapshots WHERE index_id=? AND id=? AND module NOT LIKE 'stage.%' AND module <> 'tracking_funds'",(iid,sid)).fetchone()
             if not row:raise DomainError('该指数的来源版本不存在')
             value=decode(row[3],row[2])
             if row[0] in ('price','total_return'):value=price_chunks.expand(db,value)
@@ -155,7 +160,7 @@ class ResearchService:
             if key in self.cache:
                 self.cache.move_to_end(key)
                 return deepcopy(self.cache[key])
-            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials','index_info','index_financials','market_activity','tracking_funds','official_reference','volatility')
+            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials','index_info','index_financials','market_activity','official_reference','volatility')
             resources={name:self.module(iid,name) for name in names}
         price=resources[basis];v=resources['valuations'];members=resources.get('memberships');stocks=resources.get('stock_valuations');finance=resources.get('financials')
         asof=price['effective_date'] if price else providers.cutoff()
@@ -213,7 +218,7 @@ class ResearchService:
             collection=self.collection.status(iid),official_reference=resources.get('official_reference'),source_coverage=(price or {}).get('coverage'),memberships_complete=(members or {}).get('weights_complete',True),
             historical_memberships=(resources.get('historical_memberships') or {}).get('baskets',[]),membership_comparison_coverage=(resources.get('historical_memberships') or {}).get('comparison_coverage',[]),index_info=(resources.get('index_info') or {}).get('info'),
             index_financials=(resources.get('index_financials') or {}).get('rows',[]),fundamental_activity=(v or {}).get('activity_rows',[]),
-            market_activity=(resources.get('market_activity') or {}).get('series',{}),tracking_funds=(resources.get('tracking_funds') or {}).get('rows',[])))
+            market_activity=(resources.get('market_activity') or {}).get('series',{})))
         return self._remember(key,result,revision)
 
     def _remember(self,key,result,revision):

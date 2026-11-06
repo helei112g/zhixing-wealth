@@ -12,7 +12,7 @@ METHODS = ('mcw', 'ew', 'ewpvo', 'median')
 METRICS = {'pe': 'pe_ttm', 'pb': 'pb', 'ps': 'ps_ttm', 'dividend_yield': 'dyr'}
 ACTIVITY = ('mc', 'cmc', 'ecmc', 'fet_as_ma', 'fet_snif_ma', 'to_r', 'cp', 'r_cp')
 MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships',
-           'historical_memberships', 'index_financials', 'market_activity', 'tracking_funds',
+           'historical_memberships', 'index_financials', 'market_activity',
            'stock_valuations', 'financials', 'historical_financials')
 DEFAULT_MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships')
 MODULE_SOURCES = {
@@ -24,15 +24,20 @@ MODULE_SOURCES = {
     'historical_memberships': '理杏仁 · 历史成分与权重（最多近十年）',
     'index_financials': '理杏仁 · 指数财报（按指数类型选择财报端点）',
     'market_activity': '理杏仁 · 融资融券、互联互通',
-    'tracking_funds': '理杏仁 · 跟踪基金（旧订阅兼容）',
     'stock_valuations': '东方财富 · 指定交易日公司历史估值',
     'financials': '东方财富 · 公司利润表、现金流量表',
     'historical_financials': '理杏仁历史名单 + 东方财富公司财报及历史行业',
 }
 FINANCIAL_FIELDS = {
     'revenue': 'ps.oi', 'profit': 'ps.npatoshopc', 'adjusted_profit': 'ps.npadnrpatoshaopc',
-    'operating_cf': 'cfs.ncffoa', 'assets': 'bs.ta', 'liabilities': 'bs.tl', 'equity': 'bs.toe',
+    'operating_cf': 'cfs.ncffoa', 'assets': 'bs.ta', 'liabilities': 'bs.tl', 'equity': 'bs.toe', 'goodwill': 'bs.gw',
 }
+FINANCIAL_RATIO_FIELDS = ('m.roe', 'm.roa', 'm.np_s_r', 'bs.gw_toe_r', 'bs.tl_ta_r')
+FINANCIAL_METRICS = tuple(
+    f'q.{field}.{expression}' for field in FINANCIAL_FIELDS.values()
+    for expression in (('t', 't_r', 't_y2y') if field.startswith('bs.') else ('t', 't_r', 't_y2y', 'ttm', 'ttm_y2y', 'c', 'c_y2y'))
+) + tuple(f'q.{field}.{expression}' for field in FINANCIAL_RATIO_FIELDS for expression in ('t', 't_r'))
+MARGIN_RATIO_FIELDS = ('financingBalanceToMarketCap', 'securitiesBalanceToMarketCap')
 
 
 def numeric(v):
@@ -70,8 +75,6 @@ def request_plan(profile, module, start, end, info=None):
         raise DomainError('该跨市场指数的理杏仁地区、权限与财务币种尚未核验；保留原有快照')
     if module == 'index_info':
         return [dict(endpoint='cn/index', params=dict(stockCodes=[code]), kind='info')]
-    if module == 'tracking_funds':
-        return [dict(endpoint='cn/index/tracking-fund', params=base, kind='funds')]
     if module in ('memberships', 'historical_memberships'):
         ends = periods(end, max(start, profile['launch'], str(years_before(end, 10)))) if module == 'historical_memberships' else [str(day(end).replace(day=1)-timedelta(days=1))]
         calls = []
@@ -87,9 +90,7 @@ def request_plan(profile, module, start, end, info=None):
         if typ not in ('hybrid', 'non_financial', 'bank', 'security'):
             raise DomainError('请先采集指数基本信息并确认受支持的财报类型；不猜测财报端点')
         # The ordinary-shareholder fields are common to these documented financial types.
-        fields = [f'q.{field}.{expression}' for field in FINANCIAL_FIELDS.values()
-                  for expression in (('t', 't_r', 't_y2y') if field.startswith('bs.') else ('t', 't_r', 't_y2y', 'ttm', 'ttm_y2y', 'c', 'c_y2y'))]
-        return [dict(endpoint='cn/index/fs/'+typ, params=dict(stockCodes=[code], startDate=a, endDate=b, metricsList=fields), kind='finance') for a, b in ranges(start, end)]
+        return [dict(endpoint='cn/index/fs/'+typ, params=dict(stockCodes=[code], startDate=a, endDate=b, metricsList=list(FINANCIAL_METRICS)), kind='finance') for a, b in ranges(start, end)]
     calls = []
     for a, b in ranges(start, end):
         args = dict(base, startDate=a, endDate=b)
@@ -129,8 +130,6 @@ def normalize(call, rows, profile):
             if row.get('currency') != 'CNY' or row.get('source') != profile['provider'] or row.get('areaCode') != 'cn':
                 raise DomainError('理杏仁指数地区、币种或编制方与档案不符')
             result.append({k: row.get(k) for k in ('stockCode', 'name', 'areaCode', 'market', 'source', 'currency', 'fsTableType', 'launchDate', 'rebalancingFrequency', 'calculationMethod')})
-        elif kind == 'funds':
-            result.append({k: row.get(k) for k in ('stockCode', 'name', 'shortName', 'areaCode', 'market', 'exchange')})
         elif kind == 'members':
             result = [security(v) for v in row.get('constituents', [])]
         else:
@@ -153,12 +152,12 @@ def normalize(call, rows, profile):
                 result.append(dict(date=d, currency='CNY', published_at=iso(row['reportDate']) if row.get('reportDate') else None,
                                    report_type=row.get('reportType'), values=values))
             else:
-                fields = ('financingPurchaseAmount', 'financingRepaymentAmount', 'financingNetPurchaseAmount', 'financingBalance', 'securitiesSellAmount', 'securitiesRepaymentAmount', 'securitiesNetSellAmount', 'securitiesBalance') if kind == 'margin' else ('shareholdingsMoney', 'netBuyAmount', 'shareholdingsMoneyToMarketCap')
+                fields = ('financingPurchaseAmount', 'financingRepaymentAmount', 'financingNetPurchaseAmount', 'financingBalance', 'securitiesSellAmount', 'securitiesRepaymentAmount', 'securitiesNetSellAmount', 'securitiesBalance', *MARGIN_RATIO_FIELDS) if kind == 'margin' else ('shareholdingsMoney', 'netBuyAmount', 'shareholdingsMoneyToMarketCap')
                 result.append(dict(date=d, **{k: numeric(row.get(k)) for k in fields}))
     if kind in ('info',) and len(result) != 1: raise DomainError('指数基础信息不唯一或未覆盖')
     if kind == 'members' and len({(r['market'], r['code']) for r in result}) != len(result):
         raise DomainError('成分名单身份重复')
-    keys = [(r.get('date'), r.get('code')) if kind == 'weights' else r.get('date') for r in result] if kind not in ('members', 'info', 'funds') else []
+    keys = [(r.get('date'), r.get('code')) if kind == 'weights' else r.get('date') for r in result] if kind not in ('members', 'info') else []
     if len(keys) != len(set(keys)): raise DomainError('理杏仁观测日期或证券身份重复')
     return sorted(result, key=lambda r: (r.get('date', ''), r.get('code', '')))
 
@@ -186,7 +185,6 @@ def assemble(profile, module, parts, end):
         return dict(common, rows=rows, effective_date=rows[-1]['date'], series_code=profile['code'],
                     sample_days=VOLATILITY_DAYS, methodology_note='理杏仁按指数代码提供的250日年化波动率；接口没有全收益口径参数')
     if module == 'index_info': return dict(common, info=parts[0]['rows'][0])
-    if module == 'tracking_funds': return dict(common, rows=parts[0]['rows'])
     if module == 'valuations':
         rows = [r for p in parts for r in p['rows'] if r['date'] >= profile['launch']]
         if not rows: raise DomainError('该范围没有估值观测；保留旧版本')
@@ -198,10 +196,11 @@ def assemble(profile, module, parts, end):
                     mapping_verified=False, methodology_note='供应商各估值方法独立保存；mcw与条件点位分母关系待认证核验，试算暂不开放')
     if module == 'market_activity':
         return dict(common, effective_date=max((r['date'] for p in parts for r in p['rows']),default=None),
-                    series={k: [r for p in parts if p['call']['kind'] == k for r in p['rows']] for k in ('margin', 'northbound')})
+                    series={k: [r for p in parts if p['call']['kind'] == k for r in p['rows']] for k in ('margin', 'northbound')},
+                    margin_ratio_fields=list(MARGIN_RATIO_FIELDS))
     if module == 'index_financials':
         rows = [r for p in parts for r in p['rows'] if not r['published_at'] or r['published_at'] <= end]
-        return dict(common, rows=rows, effective_date=max((r['date'] for r in rows),default=None),methodology_note='历史当期成分汇总；供应商同篮子同比与两期独立总量之差分开，当前重述版本，不是严格PIT')
+        return dict(common, rows=rows, effective_date=max((r['date'] for r in rows),default=None), metrics=list(FINANCIAL_METRICS),methodology_note='历史当期成分汇总；供应商同篮子同比与两期独立总量之差分开，当前重述版本，不是严格PIT')
     baskets = []
     for weight_part, member_part in zip(parts[::2], parts[1::2]):
         period = weight_part['call']['period']; weights = full_weights(weight_part['rows'], period, module=='memberships')

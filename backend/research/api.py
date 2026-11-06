@@ -41,7 +41,7 @@ class IndexPriceResource(IndexResource):
 
 class MembershipResource(IndexResource):
     scope:Literal['memberships']
-    module:Literal['memberships','historical_memberships','tracking_funds']
+    module:Literal['memberships','historical_memberships']
 
 
 class ValuationResource(IndexResource):

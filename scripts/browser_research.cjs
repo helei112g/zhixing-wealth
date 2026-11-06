@@ -53,7 +53,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await dialog.getByLabel('采集指数代码',{exact:true}).fill('000905');
   await dialog.getByRole('button',{name:'全历史',exact:true}).click();
   check(await dialog.getByLabel('采集起始日',{exact:true}).count()===0,'full history removes the custom start field');
-  check(await dialog.locator('.collection-modules small').count()===(await api('/research/catalog')).modules.length-1,'each offered module names its source');
+  check(await dialog.locator('.collection-modules small').count()===(await api('/research/catalog')).modules.length,'each offered module names its source');
   for(const name of ['十年历史成分','指数季度/TTM财务','融资与北向持仓','公司估值','公司财务','历史财务备用汇总']){
    await dialog.getByRole('checkbox',{name,exact:true}).check();
   }
@@ -63,6 +63,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await shot('studio-collection-preview');
   await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
   await dialog.waitFor({state:'hidden'});
+  check(!(await api('/research/catalog')).modules.includes('tracking_funds'),'catalog omits fund-code collection');
   await page.getByRole('tab',{name:'数据来源',exact:true}).click();
   await page.getByRole('button',{name:'更新当前指数已订阅数据',exact:true}).click();
   await page.getByText('更新任务已受理，完成状态及实际数据日期见下方。',{exact:true}).waitFor();
@@ -240,6 +241,21 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.locator('.fund-observations summary').click();
   const originalRows=page.locator('.fund-observations tbody tr');
   check(await originalRows.count()===5&&(await originalRows.filter({hasText:'2024-02-29'}).innerText()).includes('0.00'),'original zero records remain in the detail table');
+  await page.getByRole('button',{name:'融资',exact:true}).click();
+  await page.getByRole('button',{name:'融资偿还',exact:true}).click();
+  check(await page.getByRole('img',{name:'融资偿还',exact:true}).isVisible(),'financing repayment is selectable');
+  await page.getByRole('button',{name:'融券',exact:true}).click();
+  check(await page.getByRole('img',{name:'融券余额占流通市值比',exact:true}).isVisible(),'securities balance and ratio are visible');
+  await page.getByRole('button',{name:'北向持仓',exact:true}).click();
+  check(await page.getByRole('img',{name:'北向持仓占市值比',exact:true}).isVisible(),'northbound holding ratio is visible');
+  await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
+  await page.getByRole('button',{name:'ROE',exact:true}).click();
+  const ratioChart=page.getByRole('img',{name:'指数财务比率趋势',exact:true});
+  await ratioChart.locator('.recharts-line-curve').waitFor({state:'attached'});
+  check(await page.locator('.studio-finance-summary').innerText().then(text=>text.includes('百分点')),
+   'ROE uses a percentage scale and year-over-year percentage points');
+  await page.getByRole('button',{name:'商誉',exact:true}).click();
+  check(await page.getByRole('img',{name:'指数财务金额趋势',exact:true}).isVisible(),'goodwill uses the amount scale');
   await page.unroute(studioRoute);
   assert.deepEqual((await api('/settings/lixinger')).counts,counts);
   check(true,'all reading and display switches consume no supplier quota');

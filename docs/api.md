@@ -396,7 +396,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 旧 `POST /api/research/indices`、`POST .../valuation-preview` 返回410；旧后缀选择和乐咕联网抓取已退役，旧数据仍可读取。更新任务的 request_id 保持幂等；订阅变更用研究版本防并发覆盖，重复保存不产生采集调用。
 
-指数资源模块分别归入原六个scope：index_prices含index_info/price/total_return/volatility；volatility随境内指数价格日线订阅采集，也可精确重试；memberships含memberships/historical_memberships/tracking_funds；valuations含valuations/market_activity/stock_valuations；financials含index_financials/financials/historical_financials。只更新订阅模块，原行情与汇率scope独立。
+指数资源模块分别归入原六个scope：index_prices含index_info/price/total_return/volatility；volatility随境内指数价格日线订阅采集，也可精确重试；memberships含memberships/historical_memberships；valuations含valuations/market_activity/stock_valuations；financials含index_financials/financials/historical_financials。只更新订阅模块，原行情与汇率scope独立。
 
 历史篮子现金流以对应年末前7天内最近历史估值记录的行业排除金融公司；历史行业按期间与公司缓存，不沿用当前名单行业。`excluded_unknown_industry` 记录未核验家数，存在未核验行业时不认定完整覆盖、不计算同比；行业和财报均为当前可得历史版本，不声称严格PIT。
 

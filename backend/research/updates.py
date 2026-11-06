@@ -13,7 +13,7 @@ from .collection import collection_modules, subscription
 AUTOMATIC_SCOPES = ('quotes', 'fx')
 SCOPES=(*AUTOMATIC_SCOPES,'index_prices','memberships','valuations','financials')
 UPDATE_SCOPES = (*SCOPES, 'market')
-MODULES={'index_prices':('index_info','price','total_return','volatility'),'memberships':('memberships','historical_memberships','tracking_funds'),
+MODULES={'index_prices':('index_info','price','total_return','volatility'),'memberships':('memberships','historical_memberships'),
          'valuations':('valuations','market_activity','stock_valuations'),'financials':('index_financials','financials','historical_financials')}
 
 

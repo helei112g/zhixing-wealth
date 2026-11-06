@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react';
 import {api,Obj} from './api';
 import {Button,ErrorBox,Panel} from './components';
 
-const labels:Obj={market:'市场水位',index_info:'指数基本信息',volatility:'指数波动率',index_financials:'指数季度财务',market_activity:'资金与持仓',tracking_funds:'跟踪基金',quotes:'持仓行情',fx:'汇率',index_prices:'指数价格',memberships:'成分名单与权重',valuations:'指数及成分估值',financials:'成分财务',price:'价格指数',total_return:'全收益指数',historical_memberships:'历史有效成分',stock_valuations:'成分公司估值',historical_financials:'历史成分财务'};
+const labels:Obj={market:'市场水位',index_info:'指数基本信息',volatility:'指数波动率',index_financials:'指数季度财务',market_activity:'资金与持仓',quotes:'持仓行情',fx:'汇率',index_prices:'指数价格',memberships:'成分名单与权重',valuations:'指数及成分估值',financials:'成分财务',price:'价格指数',total_return:'全收益指数',historical_memberships:'历史有效成分',stock_valuations:'成分公司估值',historical_financials:'历史成分财务'};
 const states:Obj={complete:'完成',ok:'完成',manual:'需手工核对',partial:'部分失败',error:'失败',pending:'等待中',running:'更新中',interrupted:'已中断',unsupported:'暂不支持'};
 const activeJob=(j:Obj)=>['pending','running'].includes(j.state);
 const indexScopes=['index_prices','memberships','valuations','financials'];

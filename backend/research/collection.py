@@ -9,7 +9,10 @@ from .metrics import years_before
 
 def subscription(profile):
     # Only explicitly saved profiles are passed here, never the built-in catalog.
-    return profile.get('subscription') or dict(enabled=True, modules=list(lixinger.DEFAULT_MODULES), history_start=None)
+    saved = profile.get('subscription')
+    if not saved:
+        return dict(enabled=True, modules=list(lixinger.DEFAULT_MODULES), history_start=None)
+    return dict(saved, modules=[module for module in saved['modules'] if module != 'tracking_funds'])
 
 
 def collection_modules(profile, modules=None):
@@ -96,13 +99,20 @@ class Collection:
             start = max(start, str(years_before(end, 10)))
         needs_valuation_backfill = (module == 'valuations' and old
                                     and 'ewpvo' not in old.get('series', {}).get('pe', {}))
-        full = (full or not old or old.get('provider_id') != 'lixinger' or not state.get('last_reconciled')
+        needs_finance_backfill = (module == 'index_financials' and old
+                                  and not set(lixinger.FINANCIAL_METRICS).issubset(old.get('metrics', ())))
+        needs_margin_backfill = (module == 'market_activity' and old
+                                 and not set(lixinger.MARGIN_RATIO_FIELDS).issubset(old.get('margin_ratio_fields', ())))
+        full = (full or needs_finance_backfill or needs_margin_backfill or not old or old.get('provider_id') != 'lixinger' or not state.get('last_reconciled')
                 or bool(needs_valuation_backfill) or state.get('generation') != p.get('collection_generation', 0))
         if not full and old.get('effective_date'):
             start = max(start, str(day(old['effective_date']) - timedelta(days=15)))
         # Only resume checkpoints for the same mode and configured range.
         if (state.get('phase') == 'collecting' and state.get('generation') == p.get('collection_generation', 0)
                 and state['mode'] == ('reconcile' if full else 'incremental')
+                and (not needs_finance_backfill or
+                     set(lixinger.FINANCIAL_METRICS).issubset(state['calls'][0]['params'].get('metricsList', ())))
+                and (not needs_margin_backfill or state.get('margin_ratios'))
                 and (not needs_valuation_backfill or
                      'pe_ttm.ewpvo' in state['calls'][0]['params']['metricsList'])):
             start, end = state['range_start'], state['range_end']
@@ -119,6 +129,8 @@ class Collection:
             state = dict(request_id=identity, phase='collecting', generation=p.get('collection_generation', 0),
                          range_start=start, range_end=end, mode='reconcile' if full else 'incremental',
                          calls=calls, parts=[], last_incremental=state.get('last_incremental'), last_reconciled=state.get('last_reconciled'))
+            if module == 'market_activity':
+                state['margin_ratios'] = True
         for original in calls[len(state['parts']):]:
             self.active(iid, module)
             call = deepcopy(original)

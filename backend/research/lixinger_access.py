@@ -1,4 +1,4 @@
-"""Local-only credentials and a durable, fail-closed trial request gate.
+"""Local-only credentials, durable request counts and provider error gates.
 
 Never include transport objects, response messages or credential values in errors.
 The private directory is deliberately outside SQLite/note exports and source builds.
@@ -19,7 +19,7 @@ ENDPOINTS = ('cn/index', 'cn/index/candlestick', 'cn/index/fundamental',
              'cn/index/fs/hybrid', 'cn/index/fs/non_financial', 'cn/index/fs/bank', 'cn/index/fs/security',
              'cn/index/margin-trading-and-securities-lending', 'cn/index/mutual-market',
              'cn/index/volatility', 'cn/index/drawdown')
-BUDGET_ENDPOINTS = (*ENDPOINTS, 'cn/index/tracking-fund')
+COUNTER_ENDPOINTS = (*ENDPOINTS, 'cn/index/tracking-fund')
 ROOT_URL = 'https://open.lixinger.com/api/'
 
 
@@ -78,19 +78,21 @@ class LocalAccess:
         if raw is None:
             try: os.stat('token', dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError: pass
-            else: raise DomainError('已有Token但调用计数文件缺失；已停止采集，禁止自动重置额度')
-            return dict(revision=0, enabled=False, automatic=False, limit=20, counts={}, blocked={}, mode='trial')
+            else: raise DomainError('已有Token但调用计数文件缺失；已停止采集，请先核对调用记录')
+            return dict(revision=0, enabled=False, automatic=False, limit=None, counts={}, blocked={}, mode='unlimited')
         try:
             value = json.loads(raw)
-            if not isinstance(value, dict) or type(value['revision']) is not int or value['revision'] < 0 or type(value['limit']) is not int or not 1 <= value['limit'] <= 1000: raise ValueError()
+            if not isinstance(value, dict) or type(value['revision']) is not int or value['revision'] < 0: raise ValueError()
+            if value['limit'] is not None and type(value['limit']) is not int: raise ValueError()
             if set(value)-{'revision','enabled','automatic','limit','counts','blocked','mode','last_attempt'}: raise ValueError()
-            if type(value['enabled']) is not bool or type(value['automatic']) is not bool or value['mode'] != 'trial': raise ValueError()
+            if type(value['enabled']) is not bool or type(value['automatic']) is not bool or value['mode'] not in ('trial', 'unlimited'): raise ValueError()
             if not isinstance(value['counts'],dict) or not isinstance(value['blocked'],dict): raise ValueError()
-            if any(k not in BUDGET_ENDPOINTS or type(v) is not int or v < 0 for k, v in value['counts'].items()): raise ValueError()
-            if any(k not in BUDGET_ENDPOINTS or v not in ('permission_or_quota','provider_rejected') for k,v in value['blocked'].items()): raise ValueError()
+            if any(k not in COUNTER_ENDPOINTS or type(v) is not int or v < 0 for k, v in value['counts'].items()): raise ValueError()
+            if any(k not in COUNTER_ENDPOINTS or v not in ('permission_or_quota','provider_rejected') for k,v in value['blocked'].items()): raise ValueError()
             if 'last_attempt' in value and (not isinstance(value['last_attempt'],str) or not re.fullmatch(r'[0-9T:+. -]{19,40}',value['last_attempt'])): raise ValueError()
-            return value
-        except (ValueError, KeyError, TypeError): raise DomainError('调用计数文件损坏；已阻断真实采集，禁止自动重置额度') from None
+            # Ignore legacy caps without resetting counts, blocks or the revision.
+            return dict(value, limit=None, mode='unlimited')
+        except (ValueError, KeyError, TypeError): raise DomainError('调用计数文件损坏；已停止采集，请先核对调用记录') from None
 
     def store_state(self, fd, value): self.write(fd, 'budget.json', json.dumps(value, ensure_ascii=False).encode())
 
@@ -103,8 +105,7 @@ class LocalAccess:
                 configured = stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid() and not info.st_mode & 0o077
             except FileNotFoundError: configured = False
             return dict(value, configured=configured, path=str(self.directory / 'token'),
-                        endpoints=[dict(endpoint=e, used=value['counts'].get(e, 0), limit=value['limit'],
-                                        remaining=max(0, value['limit']-value['counts'].get(e, 0)),
+                        endpoints=[dict(endpoint=e, used=value['counts'].get(e, 0), limit=None, remaining=None,
                                         blocked=value['blocked'].get(e)) for e in ENDPOINTS])
 
     def save_token(self, token, expected):
@@ -121,14 +122,15 @@ class LocalAccess:
             self.write(fd, 'token', token.encode('ascii'))
         return self.status()
 
-    def configure(self, expected, enabled, limit, automatic=False, clear_block=None):
-        if type(limit) is not int or not 1 <= limit <= 1000 or type(enabled) is not bool or type(automatic) is not bool:
-            raise DomainError('每接口预算须为1至1000次，采集开关须明确指定')
+    def configure(self, expected, enabled, limit=None, automatic=False, clear_block=None):
+        # The optional limit argument is accepted only for older clients and ignored.
+        if (limit is not None and type(limit) is not int) or type(enabled) is not bool or type(automatic) is not bool:
+            raise DomainError('采集开关须明确指定；兼容字段limit须为整数或null')
         with self.files() as fd:
             value = self.state(fd)
-            if type(expected) is not int or expected != value['revision']: raise ConflictError('本地调用预算已变化，请重新读取后核对')
+            if type(expected) is not int or expected != value['revision']: raise ConflictError('本地采集设置已变化，请重新读取后核对')
             if clear_block and clear_block not in ENDPOINTS: raise DomainError('无效端点')
-            value.update(revision=value['revision']+1, enabled=enabled, limit=limit, automatic=automatic)
+            value.update(revision=value['revision']+1, enabled=enabled, limit=None, automatic=automatic)
             if clear_block: value['blocked'].pop(clear_block, None)
             self.store_state(fd, value)
         return self.status()
@@ -145,10 +147,9 @@ class LocalAccess:
             if automatic and (not value['enabled'] or not value['automatic']):
                 raise DomainError('理杏仁自动采集未启用；可在数据来源页手动更新')
             if value['blocked'].get(endpoint): raise DomainError('该理杏仁端点已暂停；请先核对权限/额度再恢复')
-            if value['counts'].get(endpoint, 0) >= value['limit']: raise DomainError('该理杏仁端点已到本机预算上限；本次未请求')
             raw = self.read(fd, 'token')
             if not raw: raise DomainError('尚未在本机配置理杏仁Token')
-            # Reserve before sending. Failed, timed-out and interrupted calls still consume a slot.
+            # Record before sending, including failed, timed-out and interrupted calls.
             value['counts'][endpoint] = value['counts'].get(endpoint, 0)+1
             value['revision'] += 1; value['last_attempt'] = now(); self.store_state(fd, value)
         error = None; result = None; blocked = None

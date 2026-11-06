@@ -44,8 +44,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(await page.getByLabel('每端点本机累计上限',{exact:true}).count()===0,'global UI has no budget or enable controls');
   const access = await api('/settings/lixinger');
   check(Object.keys(access.counts).length===0&&!access.automatic,'saving token does not collect or enable automation');
-  // Larger synthetic-only test budget; no real credential or supplier is used.
-  await api('/settings/lixinger',{expected_revision:access.revision,enabled:false,limit:200,automatic:false},'PUT');
+  check(access.limit===null&&access.endpoints.every(row=>row.limit===null&&row.remaining===null),'local request counts have no cap');
 
   await navigate('指数资料库');
   await page.getByRole('button',{name:'添加采集',exact:true}).first().click();
@@ -60,6 +59,10 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await dialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
   await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).waitFor();
   check(Object.keys((await api('/settings/lixinger')).counts).length===0,'preview stays offline');
+  const previewHeaders=await dialog.locator('.collection-preview th').allTextContents();
+  check(JSON.stringify(previewHeaders)===JSON.stringify(['端点','预计首次调用']),'preview shows estimates without local quota');
+  check(!(await dialog.innerText()).includes('完整回填超过当前预算'),'preview has no obsolete budget warning');
+  await dialog.locator('.collection-preview').scrollIntoViewIfNeeded();
   await shot('studio-collection-preview');
   await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
   await dialog.waitFor({state:'hidden'});
@@ -78,6 +81,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   const detail=await api('/research/indices/csi%3A000905?method=mcw&window=3');
   check(detail.index_financials.length>0&&detail.historical_memberships.length===40,'source financials and legacy historical records preserved');
   const counts=(await api('/settings/lixinger')).counts;
+  check(Object.values(counts).some(value=>value>20),'full history collection continues past the former default cap');
 
   await page.getByRole('tab',{name:'观察台',exact:true}).click();
   await ready();

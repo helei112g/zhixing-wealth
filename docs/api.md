@@ -378,7 +378,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 |---|---|
 | GET `/api/research/catalog` | 本地已核验目录、已添加订阅、模块、module_sources来源说明及研究版本；不采集目录中的全部指数。 |
 | POST `/api/research/indices/resolve` | `{code}`，只读返回精确配对 profile 和 research_revision。 |
-| POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。返回逐端点预计调用量、预算余量、依赖缺项和原 research_revision；无供应商请求。 |
+| POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。返回逐端点预计调用量（沿用endpoint_budget字段，remaining固定null，表示无本机上限）、依赖缺项和原 research_revision；无供应商请求。 |
 | PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。只保存，显式更新才入队。 |
 | GET `/api/research/indices` | 兼容每页20的本地摘要读取，kind/page可选；页面首页改用选择器。 |
 | GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/ewpvo/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
@@ -387,9 +387,9 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 | GET `.../{id}/versions`、`.../versions/{snapshot_id}` | 最近100个非检查点来源版本及精确版本回读；跨指数版本拒绝，旧来源历史不删除。 |
 | POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和整体法/mcw估值可在用户接受固定成分、股数、权重、除数及全部成分同比例变化假设后试算；读取scenario_metrics/ scenario_assumption；全收益/等权/中位数禁用。 |
 | POST `/api/research/indices/{id}/source-check` | analysis_id绑定mcw价格快照；显式请求官方最近45天同日价格与可得PE参考，不消耗理杏仁额度，不合并历史。 |
-| GET `/api/settings/lixinger` | 已配置状态、本机文件路径、独立revision、每端点尝试次数与预算；不返回Token或片段。 |
-| PUT `/api/settings/lixinger/token` | 仅用户本机页面提交 token 与 expected_revision；0600原子文件，保存不采集且关闭自动采集；显式手动更新在既有预算内可用，计数不重置。AI客户端不提供密钥读写命令。 |
-| PUT `/api/settings/lixinger` | expected_revision、enabled、limit（1–1000）、automatic、可选clear_block；保留旧客户端的automatic字段，实际固定关闭。不会自动请求接口或重置计数。 |
+| GET `/api/settings/lixinger` | 已配置状态、本机文件路径、独立revision、每端点尝试次数；mode为unlimited，limit及endpoints[].limit/remaining固定null，表示无本机上限，不代表供应商余额；不返回Token或片段。 |
+| PUT `/api/settings/lixinger/token` | 仅用户本机页面提交 token 与 expected_revision；0600原子文件，保存不采集且关闭自动采集；显式手动更新不受本机次数限制，计数不重置。AI客户端不提供密钥读写命令。 |
+| PUT `/api/settings/lixinger` | expected_revision、enabled、automatic、可选clear_block；limit可省略或传null，兼容旧客户端整数但忽略，不设置本机上限；保留旧客户端的automatic字段，实际固定关闭。不会自动请求接口或重置计数。 |
 | GET/PUT `/api/settings/data-updates` | 六个全局策略与expected_settings_revision；指数四类策略读回固定为仅手动；持仓行情与汇率可配置自动。 |
 | POST `/api/data-updates/run` | scopes、稳定request_id，可选targets/resources。只规划已启用订阅模块。指数和市场按默认增量更新，按范围提交时可传顶层full=true；精确资源在各项传full=true。失败精确重试沿用resource。结果未知先回读原job_id。 |
 | GET `/api/data-updates/jobs`、`.../{job_id}`、`/api/data-updates/history` | 任务与逐模块失败，history合并去重保留最近5条展示。 |
@@ -402,7 +402,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 详情 `changes` 含 daily/weekly/monthly/ytd；月度、周度、年度均取期间起点之前最近有效收盘，不把日涨跌相加。`index_financials` 按报告日期筛选同类报告期的 q.*.t 和 q.*.t_y2y；t_r为回溯值，不是同比。
 
-数值保留Decimal字符串与null；股息率、rank、growth、return_ratio、volatility_250及daily_series[].volatility均为比例，权重为百分数。前端万/亿缩放不用于写接口。409表示原版本或request_id负载冲突，422表示口径、范围、预算、权限或数据校验不通过。
+数值保留Decimal字符串与null；股息率、rank、growth、return_ratio、volatility_250及daily_series[].volatility均为比例，权重为百分数。前端万/亿缩放不用于写接口。409表示原版本或request_id负载冲突，422表示口径、范围、权限或数据校验不通过。
 
 ## 标的近期行情涨跌幅
 

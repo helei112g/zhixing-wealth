@@ -56,7 +56,7 @@ class FinancialResource(IndexResource):
 class MarketResource(BaseModel):
     model_config = ConfigDict(extra='forbid')
     scope: Literal['market']
-    group: Literal['calendar','china_rates','us_rates','credit','repo','pmi','prices','money','social_financing']
+    group: Literal['full_market','composites','calendar','china_rates','us_rates','credit','repo','pmi','prices','money','social_financing']
 
 
 UpdateResource=Annotated[FxResource|QuoteResource|IndexPriceResource|MembershipResource|ValuationResource|FinancialResource|MarketResource,Field(discriminator='scope')]

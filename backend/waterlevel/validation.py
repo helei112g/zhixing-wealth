@@ -38,7 +38,8 @@ def source(value):
             if stamp <= previous or stamp > value['requested_asof']:
                 raise DomainError('市场历史日期重复、乱序或超出截止日')
             previous = stamp
-            if row['value'] is not None and abs(dec(row['value'])) > 10000:
+            limit = 1000000 if group == 'composites' else 10000
+            if row['value'] is not None and abs(dec(row['value'])) > limit:
                 raise DomainError('市场历史数值无效')
             if row.get('published_at') is not None:
                 day(row['published_at'])
@@ -85,7 +86,7 @@ def backup(db):
         settings(json.loads(row[1]))
     for row in db.execute('SELECT id,sha256,data FROM market_reports'):
         value = decode(row[2], row[1])
-        if value.get('analysis_id') != row[0] or value.get('method') not in METHODS or value.get('method_version') != METHOD_VERSION:
+        if value.get('analysis_id') != row[0] or value.get('method') not in METHODS or value.get('method_version') not in ('waterlevel-v1', METHOD_VERSION):
             raise DomainError('市场研究快照身份无效')
         for ref in value.get('sources', []):
             table = 'research_snapshots' if ref['kind'] == 'index' else 'market_snapshots'

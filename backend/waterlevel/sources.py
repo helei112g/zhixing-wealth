@@ -5,17 +5,19 @@ import io
 import json
 import re
 import xml.etree.ElementTree as ET
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from urllib.parse import urlencode, urljoin, urlsplit
+from zoneinfo import ZoneInfo
 
 import requests
 
-from ..common import DomainError, day, dec, ds, now
+from ..common import DomainError, day, dec, ds, now, today
+from .metrics import monthly_rows
 from .catalog import GROUPS, SERIES
 
 HOSTS = {'datacenter-web.eastmoney.com', 'www.chinamoney.com.cn', 'yield.chinabond.com.cn',
-         'home.treasury.gov', 'www.pbc.gov.cn', 'www.stats.gov.cn'}
+         'home.treasury.gov', 'www.pbc.gov.cn', 'www.stats.gov.cn', 'legulegu.com', 'money.finance.sina.com.cn'}
 EM = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
 PBC = 'https://www.pbc.gov.cn/diaochatongjisi/116219/116319/index.html'
 CALENDAR = 'https://www.stats.gov.cn/sj/fbrc/bnxxfb/'
@@ -26,11 +28,14 @@ class Document(HTMLParser):
     def __init__(self, text):
         super().__init__(convert_charrefs=True)
         self.rows, self.links, self.text = [], [], []
+        self.meta = {}
         self.row, self.cell, self.anchor = None, None, None
         self.feed(text)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == 'meta':
+            self.meta[attrs.get('name')] = attrs.get('content')
         if tag == 'tr':
             self.row = []
         elif tag in ('td', 'th') and self.row is not None:
@@ -58,11 +63,11 @@ class Document(HTMLParser):
             self.anchor = None
 
 
-def number(value):
+def number(value, limit=10000):
     if value is None or str(value).strip() in ('', '-', '--', '…', '……'):
         return None
     result = dec(str(value).strip().replace(',', ''))
-    if abs(result) > 10000:
+    if abs(result) > limit:
         raise DomainError('来源数值超出指标校验范围')
     return ds(result)
 
@@ -79,7 +84,7 @@ class Reader:
         self.notes = []
         self.cancelled = cancelled
 
-    def get(self, url):
+    def get(self, url, *, session=None, headers=None, evidence_url=None):
         if self.cancelled():
             raise DomainError('市场数据更新已中断')
         for _ in range(4):
@@ -89,10 +94,13 @@ class Reader:
             # Public PBC links sometimes use HTTP; always transport them with TLS.
             url = 'https://' + parsed.netloc + parsed.path + ('?' + parsed.query if parsed.query else '')
             try:
-                with requests.get(url, timeout=(5, 25), headers={'User-Agent': 'Mozilla/5.0'},
+                with (session or requests).get(url, timeout=(5, 25), headers={'User-Agent': 'Mozilla/5.0', **(headers or {})},
                                   stream=True, allow_redirects=False) as response:
                     if response.is_redirect:
-                        url = urljoin(url, response.headers.get('Location', ''))
+                        target = urljoin(url, response.headers.get('Location', ''))
+                        if headers and urlsplit(target).hostname != parsed.hostname:
+                            raise DomainError('来源会话不能跨域重定向')
+                        url = target
                         continue
                     response.raise_for_status()
                     chunks, size = [], 0
@@ -104,12 +112,66 @@ class Reader:
             except requests.RequestException as exc:
                 raise DomainError(f'{parsed.hostname} 请求失败（{type(exc).__name__}），保留原数据') from None
             raw = b''.join(chunks)
-            self.evidence.append(dict(url=url, fetched_at=now(), sha256=hashlib.sha256(raw).hexdigest()))
+            self.evidence.append(dict(url=evidence_url or url, fetched_at=now(), sha256=hashlib.sha256(raw).hexdigest()))
             return raw
         raise DomainError('来源重定向超过限制')
 
     def html(self, url):
         return Document(text_body(self.get(url)))
+
+
+def full_market(reader, asof):
+    """Keep the original Skill's exact median fields, reduced to final observation per month."""
+    result = {}
+    specifications = (
+        ('full_market_pe', 'middlePETTM', 'market-ttm-lyr', '5', 'a-ttm-lyr'),
+        ('full_market_pb', 'middlePB', 'market-index-pb', 'ALL', 'all-pb'),
+    )
+    with requests.Session() as session:
+        for key, field, endpoint, market, page in specifications:
+            page_url = 'https://legulegu.com/stockdata/' + page
+            document = Document(text_body(reader.get(page_url, session=session)))
+            csrf = document.meta.get('_csrf')
+            if not csrf:
+                raise DomainError('乐咕页面缺少会话字段，保留原数据')
+            endpoint_url = 'https://legulegu.com/api/stock-data/' + endpoint
+            # Public page request signature; never persist session tokens or cookies.
+            signature = hashlib.md5(str(today()).encode()).hexdigest()
+            raw = reader.get(endpoint_url + '?' + urlencode(dict(marketId=market, token=signature)),
+                             session=session, headers={'X-CSRF-Token': csrf, 'Referer': page_url},
+                             evidence_url=endpoint_url + '?' + urlencode(dict(marketId=market)))
+            payload = json.loads(raw)
+            rows = payload.get('data') if isinstance(payload, dict) else payload
+            if not isinstance(rows, list) or not rows or len(rows) > 20000:
+                raise DomainError('乐咕全市场历史为空或结构变化')
+            normalized, seen = [], set()
+            for row in rows:
+                if field not in row:
+                    raise DomainError('乐咕全市场中位数字段缺失，不用其他口径替代')
+                stamp = row.get('date')
+                stamp = (datetime.fromtimestamp(stamp / 1000, ZoneInfo('Asia/Shanghai')).date().isoformat()
+                         if isinstance(stamp, (int, float)) else str(day(str(stamp)[:10])))
+                if stamp in seen:
+                    raise DomainError('乐咕全市场存在重复日期')
+                seen.add(stamp)
+                if stamp <= asof:
+                    normalized.append(dict(date=stamp, value=number(row[field]), published_at=None, field=field))
+            result[key] = list(monthly_rows(sorted(normalized, key=lambda row: row['date'])).values())
+    reader.notes.append('乐咕全市场中位数middlePETTM / middlePB；历史按各月最后观测保留，未补造日频数据。')
+    return result
+
+
+def composites(reader):
+    result = {}
+    for key, symbol in (('sh_composite', 'sh000001'), ('sz_composite', 'sz399106')):
+        params = dict(symbol=symbol, scale=240, ma='no', datalen=20000)
+        url = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?'
+        rows = json.loads(reader.get(url + urlencode(params)))
+        if not isinstance(rows, list) or not rows or len(rows) > 20000:
+            raise DomainError('新浪综指历史为空或规模无效')
+        result[key] = [dict(date=str(day(row['day'])), value=number(row['close'], limit=1000000), published_at=None) for row in rows]
+    reader.notes.append('上证综指000001与深证综指399106；日频收盘点位，未复权价格指数，不含分红再投资。')
+    return result
 
 
 def em_series(reader, report, fields, date_field, start, end):
@@ -275,13 +337,19 @@ def collect(group, asof, previous=None, cancelled=lambda: False):
         raise DomainError('市场数据组无效')
     reader = Reader(cancelled)
     earliest = f'{int(asof[:4]) - 11}-01-01'
+    if group in ('full_market', 'composites', 'china_rates'):
+        earliest = '1990-01-01'
     # Reconcile complete recent years; old observations retain their original source and dates.
     start = earliest if previous is None else f'{int(asof[:4]) - 1}-01-01'
     common = dict(group=group, publisher=GROUPS[group]['publisher'], evidence=reader.evidence,
                   checked_at=now(), requested_asof=asof, published_at=None, series={})
     if group == 'calendar':
         return dict(common, calendar=calendar(reader, int(asof[:4])))
-    if group == 'china_rates':
+    if group == 'full_market':
+        result = full_market(reader, asof)
+    elif group == 'composites':
+        result = composites(reader)
+    elif group == 'china_rates':
         result = em_series(reader, 'RPTA_WEB_TREASURYYIELD',
                            {'cn_2y': 'EMM00588704', 'cn_10y': 'EMM00166466', 'cn_30y': 'EMM00166469'}, 'SOLAR_DATE', start, asof)
     elif group == 'us_rates':
@@ -316,6 +384,8 @@ def collect(group, asof, previous=None, cancelled=lambda: False):
             seen.add(row['date'])
             combined[row['date']] = row
         result[key] = sorted(combined.values(), key=lambda row: row['date'])
+        if group == 'full_market':
+            result[key] = list(monthly_rows(result[key]).values())
     prior = (previous or {}).get('evidence', [])
     evidence = {(item['url'], item['sha256']): item for item in [*prior, *reader.evidence]}
     notes = list(dict.fromkeys([*(previous or {}).get('notes', []), *reader.notes]))

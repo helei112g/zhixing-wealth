@@ -91,8 +91,55 @@ class MetricTests(unittest.TestCase):
         stats['status']='stale'
         self.assertIsNone(metrics.score([dict(id='a',label='rate',category='rates',statistics=stats)])['overall']['score'])
 
+    def test_comparisons_align_months_use_common_base_and_preserve_gaps(self):
+        valuation = [dict(date='2020-01-31', value='20', mean5='15', mean10=None),
+                     dict(date='2020-02-28', value=None), dict(date='2020-03-31', value='25')]
+        sh = [dict(date='2020-01-23',value='1000'), dict(date='2020-03-30',value='1200')]
+        sz = [dict(date='2020-02-28',value='500'), dict(date='2020-03-31',value='550')]
+        bond = [dict(date='2020-01-30',value='50')]
+        value = metrics.comparison(valuation, bond, sh, sz)
+        self.assertEqual(value['base_month'], '2020-03')
+        self.assertIsNone(value['chart'][0]['sh'])
+        self.assertEqual(value['chart'][2]['sh'], '100')
+        self.assertEqual(value['chart'][2]['sz'], '100')
+        self.assertIsNone(value['chart'][1]['value'])
+        self.assertIsNone(value['chart'][1]['bond_inverse'])
+        self.assertEqual(value['chart'][0]['bond_inverse_date'], '2020-01-30')
+        self.assertEqual(value['chart'][0]['mean5'], '15')
+
 
 class SourceTests(unittest.TestCase):
+    def test_full_market_uses_exact_fields_cutoff_and_last_monthly_value(self):
+        page = b'<meta name="_csrf" content="synthetic-session">'
+        def body(field):
+            return json.dumps({'data':[{'date':'2005-01-04',field:10}, {'date':'2005-01-31',field:None},
+                                       {'date':'2005-02-05',field:20}, {'date':'2005-02-28',field:30}]}).encode()
+        reader = sources.Reader()
+        with patch.object(reader, 'get', side_effect=[page,body('middlePETTM'),page,body('middlePB')]) as get:
+            result = sources.full_market(reader, '2005-02-10')
+        self.assertEqual([(row['date'], row['value']) for row in result['full_market_pe']],
+                         [('2005-01-31',None),('2005-02-05','20')])
+        self.assertNotIn('token=', get.call_args_list[1].kwargs['evidence_url'])
+        with patch.object(reader, 'get', side_effect=[page,body('averagePETTM')]):
+            with self.assertRaises(DomainError): sources.full_market(reader, ASOF)
+
+    def test_full_market_incremental_does_not_double_count_month(self):
+        previous = payload('full_market')
+        with patch.object(sources, 'full_market', return_value={
+                'full_market_pe':[dict(date=ASOF,value='30')], 'full_market_pb':[dict(date=ASOF,value='3')]}):
+            result = sources.collect('full_market', ASOF, previous)
+        rows = result['series']['full_market_pe']
+        self.assertEqual(len([row for row in rows if row['date'].startswith('2026-10')]), 1)
+        self.assertEqual(rows[-1]['value'], '30')
+
+    def test_composites_request_correct_price_index_codes(self):
+        reader = sources.Reader()
+        with patch.object(reader, 'get', return_value=b'[{"day":"2026-10-30","close":"12345"}]') as get:
+            result = sources.composites(reader)
+        self.assertIn('symbol=sh000001',get.call_args_list[0].args[0])
+        self.assertIn('symbol=sz399106',get.call_args_list[1].args[0])
+        self.assertEqual(result['sz_composite'][0]['value'],'12345')
+
     def test_credit_selects_exact_aaa_note_and_three_year_column(self):
         html = '<table><tr><td>曲线名称</td><td>日期</td><td>1年</td><td>3年</td></tr>'
         for label, value in [('中债国债收益率曲线','2'),('中债中短期票据收益率曲线(AAA)','3'),('中债商业银行普通债收益率曲线(AAA)','9')]:
@@ -202,7 +249,7 @@ class ServiceTests(unittest.TestCase):
         one=self.market.dashboard('mcw',ASOF)
         two=self.market.dashboard('ew',ASOF)
         self.assertEqual(one['scores'],two['scores'])
-        self.assertEqual(one['scores']['categories']['equity']['included'],5)
+        self.assertEqual(one['scores']['categories']['equity']['included'],7)
         self.assertEqual(two['indices'][0]['metrics']['pe']['status'],'invalid_current')
         self.assertIsNone(next(row for row in one['indices'] if row['id']=='csi:930050')['metrics']['pe']['means']['5']['value'])
         self.assertEqual(next(row for row in one['series'] if row['id']=='money_gap')['statistics']['current'],'3')
@@ -238,7 +285,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(status['research_revision'],version['research_revision'])
         self.assertNotEqual(status['errors_version'],version['errors_version'])
         self.assertNotEqual(failed['analysis_id'],before['analysis_id'])
-        self.assertEqual(failed['scores']['categories']['equity']['included'],3)
+        self.assertEqual(failed['scores']['categories']['equity']['included'],5)
         self.assertEqual(failed['scores']['categories']['credit']['included'],0)
         self.assertEqual(failed['indices'][0]['metrics']['pe']['current'],'10')
         self.assertEqual(failed['indices'][0]['metrics']['pe']['status'],'source_error')
@@ -273,6 +320,20 @@ class ServiceTests(unittest.TestCase):
         first=self.market.update(['credit'],'synthetic-request')
         self.assertEqual(first,self.market.update(['credit'],'synthetic-request'))
         with self.assertRaises(ConflictError):self.market.update(['repo'],'synthetic-request')
+
+    def test_v1_frozen_reports_remain_readable_exportable_and_backup_valid(self):
+        from backend.research.snapshots import encode
+        old = self.market.dashboard(asof=ASOF)
+        old.update(analysis_id='1'*64, method_version='waterlevel-v1')
+        old.pop('comparisons')
+        sha, raw = encode(old)
+        with self.store.connection() as db:
+            db.execute('INSERT INTO market_reports VALUES (?,?,?,?)', ('1'*64, ASOF, sha, raw))
+            db.commit()
+            validate_backup(db)
+        frozen = self.market.frozen('1'*64)
+        self.assertEqual(frozen['data'],old)
+        self.assertIn('waterlevel-v1',render(frozen))
 
     def test_scheduler_keeps_rates_weekly_and_stops_monthly_after_target_arrives(self):
         settings=self.market.settings()
@@ -334,6 +395,7 @@ class ApiTests(unittest.TestCase):
                 facts=client.get('/api/market-waterlevel/facts?asof='+ASOF).json()
                 self.assertIn('errors_version',client.get('/api/market-waterlevel/revision').json())
                 self.assertNotIn('chart',facts['series'][0]['statistics'])
+                self.assertNotIn('chart',facts['comparisons']['pe'])
                 self.assertIn('chart',client.get('/api/market-waterlevel?asof='+ASOF).json()['series'][0]['statistics'])
                 self.assertEqual(client.get('/api/market-waterlevel?method=avg').status_code,422)
                 self.assertEqual(client.get('/api/market-waterlevel?asof=2999-01-01').status_code,422)

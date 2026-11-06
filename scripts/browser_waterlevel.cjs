@@ -28,11 +28,19 @@ const asof = '2026-10-30';
     assert.equal(health.data_directory, process.env.PORTFOLIO_TEST_DATA_DIR);
     const boot = await api('/bootstrap');
     csrf = boot.csrf_token;
+    // Deterministic synthetic clock, while the product always follows bootstrap.today.
+    for (const endpoint of ['bootstrap', 'family/revision']) {
+      await page.route('**/api/' + endpoint, async route => {
+        const response = await route.fetch();
+        await route.fulfill({response, json: {...await response.json(), today: asof}});
+      });
+    }
     await page.goto(base);
     await page.getByRole('button', {name: '市场水位', exact: true}).click();
     await page.getByRole('heading', {name: '规则摘要', exact: true}).waitFor();
-    await page.getByLabel('研究截止日', {exact: true}).fill(asof);
     await page.waitForFunction(value => document.querySelector('.waterlevel-view-options')?.textContent.includes('截至 ' + value), asof);
+    check(await page.getByLabel('研究截止日', {exact: true}).count() === 0 && await page.locator('.waterlevel-toolbar').count() === 0, 'current-date page has no cutoff or snapshot toolbar');
+    check(JSON.stringify(await page.getByLabel('水位曲线窗口').locator('option').allTextContents()) === JSON.stringify(['5年','10年','全历史']), 'all three chart windows are available');
     check(boot.portfolios.length === 0, 'market page works without a portfolio');
     check((await api('/data-updates/jobs')).jobs.length === 0, 'opening market page does not fetch data');
     check(await page.locator('.waterlevel-score').count() === 4, 'four waterlevel cards render');
@@ -52,7 +60,22 @@ const asof = '2026-10-30';
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     await page.getByText('有效大类 3/3', {exact: true}).waitFor({timeout: 30000});
     const first = await api('/market-waterlevel?asof=' + asof);
-    check(first.scores.categories.equity.included === 5, 'only fixed mcw equity factors enter the score');
+    check(first.scores.categories.equity.included === 7, 'fixed index mcw and full-market median factors enter the score');
+    const comparison = page.locator('.waterlevel-comparison').first();
+    check(await page.locator('.waterlevel-comparison-chart svg').count() === 2, 'both full-market PE and PB comparison charts render');
+    await page.getByLabel('水位曲线窗口').selectOption('all');
+    await page.waitForFunction(() => [...document.querySelectorAll('.waterlevel-comparison text[orientation="bottom"]')].some(node=>node.textContent.includes('2005')));
+    check((await comparison.locator('text[orientation="bottom"]').allTextContents()).join(' ').includes('2005'), 'all-history curve extends back to the available start');
+    const curves = await comparison.locator('.recharts-line-curve').count();
+    await comparison.getByRole('button', {name:'10Y国债收益率倒数', exact:true}).click();
+    await page.waitForFunction(count => document.querySelector('.waterlevel-comparison')?.querySelectorAll('.recharts-line-curve').length === count, curves - 1);
+    check(await comparison.locator('.recharts-line-curve').count() === curves - 1, 'legend hides the bond reference curve');
+    await comparison.getByRole('button', {name:'10Y国债收益率倒数', exact:true}).click();
+    await page.getByLabel('水位曲线窗口').selectOption('5');
+    await page.waitForFunction(() => [...document.querySelectorAll('.waterlevel-comparison text[orientation="bottom"]')].some(node=>node.textContent.includes('2021')));
+    check(!(await comparison.locator('text[orientation="bottom"]').allTextContents()).join(' ').includes('2005') &&
+          await comparison.locator('.recharts-line-curve').count() === curves, 'window clips display while retaining long-history moving means');
+    await page.getByLabel('水位曲线窗口').selectOption('10');
     await shot('waterlevel-overview');
 
     await page.getByRole('tab', {name: '数据来源', exact: true}).click();
@@ -95,6 +118,8 @@ const asof = '2026-10-30';
     const gap = first.series.find(item => item.id === 'money_gap');
     check(gap.statistics.current === '3' && gap.unit === '百分点', 'money gap uses M2 minus M1 percentage points');
     await shot('waterlevel-macro');
+    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
+    await page.getByText('研究报告存档与下载', {exact: true}).click();
     await page.getByRole('button', {name: '冻结研究快照', exact: true}).click();
     await page.getByRole('link', {name: '下载离线报告', exact: true}).waitFor();
     const snapshotId = await page.getByLabel('研究快照', {exact: true}).inputValue();
@@ -108,6 +133,8 @@ const asof = '2026-10-30';
     await offline.route('**/*', route => { external++; return route.abort(); });
     await offline.setContent(html);
     check(await offline.locator('svg').count() > 0 && external === 0, 'offline report renders without external assets or scripts');
+    check(await offline.getByRole('heading', {name:'全市场 PE TTM · 历史均值与两市综指', exact:true}).count() === 1,
+      'offline snapshot includes the full-market comparison');
     await offline.screenshot({path: path.join(output, 'waterlevel-offline.png'), fullPage: false});
     await offline.close();
 

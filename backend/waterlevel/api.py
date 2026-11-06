@@ -5,19 +5,19 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 Method = Literal['mcw', 'ew', 'median']
-Group = Literal['calendar', 'china_rates', 'us_rates', 'credit', 'repo', 'pmi', 'prices', 'money', 'social_financing']
+Group = Literal['full_market', 'composites', 'calendar', 'china_rates', 'us_rates', 'credit', 'repo', 'pmi', 'prices', 'money', 'social_financing']
 
 
 class MarketSettingsRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     automatic: StrictBool
-    groups: list[Group] = Field(min_length=1, max_length=9)
+    groups: list[Group] = Field(min_length=1, max_length=11)
     expected_settings_revision: int = Field(ge=0, strict=True)
 
 
 class MarketUpdateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    groups: list[Group] = Field(min_length=1, max_length=9)
+    groups: list[Group] = Field(min_length=1, max_length=11)
     request_id: str = Field(min_length=1, max_length=160)
 
 
@@ -46,6 +46,8 @@ def router(service):
     @api.get('/facts', summary='模型可读取的带版本事实包；无图表，不请求模型或外部数据')
     def facts(method: Method = 'mcw', asof: str | None = None):
         value = service.dashboard(method, asof)
+        for item in value['comparisons'].values():
+            item.pop('chart')
         for item in value['series']:
             item['statistics'].pop('chart')
         for index in value['indices']:

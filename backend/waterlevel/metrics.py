@@ -6,7 +6,7 @@ from statistics import median
 
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'waterlevel-v1'
+METHOD_VERSION = 'waterlevel-v2'
 METHODS = ('mcw', 'ew', 'median')
 
 
@@ -102,6 +102,27 @@ def earnings_spread(pe, yields):
     inverse = [dict(date=row['date'], value=ds(100 / dec(row['value'])) if usable(row['value'], True) else None)
                for row in pe]
     return difference(inverse, yields)
+
+
+def comparison(valuation, bond, sh, sz):
+    """Align monthly references without filling gaps; normalize prices at one common month."""
+    series = {key: {row['date'][:7]: row for row in rows}
+              for key, rows in (('valuation', valuation), ('bond_inverse', bond), ('sh', sh), ('sz', sz))}
+    base = next((month for month in sorted(series['valuation'])
+                 if all(usable(series[key].get(month, {}).get('value'), True) for key in ('sh', 'sz'))), None)
+    rows = []
+    for month, point in series['valuation'].items():
+        row = dict(point, date=month, valuation_date=point['date'])
+        for key in ('bond_inverse', 'sh', 'sz'):
+            reference = series[key].get(month, {})
+            value = reference.get('value')
+            row[key + '_date'] = reference.get('date')
+            row[key] = (ds(dec(value) / dec(series[key][base]['value']) * 100)
+                        if key in ('sh', 'sz') and base and month >= base and usable(value, True)
+                        else value if key == 'bond_inverse' else None)
+        rows.append(row)
+    return dict(chart=rows, base_month=base, price_basis='price', normalization=100,
+                alignment='各序列月末最后观测独立取样；同月对照，不表示同日比价')
 
 
 def waterlevel(value):

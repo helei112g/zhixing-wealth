@@ -9,7 +9,7 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from ..research.snapshots import encode, decode
 from . import sources, validation
 from .catalog import GROUPS, INDICES, LIMITATIONS, SERIES
-from .metrics import METHODS, METHOD_VERSION, analyze, difference, earnings_spread, month_shift, score
+from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, month_shift, score
 
 
 class WaterlevelService:
@@ -157,7 +157,8 @@ class WaterlevelService:
             raw_series.update((source or {}).get('series', {}))
         for key, (group, label, unit, frequency) in SERIES.items():
             rows = raw_series.get(key, [])
-            stats = analyze(rows, asof, stale_days=80 if frequency == 'monthly' else 14, frequency=frequency)
+            stats = analyze(rows, asof, positive=group in ('full_market', 'composites'),
+                            stale_days=80 if frequency == 'monthly' else 14, frequency=frequency)
             if failures.get(group) and stats['status'] == 'available':
                 stats['status'] = 'source_error'
             latest = next((row for row in reversed(rows) if row['date'] <= asof), {})
@@ -210,10 +211,10 @@ class WaterlevelService:
             indices.append(dict(id=iid, label=label, method=method, metrics=metrics,
                                 subscribed=iid in profiles, source='理杏仁' if valid_source else None,
                                 reason=None if valid_source else '尚未取得理杏仁估值，请在指数资料库添加并采集估值模块'))
-        # The original full-market factors remain explicit gaps, never replaced by CSI All Share.
+        statistics = {item['id']: item['statistics'] for item in items}
         for metric in ('pe', 'pb'):
             scoring.append(dict(id='full_market:' + metric, label='乐咕全市场 ' + metric.upper(),
-                                category='equity', method='median', statistics=analyze([], asof, positive=True)))
+                                category='equity', method='median', statistics=statistics['full_market_' + metric]))
         pe = (index_data.get('csi:000300') or {}).get('series', {}).get('pe', {}).get('mcw', {}).get('rows', [])
         if (index_data.get('csi:000300') or {}).get('provider_id') != 'lixinger':
             pe = []
@@ -230,14 +231,18 @@ class WaterlevelService:
             inverse_stats['status'] = 'source_error'
         items.append(dict(id='bond_inverse', label='10Y国债收益率倒数（参考）', group='cross_asset', unit='倍',
                           statistics=inverse_stats, formula='100 / 中国10Y国债收益率(%)；不是债券PE'))
+        comparisons = {metric: comparison(statistics['full_market_' + metric]['chart'], inverse_stats['chart'],
+                                         statistics['sh_composite']['chart'], statistics['sz_composite']['chart'])
+                       for metric in ('pe', 'pb')}
         scores = score(scoring)
         names = {'equity': '股票', 'rates': '利率债', 'credit': '信用债'}
-        evidence = [f'{names[key]}水位 {entry["score"] if entry["score"] is not None else "缺失"}，有效指标 {entry["included"]}/{entry["expected"]}。'
+        evidence = [f'{names[key]}水位 {format(dec(entry["score"]), ".2f") if entry["score"] is not None else "缺失"}，有效指标 {entry["included"]}/{entry["expected"]}。'
                     for key, entry in scores['categories'].items()]
         analysis_id = hashlib.sha256(json_dumps([METHOD_VERSION, method, asof,
                                                 [(s['kind'], s['snapshot_id']) for s in sources_list], sorted(profiles), failures]).encode()).hexdigest()
         return dict(analysis_id=analysis_id, research_revision=revision, method=method, method_version=METHOD_VERSION,
-                    asof=asof, indices=indices, series=items, scores=scores, sources=sources_list, groups=groups,
+                    asof=asof, indices=indices, series=items, comparisons=comparisons,
+                    scores=scores, sources=sources_list, groups=groups,
                     limitations=LIMITATIONS, commentary=dict(origin='rule', title='历史水位规则摘要', evidence=evidence,
                     overall=f'综合水位覆盖 {scores["overall"]["included"]}/3 个大类。请结合有效日期、样本和缺口阅读。',
                     counterpoints=[text for text in LIMITATIONS[:2]], watchlist=['关注下一次正式数据发布及缺失大类补齐后的覆盖变化。']))

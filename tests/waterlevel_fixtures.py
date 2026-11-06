@@ -1,6 +1,7 @@
 """Synthetic market histories only. No public-data captures or real ledgers."""
 from calendar import monthrange
 from datetime import date, timedelta
+from math import sin
 
 from backend.common import json_dumps
 from backend.research import providers
@@ -9,9 +10,9 @@ from backend.waterlevel.catalog import GROUPS, SERIES
 ASOF = '2026-10-30'
 
 
-def history(value='10', monthly=False):
+def history(value='10', monthly=False, start=date(2014, 1, 1)):
     result = []
-    stamp = date(2014, 1, 1)
+    stamp = start
     while str(stamp) <= ASOF:
         if monthly and stamp.day == 1 or not monthly and stamp.weekday() < 5:
             result.append(dict(date=str(stamp), value=value, published_at=None))
@@ -24,6 +25,14 @@ def payload(group, asof=ASOF, previous=None, cancelled=lambda: False):
               'm1_yoy':'4', 'm2_yoy':'7', 'pmi':'51', 'nonmanufacturing_pmi':'52', 'sf_stock_yoy':'8'}
     series = {key: history(values.get(key, '1'), frequency == 'monthly')
               for key, (owner, _, _, frequency) in SERIES.items() if owner == group}
+    if group in ('full_market', 'composites'):
+        for key in series:
+            rows = history(monthly=group == 'full_market', start=date(2005,1,1))
+            scale = {'full_market_pe':25, 'full_market_pb':2.5, 'sh_composite':1800, 'sz_composite':900}[key]
+            for row in rows:
+                offset = (date.fromisoformat(row['date'])-date(2005,1,1)).days / 365
+                row['value'] = f'{scale * (1 + .2*sin(offset) + offset*.01):.6f}'
+            series[key] = rows
     for rows in series.values():
         for row in rows:
             if group == 'social_financing':

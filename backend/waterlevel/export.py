@@ -49,6 +49,46 @@ def metric(label, statistics, unit):
             + ''.join('<tr>' + row + '</tr>' for row in details) + '</tbody></table></article>')
 
 
+def comparison_chart(metric, data):
+    rows = data['chart']
+    label = '全市场 ' + ('PE TTM' if metric == 'pe' else 'PB') + ' · 历史均值与两市综指'
+    definitions = [('value', '全市场中位数', '#477da1', 'valuation', ''),
+                   ('mean5', '5年平均', '#b77c59', 'valuation', '6 4'),
+                   ('mean10', '10年平均', '#8e759f', 'valuation', '2 3')]
+    if metric == 'pe':
+        definitions.append(('bond_inverse', '10Y国债收益率倒数', '#a89963', 'valuation', '3 3'))
+    definitions.extend([('sh', '上证综指', '#899b69', 'price', ''), ('sz', '深证综指', '#b57e84', 'price', '')])
+    scales = {}
+    for axis in ('valuation', 'price'):
+        values = [float(row[key]) for row in rows for key, _, _, kind, _ in definitions
+                  if kind == axis and row.get(key) is not None]
+        scales[axis] = (min(values), max(values)) if values else (0, 1)
+    lines = []
+    for key, _, color, axis, dash in definitions:
+        low, high = scales[axis]
+        segment = []
+        for index, row in enumerate([*rows, {}]):
+            if row.get(key) is None:
+                if segment:
+                    lines.append(f'<polyline points="{" ".join(segment)}" fill="none" stroke="{color}" stroke-width="2" stroke-dasharray="{dash}"/>')
+                segment = []
+            else:
+                x = 55 + index / max(1, len(rows)-1) * 645
+                y = 260 - (float(row[key])-low) / (high-low or 1) * 220
+                segment.append(f'{x:.2f},{y:.2f}')
+    legend = ' · '.join(f'<span style="color:{color}">{name}</span>' for _, name, color, _, _ in definitions)
+    left, right = scales['valuation'], scales['price']
+    svg = (f'<svg viewBox="0 0 760 290" role="img" aria-label="{label}">'
+           '<text x="8" y="15">估值（倍）</text><text x="610" y="15">价格指数（基准100）</text>'
+           f'<text x="2" y="43">{left[1]:.2f}</text><text x="2" y="263">{left[0]:.2f}</text>'
+           f'<text x="708" y="43">{right[1]:.0f}</text><text x="708" y="263">{right[0]:.0f}</text>'
+           + ''.join(lines) + (f'<text x="55" y="285">{escape(rows[0]["date"])}</text>'
+                              f'<text x="650" y="285">{escape(rows[-1]["date"])}</text>' if rows else '') + '</svg>')
+    return (f'<article><h3>{label}</h3><p>{legend}</p>' + svg
+            + f'<p class="muted">两综指共同基准月：{cell(data["base_month"])}；各序列独立取月末最后观测，不前填。'
+            + ('国债收益率倒数仅作参照，不是债券PE。' if metric == 'pe' else '') + '</p></article>')
+
+
 def render(snapshot):
     data = snapshot['data']
     title = f'市场水位 · {data["asof"]} · {data["method"]}'
@@ -77,8 +117,10 @@ def render(snapshot):
             f'方法 {escape(data["method_version"])}</p><p>快照 {escape(snapshot["snapshot_id"])}</p>'
             '<div class="grid">' + ''.join(cards) + '</div><h2>规则摘要</h2><p>' + escape(data['commentary']['overall']) + '</p><ul>'
             + ''.join('<li>' + escape(text) + '</li>' for text in data['commentary']['evidence'])
-            + '</ul><h2>股票估值</h2><p>蓝色：月末观测；棕色：5年均值；绿色：10年均值。股息率保持接口比例单位。</p><div class="grid">'
+            + '</ul><h2>全市场估值对照</h2>'
+            + ''.join(comparison_chart(key, item) for key, item in data.get('comparisons', {}).items())
+            + '<h2>主要指数估值</h2><p>蓝色：月末观测；棕色：5年均值；绿色：10年均值。股息率保持接口比例单位。</p><div class="grid">'
             + ''.join(indices) + '</div><h2>利率、宏观与跨资产参照</h2><div class="grid">'
-            + ''.join(metric(item['label'], item['statistics'], item['unit']) for item in data['series'])
+            + ''.join(metric(item['label'], item['statistics'], item['unit']) for item in data['series'] if item['group'] not in ('full_market', 'composites'))
             + '</div><h2>方法与边界</h2><ul>' + ''.join('<li>' + escape(text) + '</li>' for text in data['limitations'])
             + '</ul><h2>来源证据</h2>' + ''.join(source_rows) + '</html>')

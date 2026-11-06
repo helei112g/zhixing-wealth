@@ -5,6 +5,8 @@ const path = require('node:path');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE_PATH || '../frontend/node_modules/playwright');
 const base = process.env.PORTFOLIO_TEST_URL;
 const output = process.env.PORTFOLIO_TEST_OUTPUT;
+// Match tests.waterlevel_fixtures.ASOF; wall-clock time must not age synthetic data.
+const asof = '2026-10-30';
 
 (async () => {
   const browser = await chromium.launch({headless: true});
@@ -29,6 +31,8 @@ const output = process.env.PORTFOLIO_TEST_OUTPUT;
     await page.goto(base);
     await page.getByRole('button', {name: '市场水位', exact: true}).click();
     await page.getByRole('heading', {name: '规则摘要', exact: true}).waitFor();
+    await page.getByLabel('研究截止日', {exact: true}).fill(asof);
+    await page.waitForFunction(value => document.querySelector('.waterlevel-view-options')?.textContent.includes('截至 ' + value), asof);
     check(boot.portfolios.length === 0, 'market page works without a portfolio');
     check((await api('/data-updates/jobs')).jobs.length === 0, 'opening market page does not fetch data');
     check(await page.locator('.waterlevel-score').count() === 4, 'four waterlevel cards render');
@@ -47,14 +51,14 @@ const output = process.env.PORTFOLIO_TEST_OUTPUT;
     check(job.resources.every(resource => resource.scope === 'market'), 'market refresh does not consume index or ledger scopes');
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     await page.getByText('有效大类 3/3', {exact: true}).waitFor({timeout: 30000});
-    const first = await api('/market-waterlevel');
+    const first = await api('/market-waterlevel?asof=' + asof);
     check(first.scores.categories.equity.included === 5, 'only fixed mcw equity factors enter the score');
     await shot('waterlevel-overview');
 
     await page.getByRole('tab', {name: '数据来源', exact: true}).click();
     await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByRole('button', {name: '更新', exact: true}).click();
     await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByText('合成信用来源失败，用于验收保留旧值与重试', {exact: true}).waitFor();
-    const failed = await api('/market-waterlevel');
+    const failed = await api('/market-waterlevel?asof=' + asof);
     check(failed.research_revision === first.research_revision, 'failed collection preserves data revision');
     check(failed.scores.categories.credit.included === 0, 'failed source is excluded from score while old observations remain');
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
@@ -73,7 +77,7 @@ const output = process.env.PORTFOLIO_TEST_OUTPUT;
     await page.getByRole('button', {name: '等权 · ew', exact: true}).click();
     await page.getByRole('button', {name: '等权 · ew', exact: true}).getAttribute('aria-pressed');
     await page.waitForFunction(() => document.querySelector('[aria-label="市场估值方法"] button[aria-pressed="true"]')?.textContent.includes('ew'));
-    const equal = await api('/market-waterlevel?method=ew');
+    const equal = await api('/market-waterlevel?method=ew&asof=' + asof);
     check(JSON.stringify(first.scores) === JSON.stringify(equal.scores), 'method switch leaves fixed scores unchanged');
     check(await page.getByText('当前值无效', {exact: false}).count() > 0, 'negative ew is shown as invalid rather than replaced');
     await page.getByRole('button', {name: '中位数 · median', exact: true}).click();

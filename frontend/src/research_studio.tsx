@@ -6,7 +6,7 @@ import {Button,Empty,ErrorBox,Field,Modal,Notice,Panel} from './components';
 import {LinkedHistory,Scenario,ValuationTrend} from './research_charts';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d),pct=(v:any)=>v==null?'-':percent(v);
-export const moduleLabels:Obj={index_info:'指数基本信息',price:'价格日线',total_return:'全收益日线',valuations:'日频估值与场内基金/市值',memberships:'当前成分与权重',historical_memberships:'十年历史成分',index_financials:'指数季度/TTM财务',market_activity:'融资与北向持仓',tracking_funds:'跟踪基金',stock_valuations:'公司估值',financials:'公司财务',historical_financials:'历史财务备用汇总'};
+export const moduleLabels:Obj={index_info:'指数基本信息',price:'价格日线',volatility:'指数波动率',total_return:'全收益日线',valuations:'日频估值与场内基金/市值',memberships:'当前成分与权重',historical_memberships:'十年历史成分',index_financials:'指数季度/TTM财务',market_activity:'融资与北向持仓',tracking_funds:'跟踪基金',stock_valuations:'公司估值',financials:'公司财务',historical_financials:'历史财务备用汇总'};
 const methodNames:Obj={mcw:'总市值加权',ew:'等权',ewpvo:'正数等权',median:'中位数',overall:'旧源整体法',arithmetic:'旧源算术平均'};
 const metricNames:Obj={pe:'PE TTM',pb:'PB',ps:'PS TTM',dividend_yield:'股息率'};
 const methodExplanations:Record<string,{purpose:string;algorithm:string;example:string}>={
@@ -215,7 +215,7 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
   </Panel>
   <Scenario key={d.analysis_id+method} d={d} method={method} setMethod={setMethod}/>
   <div className="studio-risk" data-studio-ready={Boolean(currentAnalysis)&&!pending&&!error}>
-   <span>250日年化波动率 {pct(currentAnalysis?.volatility_250)}</span><span>全量权重 HHI {num(currentAnalysis?.concentration_hhi,4)}</span>
+   <span>全量权重 HHI {num(currentAnalysis?.concentration_hhi,4)}</span>
   </div>
  </>;
 }

@@ -42,9 +42,9 @@ def identity(code):
 
 def module_capabilities(profile):
     from .lixinger import MODULES
-    result={m:dict(supported=True,reason=None) for m in MODULES}
+    result={m:dict(supported=True,reason=None) for m in (*MODULES, 'volatility')}
     if profile.get('exposure')=='overseas':
-        for m in MODULES:
+        for m in result:
             if m not in ('price','total_return','memberships'):
                 result[m]=dict(supported=False,reason='跨市场理杏仁身份、权限及币种未核验；已有官方行情与当前成分保留')
     return result

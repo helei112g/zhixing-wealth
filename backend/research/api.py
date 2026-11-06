@@ -36,7 +36,7 @@ class IndexResource(BaseModel):
 
 class IndexPriceResource(IndexResource):
     scope:Literal['index_prices']
-    module:Literal['index_info','price','total_return']
+    module:Literal['index_info','price','total_return','volatility']
 
 
 class MembershipResource(IndexResource):

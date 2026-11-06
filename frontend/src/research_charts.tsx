@@ -35,20 +35,34 @@ export function ValuationTrend({rows,label,lines,preserveBounds=false}:{
   </LineChart>
  </ResponsiveContainer></div>;
 }
-function HistoryTooltip({active,payload,label,rows}:Obj){if(!active||!payload?.length)return null;const r=rows.find((r:Obj)=>r.date===label);if(!r)return null;return <div className="research-tooltip"><b>{label}</b><p>收盘 {num(r.close)} 点<br/>水下回撤 {num(r.drawdown)}%</p></div>;}
+function HistoryTooltip({active,payload,label,rows}:Obj){if(!active||!payload?.length)return null;const r=rows.find((r:Obj)=>r.date===label);if(!r)return null;return <div className="research-tooltip"><b>{label}</b><p>收盘 {num(r.close)} 点<br/>水下回撤 {num(r.drawdown)}%<br/>年化波动率 {r.volatility==null?'—':num(r.volatility)+'%'}</p></div>;}
 export function LinkedHistory({d,window}:Obj){
  const [hover,Hover]=useState<string|null>(null),[hidden,Hidden]=useState<string[]>([]);
  useEffect(()=>Hover(null),[d.analysis_id,window]);
  let high=0;
- const rows=(d.daily_series||[]).map((r:Obj)=>{const close=Number(r.close);high=Math.max(high,close);return {...r,close,drawdown:(close/high-1)*100,...Object.fromEntries(['ma51','ma120','ma250','ma850'].map(k=>[k,r[k]==null?null:Number(r[k])]))};});
+ const rows=(d.daily_series||[]).map((r:Obj)=>{const close=Number(r.close);high=Math.max(high,close);return {...r,close,drawdown:(close/high-1)*100,volatility:r.volatility==null?null:Number(r.volatility)*100,...Object.fromEntries(['ma51','ma120','ma250','ma850'].map(k=>[k,r[k]==null?null:Number(r[k])]))};});
+ const latestVolatility=rows.filter((r:Obj)=>r.volatility!=null).at(-1);
+ const volatilityStatus=d.module_status?.volatility;
  const active=rows.find((r:Obj)=>r.date===hover),track=(s:any)=>{if(s?.activeLabel!=null)Hover(String(s.activeLabel));};
  const shared={data:rows,syncId:'index-history-'+d.id,syncMethod:'value' as const,margin:{top:14,right:20,left:8,bottom:0},onMouseMove:track,onMouseLeave:()=>Hover(null)};
  return <div className="linked-history">
  <div className="chart-legend" aria-label="收盘与均线显示">{[['close','收盘'],['ma51','MA51'],['ma120','MA120'],['ma250','MA250'],['ma850','MA850']].map(([k,label],i)=><button key={k} aria-pressed={!hidden.includes(k)} onClick={()=>Hidden(hidden.includes(k)?hidden.filter(x=>x!==k):[...hidden,k])} style={{color:colors[i],opacity:hidden.includes(k)?.4:1}}>━ {label}</button>)}</div>
- <div className="research-linked-readout" aria-live="polite">{active?<>{active.date} · 收盘 {num(active.close)} 点 · 水下回撤 {num(active.drawdown)}%</>:<span className="muted">收盘与均线在上，水下回撤在下；移动鼠标可对照同一天。</span>}</div>
- {!rows.length?<Empty title="尚无行情">采集完成后显示收盘、均线与水下回撤。</Empty>:<>
+ <div className="research-linked-readout" aria-live="polite">{active?<>{active.date} · 收盘 {num(active.close)} 点 · 水下回撤 {num(active.drawdown)}% · 年化波动率 {active.volatility==null?'—':num(active.volatility)+'%'}</>:<span className="muted">移动鼠标，可对照同一天的点位、回撤和波动率。</span>}</div>
+ {!rows.length?<Empty title="尚无行情">采集完成后显示收盘、均线、回撤与波动率。</Empty>:<>
  <div className="research-chart" role="img" aria-label="日收盘与51、120、250、850日均线"><ResponsiveContainer width="100%" height={320} minWidth={0}><LineChart accessibilityLayer {...shared}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="date" minTickGap={80} tick={{fontSize:10}}/><YAxis domain={['auto','auto']} width={70} tick={{fontSize:10}}/><Tooltip formatter={(v:any)=>num(v)+' 点'}/>{hover&&<ReferenceLine x={hover} stroke="var(--muted)" strokeDasharray="3 3"/>}{['close','ma51','ma120','ma250','ma850'].map((key,i)=><Line key={key} dataKey={key} hide={hidden.includes(key)} name={key==='close'?'收盘':key.toUpperCase()} stroke={colors[i]} strokeWidth={key==='close'?1.5:1} dot={false} connectNulls={false} isAnimationActive={false}/>)}</LineChart></ResponsiveContainer></div>
  <h3>水下回撤</h3><div className="research-chart" role="img" aria-label="水下回撤图"><ResponsiveContainer width="100%" height={180} minWidth={0}><AreaChart accessibilityLayer {...shared}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="date" minTickGap={80} tick={{fontSize:10}}/><YAxis tickFormatter={v=>v+'%'} width={70} tick={{fontSize:10}}/><Tooltip content={<HistoryTooltip rows={rows}/>}/>{hover&&<ReferenceLine x={hover} stroke="var(--muted)" strokeDasharray="3 3"/>}<Area dataKey="drawdown" name="回撤" stroke="var(--teal)" fill="var(--teal)" fillOpacity={.1} isAnimationActive={false}/></AreaChart></ResponsiveContainer></div></>}
+ <h3>250日年化波动率</h3>
+ {latestVolatility?<div className="research-chart" role="img" aria-label="250日年化波动率图">
+  <ResponsiveContainer width="100%" height={180} minWidth={0}><LineChart accessibilityLayer {...shared}>
+   <CartesianGrid stroke="var(--line)" vertical={false}/>
+   <XAxis dataKey="date" minTickGap={80} tick={{fontSize:10}}/>
+   <YAxis tickFormatter={v=>v+'%'} width={70} tick={{fontSize:10}}/>
+   <Tooltip content={<HistoryTooltip rows={rows}/>}/>
+   {hover&&<ReferenceLine x={hover} stroke="var(--muted)" strokeDasharray="3 3"/>}
+   <Line dataKey="volatility" name="250日年化波动率" stroke={colors[3]} dot={false} connectNulls={false} isAnimationActive={false}/>
+  </LineChart></ResponsiveContainer>
+ </div>:<p className="muted small">{volatilityStatus?.reason||'当前窗口暂无理杏仁波动率数据，可在「数据来源」手动更新。'}</p>}
+ {latestVolatility&&<p className="muted small">理杏仁 · {latestVolatility.date} · {num(latestVolatility.volatility)}%{volatilityStatus?.status==='error'?' · 更新失败，显示上次有效数据':''}。波动率使用供应商的指数序列，切换价格 / 全收益只改变点位与回撤。</p>}
  <p className="muted small">{window?window+'年':'全历史'}窗口 · 高点 {num(d.drawdown[window]?.high_close)} 点（{d.drawdown[window]?.high_date||'-'}） · 距高点 {pct(d.drawdown[window]?.drawdown_ratio)} · 最大回撤 {pct(d.drawdown[window]?.max_drawdown_ratio)}。均线使用完整日线计算后截取窗口，不足期数留空；回撤从窗口起点累计最高收盘计算。</p></div>;
 }
 export function Scenario({d,method,setMethod}:Obj){

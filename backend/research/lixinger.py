@@ -7,6 +7,7 @@ from ..common import DomainError, day, dec, ds, json_dumps
 from .metrics import years_before
 
 SOURCE = '理杏仁'
+VOLATILITY_DAYS = 250
 METHODS = ('mcw', 'ew', 'ewpvo', 'median')
 METRICS = {'pe': 'pe_ttm', 'pb': 'pb', 'ps': 'ps_ttm', 'dividend_yield': 'dyr'}
 ACTIVITY = ('mc', 'cmc', 'ecmc', 'fet_as_ma', 'fet_snif_ma', 'to_r', 'cp', 'r_cp')
@@ -16,7 +17,7 @@ MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships',
 DEFAULT_MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships')
 MODULE_SOURCES = {
     'index_info': '理杏仁 · 指数信息',
-    'price': '理杏仁 · 日线；已支持的跨市场指数使用编制机构官方数据',
+    'price': '理杏仁 · 日线与250日年化波动率；已支持的跨市场指数使用编制机构官方数据',
     'total_return': '理杏仁 · 全收益日线；已支持的跨市场指数使用编制机构官方数据',
     'valuations': '理杏仁 · 基础数据（估值、场内基金金额、市值）',
     'memberships': '理杏仁 · 成分与权重；已支持的跨市场指数使用编制机构官方名单',
@@ -94,6 +95,8 @@ def request_plan(profile, module, start, end, info=None):
         args = dict(base, startDate=a, endDate=b)
         if module in ('price', 'total_return'):
             calls.append(dict(endpoint='cn/index/candlestick', params=dict(args, type='normal' if module == 'price' else 'total_return'), kind='prices'))
+        elif module == 'volatility':
+            calls.append(dict(endpoint='cn/index/volatility', params=dict(args, volatilityDays=VOLATILITY_DAYS), kind='volatility'))
         elif module == 'valuations':
             fields = [v+'.'+m for v in METRICS.values() for m in METHODS] + list(ACTIVITY)
             calls.append(dict(endpoint='cn/index/fundamental', params=dict(stockCodes=[code], startDate=a, endDate=b, metricsList=fields), kind='fundamental'))
@@ -134,6 +137,10 @@ def normalize(call, rows, profile):
             d = iso(row['date'])
             if not args['startDate'] <= d <= args['endDate']: raise DomainError('理杏仁返回日期超出显式请求范围')
             if kind == 'prices': result.append(dict(date=d, close=ds(dec(row['close'], positive=True))))
+            elif kind == 'volatility':
+                if row.get('stockCode', profile['code']) != profile['code']:
+                    raise DomainError('理杏仁波动率的指数身份与请求不符')
+                result.append(dict(date=d, value=ds(dec(row.get('value'), nonnegative=True))))
             elif kind == 'fundamental': result.append(dict(date=d, **{k: numeric(row.get(k)) for k in args['metricsList']}))
             elif kind == 'weights': result.append(dict(security(row), date=d, weight=ds(dec(row['weighting'], nonnegative=True)*100)))
             elif kind == 'finance':
@@ -172,6 +179,12 @@ def assemble(profile, module, parts, end):
         if not rows: raise DomainError('该范围内没有有效行情；不以另一口径替代')
         return dict(common, rows=rows, effective_date=max(r['date'] for r in rows), basis=module,
                     series_code=profile['code'] if module == 'price' else profile['return_code'])
+    if module == 'volatility':
+        rows = [r for part in parts for r in part['rows'] if r['date'] >= profile['launch']]
+        if not rows:
+            raise DomainError('该范围没有年化波动率观测，保留旧快照')
+        return dict(common, rows=rows, effective_date=rows[-1]['date'], series_code=profile['code'],
+                    sample_days=VOLATILITY_DAYS, methodology_note='理杏仁按指数代码提供的250日年化波动率；接口没有全收益口径参数')
     if module == 'index_info': return dict(common, info=parts[0]['rows'][0])
     if module == 'tracking_funds': return dict(common, rows=parts[0]['rows'])
     if module == 'valuations':

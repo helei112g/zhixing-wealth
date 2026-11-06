@@ -188,7 +188,7 @@ class ResearchTests(unittest.TestCase):
         self.r.tick('2026-10-30T23:59:00+08:00');self.assertEqual(self.r.jobs(),[])
     def test_add_pairs_both_codes_and_atomic_durable_update_intent(self):
         revision=self.store.state()['revision'];a,body=self.add('H00905');self.assertEqual(a['basis'],'total_return');self.assertEqual(self.r.profile(a['id'])['return_code'],'H00905')
-        self.assertEqual(self.store.state()['revision'],revision);self.assertEqual(len(self.r.jobs()[0]['resources']),12)
+        self.assertEqual(self.store.state()['revision'],revision);self.assertEqual(len(self.r.jobs()[0]['resources']),13)
         self.assertEqual(self.r.run(body)['job_id'],a['job_id'])
         a2,_=self.add('000905','same-family');self.assertTrue(a2['existing']);self.assertEqual(len(self.r.profiles()),1);self.assertEqual(self.r.revision(),1)
     def test_unknown_and_similar_code_never_guessed(self):
@@ -304,7 +304,7 @@ class ResearchTests(unittest.TestCase):
         b=dict(scopes=['index_prices']);one=self.r.run(dict(b,request_id='manual'));two=self.r.run(dict(b,request_id='second-manual'))
         self.assertEqual(one['job_id'],two['job_id'])
         with patch.object(self.r.collection,'collect',return_value={}) as f:
-            self.r.updates._work();again=self.r.run(dict(b,request_id='second-manual'));self.r.updates._work();self.assertEqual(f.call_count,3)
+            self.r.updates._work();again=self.r.run(dict(b,request_id='second-manual'));self.r.updates._work();self.assertEqual(f.call_count,4)
         self.assertEqual(again['job_id'],one['job_id'])
     def test_restart_leaves_research_interrupted_and_retains_successful_resources(self):
         a,_=self.add();job=self.r.jobs()[0]

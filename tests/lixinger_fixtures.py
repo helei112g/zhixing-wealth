@@ -19,6 +19,9 @@ def transport(endpoint, params):
             row=dict(date=cursor.isoformat()+'T00:00:00+08:00')
             if endpoint.endswith('/candlestick'):
                 row['close']=price*(1.5 if params['type']=='total_return' else 1);rows.append(row)
+            elif endpoint.endswith('/volatility'):
+                assert params['volatilityDays'] == lixinger.VOLATILITY_DAYS
+                rows.append(dict(row, value=(150+n%125)/1000))
             elif endpoint.endswith('/fundamental'):
                 row['stockCode']=code
                 for k in params['metricsList']:

@@ -105,6 +105,29 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(d['top10_weight'],'100');self.assertFalse(d['mapping_available'])
         with self.store.connection() as db:validate_backup(db)
         self.assertNotIn(SYNTHETIC,json.dumps(d));self.assertTrue(d['curve']);self.assertTrue(d['drawdown']['3']['partial'])
+    def test_volatility_follows_price_subscription_and_keeps_independent_snapshot(self):
+        start = '2026-09-01'
+        saved = self.r.collection.save('000905', ['price'], start, True, self.r.revision())
+        iid = saved['id']
+        preview = self.r.collection.preview('000905', ['price'], start)
+        self.assertTrue(any(e['endpoint'] == 'cn/index/volatility' for e in preview['endpoint_budget']))
+        plan = self.r.updates.plan(dict(scopes=['index_prices'], targets=[iid], full=True))
+        self.assertEqual([item['module'] for item in plan], ['index_info', 'price', 'volatility'])
+        for module in ('index_info', 'price', 'volatility'):
+            self.r.collection.collect(iid, module, '2026-11-04')
+        latest = self.r.collection.collect(iid, 'volatility', '2026-11-05')
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-10-20')
+        point = self.r.detail(iid, window=0)['daily_series'][-1]
+        self.assertEqual(point['date'], '2026-11-04')
+        self.assertEqual(point['volatility'], latest['rows'][-2]['value'])
+        with patch.object(self.r.access, 'request', return_value=[]), self.assertRaises(DomainError):
+            self.r.collection.collect(iid, 'volatility', '2026-11-05', full=True)
+        self.assertEqual(self.r.module(iid, 'volatility')['snapshot_id'], latest['snapshot_id'])
+        with self.store.connection() as db:
+            validate_backup(db)
+        self.r.collection.save('000905', ['valuations'], start, True, self.r.revision())
+        self.assertNotIn('volatility', [item['module'] for item in self.r.updates.plan(dict(scopes=['index_prices'], targets=[iid]))])
+
     def test_full_valuation_rechecks_old_dates_and_preserves_snapshot_on_truncation(self):
         self.r.collection.save('000905', ['valuations'], '2026-09-01', True, self.r.revision())
         iid = 'csi:000905'

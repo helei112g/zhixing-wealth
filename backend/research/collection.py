@@ -12,6 +12,13 @@ def subscription(profile):
     return profile.get('subscription') or dict(enabled=True, modules=list(lixinger.DEFAULT_MODULES), history_start=None)
 
 
+def collection_modules(profile, modules=None):
+    modules = list(subscription(profile)['modules'] if modules is None else modules)
+    if 'price' in modules and providers.module_capabilities(profile)['volatility']['supported']:
+        modules.append('volatility')
+    return modules
+
+
 class Collection:
     def __init__(self, research):
         self.research = research
@@ -28,7 +35,7 @@ class Collection:
         chosen = [m for m in modules if m not in unsupported] if overseas else list(dict.fromkeys(['index_info', *modules]))
         if not chosen: raise DomainError('所选模块的跨市场身份与币种尚未核验')
         budget = {}; pending = []
-        for m in chosen:
+        for m in collection_modules(p, chosen):
             if overseas: continue
             if m in ('index_financials', 'stock_valuations', 'financials', 'historical_financials'):
                 pending.append(m); continue
@@ -58,13 +65,13 @@ class Collection:
 
     def active(self, iid, module):
         p = self.research.profile(iid); sub = subscription(p)
-        if not sub['enabled'] or module not in sub['modules']: raise DomainError('该指数已暂停或模块未订阅；本次未采集')
+        if not sub['enabled'] or module not in collection_modules(p): raise DomainError('该指数已暂停或模块未订阅；本次未采集')
         if self.research.updates.stopping.is_set() or not self.research.writes_allowed(): raise DomainError('采集已停止')
         return p
 
     def status(self, iid):
         p = self.research.profile(iid); states = {}
-        for m in subscription(p)['modules']:
+        for m in collection_modules(p):
             stage = self.research.module(iid, 'stage.'+m)
             if stage:
                 states[m] = {k: stage.get(k) for k in ('phase', 'last_incremental', 'last_reconciled', 'range_start', 'range_end', 'mode', 'difference')}

@@ -8,12 +8,12 @@ from datetime import datetime,timedelta
 from ..common import ConflictError,DomainError,day,json_dumps,now,today
 from . import providers
 from .snapshots import encode,decode
-from .collection import subscription
+from .collection import collection_modules, subscription
 
 AUTOMATIC_SCOPES = ('quotes', 'fx')
 SCOPES=(*AUTOMATIC_SCOPES,'index_prices','memberships','valuations','financials')
 UPDATE_SCOPES = (*SCOPES, 'market')
-MODULES={'index_prices':('index_info','price','total_return'),'memberships':('memberships','historical_memberships','tracking_funds'),
+MODULES={'index_prices':('index_info','price','total_return','volatility'),'memberships':('memberships','historical_memberships','tracking_funds'),
          'valuations':('valuations','market_activity','stock_valuations'),'financials':('index_financials','financials','historical_financials')}
 
 
@@ -74,6 +74,8 @@ class UpdateJobs:
         profiles = {p['id']:p for p in self.research.profiles()}
         targets=targets or [iid for iid,p in profiles.items() if subscription(p)['enabled']]
         if resources is None:
+            enabled_modules = {iid: collection_modules(profiles[iid]) for iid in targets
+                               if subscription(profiles[iid])['enabled']}
             resources=[]
             for scope in UPDATE_SCOPES:
                 if scope not in scopes:continue
@@ -82,7 +84,10 @@ class UpdateJobs:
                 elif scope == 'market':
                     from ..waterlevel.catalog import GROUPS
                     resources.extend(dict(scope=scope, group=group) for group in GROUPS)
-                else:resources += [dict(scope=scope,target=iid,module=m) for iid in targets for m in MODULES[scope] if subscription(self.research.profile(iid))['enabled'] and m in subscription(self.research.profile(iid))['modules']]
+                else:
+                    resources.extend(dict(scope=scope, target=iid, module=module)
+                                     for iid, modules in enabled_modules.items()
+                                     for module in MODULES[scope] if module in modules)
         if full:
             resources = [dict(r, full=True) for r in resources]
         if not isinstance(resources,list) or not resources or len(resources)>200:raise DomainError('没有可更新的对象，或任务超过200项')
@@ -117,7 +122,7 @@ class UpdateJobs:
                     r = dict(r, scope='valuations', target=FULL_MARKET_ID, module='valuations')
                     del r['group']
             target = r.get('target')
-            if r.get('module') == 'valuations' and target not in requested_info and not self.research.module(target, 'index_info'):
+            if r.get('module') in ('valuations', 'volatility') and target not in requested_info and not self.research.module(target, 'index_info'):
                 if 'index_info' in subscription(profiles[target])['modules']:
                     prereq = dict(scope='index_prices', target=target, module='index_info')
                     normalized[key(prereq)] = prereq
@@ -202,7 +207,7 @@ class UpdateJobs:
             return [dict(item, resource=r) for item in items]
         iid,module=r['target'],r['module']
         cutoffs=self.current_job or {}
-        asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','stock_valuations','valuations','market_activity') else (cutoffs.get('information_cutoff') or str(today()))
+        asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','volatility','stock_valuations','valuations','market_activity') else (cutoffs.get('information_cutoff') or str(today()))
         value=self.research.collection.collect(iid,module,asof,full=True) if r.get('full') else self.research.collection.collect(iid,module,asof)
         return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='complete',snapshot_id=value.get('snapshot_id'),date=value.get('effective_date'),difference=value.get('update_difference'))]
 

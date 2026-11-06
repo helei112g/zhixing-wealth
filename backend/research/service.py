@@ -155,7 +155,7 @@ class ResearchService:
             if key in self.cache:
                 self.cache.move_to_end(key)
                 return deepcopy(self.cache[key])
-            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials','index_info','index_financials','market_activity','tracking_funds','official_reference')
+            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials','index_info','index_financials','market_activity','tracking_funds','official_reference','volatility')
             resources={name:self.module(iid,name) for name in names}
         price=resources[basis];v=resources['valuations'];members=resources.get('memberships');stocks=resources.get('stock_valuations');finance=resources.get('financials')
         asof=price['effective_date'] if price else providers.cutoff()
@@ -198,9 +198,14 @@ class ResearchService:
             last=next((i for job in recent for i in reversed(job.get('items',[])) if i.get('target')==iid and i.get('module')==module),None)
             module_status[module]=dict(supported=capability['supported'],status='error' if last and last.get('status')=='error' else 'available' if snapshot else 'unsupported' if not capability['supported'] else 'missing',
                                        reason=capability['reason'] or (last.get('error') if last else None), date=snapshot.get('effective_date') if snapshot else None)
-        result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=p['return_code'] if basis=='total_return' else p['code'],asof=asof,latest=prices[-1] if prices else None,
+        series_code=p['return_code'] if basis=='total_return' else p['code']
+        daily_series = moving_averages(prices, window, (price or {}).get('missing_dates', []))
+        volatility = {row['date']: row['value'] for row in (resources['volatility'] or {}).get('rows', [])}
+        for row in daily_series:
+            row['volatility'] = volatility.get(row['date'])
+        result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=series_code,asof=asof,latest=prices[-1] if prices else None,
             research_revision=revision,method=method,window=window,method_version=METHOD_VERSION,analysis_id=hashlib.sha256(json_dumps([m['snapshot_id'] if m else None for m in resources.values()]+[basis,method,METHOD_VERSION]).encode()).hexdigest(),
-            valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=moving_averages(prices,window,(price or {}).get('missing_dates',[])),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
+            valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=daily_series,changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
             sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('mapping_verified')) and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb'))),
             scenario_metrics={m:bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('provider_id')=='lixinger') and valuations.get(m,{}).get('date')==asof and dec(valuations.get(m,{}).get('current') or '0')>0) for m in ('pe','pb')},

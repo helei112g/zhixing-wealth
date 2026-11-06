@@ -82,6 +82,16 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await ready();
   check(await page.getByRole('heading',{name:'点位走势',exact:true}).count()===1&&await page.getByRole('heading',{name:'估值走势',exact:true}).count()===1,'price and valuation use separate cards');
   check(await page.locator('.studio-valuation-panel').evaluate(node=>Boolean(node.compareDocumentPosition(document.querySelector('.studio-price-panel'))&Node.DOCUMENT_POSITION_FOLLOWING)),'valuation card appears before price card');
+  const historyPanel=page.locator('.studio-price-panel');
+  const volatility=historyPanel.getByRole('img',{name:'250日年化波动率图',exact:true});
+  await volatility.locator('.recharts-line-curve').waitFor();
+  check(detail.sources.some(source=>source.module==='volatility') &&
+    detail.daily_series.some(row=>row.volatility!=null) && await volatility.isVisible(),
+    'Lixinger volatility renders in the linked price history with its own source');
+  check(await historyPanel.getByRole('img',{name:'水下回撤图',exact:true}).count()===1 &&
+    await volatility.evaluate(node=>Boolean(node.compareDocumentPosition(
+      node.closest('.linked-history').querySelector('[aria-label="水下回撤图"]'))&Node.DOCUMENT_POSITION_PRECEDING)),
+    'volatility appears below drawdown in the same history panel');
   const currentRanks=page.getByLabel('当前估值历史分位',{exact:true});
   const valuation=await api('/research/indices/csi%3A000905/studio?method=mcw&window=3&metric=pe');
   for(const years of [3,5,10]){
@@ -242,7 +252,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByLabel('历史来源版本',{exact:true}).selectOption({index:1});
   await page.getByText('查看冻结数据（每组最多显示最后100条）',{exact:true}).waitFor();
   check(true,'immutable older snapshot remains readable');
-  check(await page.getByRole('button',{name:'更新指数估值',exact:true}).isVisible(),'index library can refresh the shared valuation independently');
+  check(await page.getByRole('button',{name:'更新指数估值',exact:true}).count()===0,'index library has one routine update button');
   await page.getByRole('button',{name:'全量校对',exact:true}).click();
   let full;
   for(let attempt=0;attempt<180;attempt++){

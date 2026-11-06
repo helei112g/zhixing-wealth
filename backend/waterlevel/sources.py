@@ -1,23 +1,22 @@
-"""Free public sources, bounded requests, explicit fields and atomic group publication."""
+"""Public and authenticated sources, bounded requests, explicit fields and atomic group publication."""
 import csv
 import hashlib
 import io
 import json
 import re
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from html.parser import HTMLParser
 from urllib.parse import urlencode, urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 import requests
 
-from ..common import DomainError, day, dec, ds, now, today
-from .metrics import monthly_rows
-from .catalog import GROUPS, SERIES
+from ..common import DomainError, day, dec, ds, json_dumps, now
+from ..research import lixinger
+from .catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, FULL_MARKET_START, GROUPS, SERIES
 
 HOSTS = {'datacenter-web.eastmoney.com', 'www.chinamoney.com.cn', 'yield.chinabond.com.cn',
-         'home.treasury.gov', 'www.pbc.gov.cn', 'www.stats.gov.cn', 'legulegu.com', 'money.finance.sina.com.cn'}
+         'home.treasury.gov', 'www.pbc.gov.cn', 'www.stats.gov.cn', 'money.finance.sina.com.cn'}
 EM = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
 PBC = 'https://www.pbc.gov.cn/diaochatongjisi/116219/116319/index.html'
 CALENDAR = 'https://www.stats.gov.cn/sj/fbrc/bnxxfb/'
@@ -28,14 +27,11 @@ class Document(HTMLParser):
     def __init__(self, text):
         super().__init__(convert_charrefs=True)
         self.rows, self.links, self.text = [], [], []
-        self.meta = {}
         self.row, self.cell, self.anchor = None, None, None
         self.feed(text)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        if tag == 'meta':
-            self.meta[attrs.get('name')] = attrs.get('content')
         if tag == 'tr':
             self.row = []
         elif tag in ('td', 'th') and self.row is not None:
@@ -84,7 +80,7 @@ class Reader:
         self.notes = []
         self.cancelled = cancelled
 
-    def get(self, url, *, session=None, headers=None, evidence_url=None):
+    def get(self, url):
         if self.cancelled():
             raise DomainError('市场数据更新已中断')
         for _ in range(4):
@@ -94,13 +90,10 @@ class Reader:
             # Public PBC links sometimes use HTTP; always transport them with TLS.
             url = 'https://' + parsed.netloc + parsed.path + ('?' + parsed.query if parsed.query else '')
             try:
-                with (session or requests).get(url, timeout=(5, 25), headers={'User-Agent': 'Mozilla/5.0', **(headers or {})},
+                with requests.get(url, timeout=(5, 25), headers={'User-Agent': 'Mozilla/5.0'},
                                   stream=True, allow_redirects=False) as response:
                     if response.is_redirect:
-                        target = urljoin(url, response.headers.get('Location', ''))
-                        if headers and urlsplit(target).hostname != parsed.hostname:
-                            raise DomainError('来源会话不能跨域重定向')
-                        url = target
+                        url = urljoin(url, response.headers.get('Location', ''))
                         continue
                     response.raise_for_status()
                     chunks, size = [], 0
@@ -112,7 +105,7 @@ class Reader:
             except requests.RequestException as exc:
                 raise DomainError(f'{parsed.hostname} 请求失败（{type(exc).__name__}），保留原数据') from None
             raw = b''.join(chunks)
-            self.evidence.append(dict(url=evidence_url or url, fetched_at=now(), sha256=hashlib.sha256(raw).hexdigest()))
+            self.evidence.append(dict(url=url, fetched_at=now(), sha256=hashlib.sha256(raw).hexdigest()))
             return raw
         raise DomainError('来源重定向超过限制')
 
@@ -120,44 +113,29 @@ class Reader:
         return Document(text_body(self.get(url)))
 
 
-def full_market(reader, asof):
-    """Keep the original Skill's exact median fields, reduced to final observation per month."""
-    result = {}
-    specifications = (
-        ('full_market_pe', 'middlePETTM', 'market-ttm-lyr', '5', 'a-ttm-lyr'),
-        ('full_market_pb', 'middlePB', 'market-index-pb', 'ALL', 'all-pb'),
-    )
-    with requests.Session() as session:
-        for key, field, endpoint, market, page in specifications:
-            page_url = 'https://legulegu.com/stockdata/' + page
-            document = Document(text_body(reader.get(page_url, session=session)))
-            csrf = document.meta.get('_csrf')
-            if not csrf:
-                raise DomainError('乐咕页面缺少会话字段，保留原数据')
-            endpoint_url = 'https://legulegu.com/api/stock-data/' + endpoint
-            # Public page request signature; never persist session tokens or cookies.
-            signature = hashlib.md5(str(today()).encode()).hexdigest()
-            raw = reader.get(endpoint_url + '?' + urlencode(dict(marketId=market, token=signature)),
-                             session=session, headers={'X-CSRF-Token': csrf, 'Referer': page_url},
-                             evidence_url=endpoint_url + '?' + urlencode(dict(marketId=market)))
-            payload = json.loads(raw)
-            rows = payload.get('data') if isinstance(payload, dict) else payload
-            if not isinstance(rows, list) or not rows or len(rows) > 20000:
-                raise DomainError('乐咕全市场历史为空或结构变化')
-            normalized, seen = [], set()
-            for row in rows:
-                if field not in row:
-                    raise DomainError('乐咕全市场中位数字段缺失，不用其他口径替代')
-                stamp = row.get('date')
-                stamp = (datetime.fromtimestamp(stamp / 1000, ZoneInfo('Asia/Shanghai')).date().isoformat()
-                         if isinstance(stamp, (int, float)) else str(day(str(stamp)[:10])))
-                if stamp in seen:
-                    raise DomainError('乐咕全市场存在重复日期')
-                seen.add(stamp)
-                if stamp <= asof:
-                    normalized.append(dict(date=stamp, value=number(row[field]), published_at=None, field=field))
-            result[key] = list(monthly_rows(sorted(normalized, key=lambda row: row['date'])).values())
-    reader.notes.append('乐咕全市场中位数middlePETTM / middlePB；历史按各月最后观测保留，未补造日频数据。')
+def full_market(reader, asof, previous, access):
+    """Read all six independently supplied A-share market valuation series."""
+    if access is None:
+        raise DomainError('全市场估值需要本机理杏仁访问配置')
+    endpoint = 'cn/index/fundamental'
+    start = FULL_MARKET_START
+    if previous:
+        last = min(rows[-1]['date'] for rows in previous['series'].values())
+        start = max(start, str(day(last) - timedelta(days=30)))
+    result = {key: [] for key in FULL_MARKET_FIELDS}
+    for first, last in lixinger.ranges(start, asof):
+        if reader.cancelled():
+            raise DomainError('市场数据更新已中断')
+        params = dict(stockCodes=[FULL_MARKET_CODE], startDate=first, endDate=last,
+                      metricsList=list(FULL_MARKET_FIELDS.values()))
+        raw = access.request(endpoint, params)
+        rows = lixinger.normalize(dict(kind='fundamental', params=params), raw, {'code': FULL_MARKET_CODE})
+        reader.evidence.append(dict(url='https://www.lixinger.com/api/open-api/html-doc/' + endpoint,
+                                    fetched_at=now(), sha256=hashlib.sha256(json_dumps(rows).encode()).hexdigest(),
+                                    stock_code=FULL_MARKET_CODE, start=first, end=last))
+        for key, field in FULL_MARKET_FIELDS.items():
+            result[key].extend(dict(date=row['date'], value=row[field], field=field) for row in rows if row[field] is not None)
+    reader.notes.append('理杏仁 A股全指（1000002）。PE TTM、PB各口径独立保存。首次采集按历史范围分片，之后从已有日期回溯30天。')
     return result
 
 
@@ -332,7 +310,7 @@ def calendar(reader, year):
     return dict(year=year, events=events)
 
 
-def collect(group, asof, previous=None, cancelled=lambda: False):
+def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None):
     if group not in GROUPS:
         raise DomainError('市场数据组无效')
     reader = Reader(cancelled)
@@ -346,7 +324,7 @@ def collect(group, asof, previous=None, cancelled=lambda: False):
     if group == 'calendar':
         return dict(common, calendar=calendar(reader, int(asof[:4])))
     if group == 'full_market':
-        result = full_market(reader, asof)
+        result = full_market(reader, asof, previous, access)
     elif group == 'composites':
         result = composites(reader)
     elif group == 'china_rates':
@@ -370,12 +348,13 @@ def collect(group, asof, previous=None, cancelled=lambda: False):
         for report, fields in definitions[group]:
             result.update(em_series(reader, report, fields, 'REPORT_DATE', earliest, asof))
     for key, rows in result.items():
+        label = FULL_MARKET_FIELDS[key] if group == 'full_market' else SERIES[key][1]
         rows = [row for row in rows if earliest <= row['date'] <= asof]
         if not any(row['value'] is not None for row in rows):
-            raise DomainError(f'{SERIES[key][1]}没有有效观测，保留原数据')
+            raise DomainError(f'{label}没有有效观测，保留原数据')
         old = (previous or {}).get('series', {}).get(key, [])
         if old and max(row['date'] for row in rows) < old[-1]['date']:
-            raise DomainError(f'{SERIES[key][1]}返回旧日期，保留当前有效历史')
+            raise DomainError(f'{label}返回旧日期，保留当前有效历史')
         combined = {row['date']: row for row in old}
         seen = set()
         for row in rows:
@@ -384,9 +363,7 @@ def collect(group, asof, previous=None, cancelled=lambda: False):
             seen.add(row['date'])
             combined[row['date']] = row
         result[key] = sorted(combined.values(), key=lambda row: row['date'])
-        if group == 'full_market':
-            result[key] = list(monthly_rows(result[key]).values())
     prior = (previous or {}).get('evidence', [])
-    evidence = {(item['url'], item['sha256']): item for item in [*prior, *reader.evidence]}
+    evidence = {(item['url'], item.get('start'), item.get('end'), item['sha256']): item for item in [*prior, *reader.evidence]}
     notes = list(dict.fromkeys([*(previous or {}).get('notes', []), *reader.notes]))
     return dict(common, series=result, evidence=list(evidence.values()), notes=notes)

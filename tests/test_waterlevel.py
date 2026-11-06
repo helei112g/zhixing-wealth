@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -109,28 +109,31 @@ class MetricTests(unittest.TestCase):
 
 
 class SourceTests(unittest.TestCase):
-    def test_full_market_uses_exact_fields_cutoff_and_last_monthly_value(self):
-        page = b'<meta name="_csrf" content="synthetic-session">'
-        def body(field):
-            return json.dumps({'data':[{'date':'2005-01-04',field:10}, {'date':'2005-01-31',field:None},
-                                       {'date':'2005-02-05',field:20}, {'date':'2005-02-28',field:30}]}).encode()
-        reader = sources.Reader()
-        with patch.object(reader, 'get', side_effect=[page,body('middlePETTM'),page,body('middlePB')]) as get:
-            result = sources.full_market(reader, '2005-02-10')
-        self.assertEqual([(row['date'], row['value']) for row in result['full_market_pe']],
-                         [('2005-01-31',None),('2005-02-05','20')])
-        self.assertNotIn('token=', get.call_args_list[1].kwargs['evidence_url'])
-        with patch.object(reader, 'get', side_effect=[page,body('averagePETTM')]):
-            with self.assertRaises(DomainError): sources.full_market(reader, ASOF)
-
-    def test_full_market_incremental_does_not_double_count_month(self):
+    def test_full_market_uses_exact_code_and_six_fields(self):
+        access = Mock()
+        fields = sources.FULL_MARKET_FIELDS
+        values = {field: n+10 for n, field in enumerate(fields.values())}
+        access.request.return_value = [dict(stockCode='1000002', date=ASOF, **values)]
         previous = payload('full_market')
-        with patch.object(sources, 'full_market', return_value={
-                'full_market_pe':[dict(date=ASOF,value='30')], 'full_market_pb':[dict(date=ASOF,value='3')]}):
-            result = sources.collect('full_market', ASOF, previous)
-        rows = result['series']['full_market_pe']
-        self.assertEqual(len([row for row in rows if row['date'].startswith('2026-10')]), 1)
-        self.assertEqual(rows[-1]['value'], '30')
+        result = sources.collect('full_market', ASOF, previous, access=access)
+        endpoint, params = access.request.call_args.args
+        self.assertEqual(endpoint, 'cn/index/fundamental')
+        self.assertEqual(params['stockCodes'], ['1000002'])
+        self.assertEqual(params['endDate'], ASOF)
+        self.assertEqual(params['metricsList'], list(fields.values()))
+        self.assertEqual({key: rows[-1]['value'] for key, rows in result['series'].items()},
+                         {key: str(values[field]) for key, field in fields.items()})
+        access.request.return_value[0]['stockCode'] = '000985'
+        with self.assertRaises(DomainError):
+            sources.collect('full_market', ASOF, previous, access=access)
+
+    def test_full_market_rejects_missing_method_instead_of_substituting(self):
+        access = Mock()
+        values = dict.fromkeys(sources.FULL_MARKET_FIELDS.values(), 10)
+        values.pop('pb.ew')
+        access.request.return_value = [dict(stockCode='1000002', date=ASOF, **values)]
+        with self.assertRaisesRegex(DomainError, 'pb.ew'):
+            sources.collect('full_market', ASOF, payload('full_market'), access=access)
 
     def test_composites_request_correct_price_index_codes(self):
         reader = sources.Reader()
@@ -314,7 +317,7 @@ class ServiceTests(unittest.TestCase):
     def test_settings_revision_guards_and_shared_durable_receipts(self):
         settings=self.market.settings()
         body={key:settings[key] for key in ('automatic','groups','expected_settings_revision')}
-        body['automatic']=True
+        with self.assertRaises(DomainError):self.market.save_settings(dict(body,automatic=True))
         self.market.save_settings(body)
         with self.assertRaises(ConflictError):self.market.save_settings(body)
         first=self.market.update(['credit'],'synthetic-request')
@@ -335,20 +338,20 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(frozen['data'],old)
         self.assertIn('waterlevel-v1',render(frozen))
 
-    def test_scheduler_keeps_rates_weekly_and_stops_monthly_after_target_arrives(self):
-        settings=self.market.settings()
-        self.market.save_settings(dict(automatic=True,groups=['china_rates','pmi','prices'],expected_settings_revision=settings['expected_settings_revision']))
-        with patch.object(sources,'collect',side_effect=payload):
-            for group in ('calendar','pmi','prices'):self.market.collect(group,ASOF)
-        self.market.tick('2026-11-05T19:00:00+08:00','schedule')
-        groups=[r['group'] for job in self.research.jobs() for r in job['resources']]
-        self.assertEqual(groups,['china_rates'])
-        self.market.tick('2026-11-06T19:00:00+08:00','schedule')
-        self.assertEqual(len(self.research.jobs()),1)
-        with patch.object(sources,'collect',side_effect=payload):
-            self.research.updates._work()
-        self.market.tick('2026-12-01T19:00:00+08:00','schedule')
-        self.assertGreater(len(self.research.jobs()),1)
+    def test_legacy_market_schedule_and_startup_recovery_are_disabled(self):
+        with self.store.connection() as db:
+            db.execute("INSERT INTO market_settings VALUES ('settings',?)",
+                       (json_dumps(dict(automatic=True,groups=['china_rates'])),))
+            db.commit()
+        self.assertFalse(self.market.settings()['automatic'])
+        with patch.object(sources, 'collect') as fetch:
+            self.research.tick('2026-11-05T19:00:00+08:00', 'schedule')
+            self.assertFalse(any(r['scope']=='market' for job in self.research.jobs() for r in job['resources']))
+            with patch.object(self.research.updates, 'start'):
+                receipt=self.market.update(['china_rates'],'manual-only')
+                self.research.recover(resume=True)
+            self.assertEqual(self.research.updates.get(receipt['job_id'])['state'],'interrupted')
+        fetch.assert_not_called()
 
     def test_additive_schema11_upgrade_preserves_existing_content_and_revisions(self):
         self.research.legacy.save_portfolio(dict(name='合成迁移验证',planned_amount='1000',start_date='2026-01-01'))

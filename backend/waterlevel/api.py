@@ -63,7 +63,7 @@ def router(service):
     def save_settings(body: MarketSettingsRequest):
         return service.save_settings(body.model_dump())
 
-    @api.post('/updates', status_code=202, summary='排入统一更新队列；仅抓取选定免费来源组')
+    @api.post('/updates', status_code=202, summary='手动更新选定来源；全市场估值使用理杏仁额度')
     def updates(body: MarketUpdateRequest):
         return service.update(body.groups, body.request_id)
 

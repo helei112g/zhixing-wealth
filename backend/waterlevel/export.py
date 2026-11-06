@@ -49,10 +49,11 @@ def metric(label, statistics, unit):
             + ''.join('<tr>' + row + '</tr>' for row in details) + '</tbody></table></article>')
 
 
-def comparison_chart(metric, data):
+def comparison_chart(metric, data, method=None):
     rows = data['chart']
     label = '全市场 ' + ('PE TTM' if metric == 'pe' else 'PB') + ' · 历史均值与两市综指'
-    definitions = [('value', '全市场中位数', '#477da1', 'valuation', ''),
+    value_label = '理杏仁 A股全指 · ' + method if method else '全市场中位数'
+    definitions = [('value', value_label, '#477da1', 'valuation', ''),
                    ('mean5', '5年平均', '#b77c59', 'valuation', '6 4'),
                    ('mean10', '10年平均', '#8e759f', 'valuation', '2 3')]
     if metric == 'pe':
@@ -118,7 +119,8 @@ def render(snapshot):
             '<div class="grid">' + ''.join(cards) + '</div><h2>规则摘要</h2><p>' + escape(data['commentary']['overall']) + '</p><ul>'
             + ''.join('<li>' + escape(text) + '</li>' for text in data['commentary']['evidence'])
             + '</ul><h2>全市场估值对照</h2>'
-            + ''.join(comparison_chart(key, item) for key, item in data.get('comparisons', {}).items())
+            + ''.join(comparison_chart(key, item, data['method'] if data.get('method_version') == 'waterlevel-v3' else None)
+                      for key, item in data.get('comparisons', {}).items())
             + '<h2>主要指数估值</h2><p>蓝色：月末观测；棕色：5年均值；绿色：10年均值。股息率保持接口比例单位。</p><div class="grid">'
             + ''.join(indices) + '</div><h2>利率、宏观与跨资产参照</h2><div class="grid">'
             + ''.join(metric(item['label'], item['statistics'], item['unit']) for item in data['series'] if item['group'] not in ('full_market', 'composites'))

@@ -416,27 +416,27 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 OpenAPI明确列出dashboard的full/summary、持仓分布的holdings/assets、研究basis/method/window/part的可选值。DashboardResponse公开CapitalSummary、HoldingSnapshot、PlanFunding，保留其他已有响应字段；数值保持Decimal字符串，未知保持null。ScenarioRequest/ScenarioResult区分输入change_ratio（比例）与curve[].change_pct（百分数）。409为版本或同request_id负载冲突，422为输入或业务口径不成立。
 
-UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块枚举；quotes必须显式传instrument_id（null为全部），fx必须传currency，指数资源必须传target与module。market必须显式传group（免费来源组），不接受指数target/module；full只用于quotes/fx且必须是布尔值；资源scope须在请求scopes中。省略可选字段不会被补成新的重试负载。
+UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块枚举；quotes必须显式传instrument_id（null为全部），fx必须传currency，指数资源必须传target与module。market必须显式传group（来源组），不接受指数target/module；full只用于quotes/fx且必须是布尔值；资源scope须在请求scopes中。省略可选字段不会被补成新的重试负载。
 
 ## 市场水位（schema12）
 
-读取只用本地快照，无供应商请求。`method=mcw|ew|median`，默认mcw；`asof=YYYY-MM-DD`默认今天，不接受未来日期。历史日期仅截取当前可得版本，不提供严格PIT。页面与AI共同使用`waterlevel-v2`，完整公式及覆盖边界见[市场水位](waterlevel.md)。
+读取只用本地快照，无供应商请求。`method=mcw|ew|median`，默认mcw；`asof=YYYY-MM-DD`默认今天，不接受未来日期。历史日期仅截取当前可得版本，不提供严格PIT。页面与AI共同使用`waterlevel-v3`，完整公式及覆盖边界见[市场水位](waterlevel.md)。
 
 | 接口 | 请求与结果 |
 |---|---|
 | GET `/api/market-waterlevel` | method、asof；返回analysis_id、research_revision、method_version、indices、series、comparisons、scores、sources、groups、limitations、规则commentary。 |
 | GET `/api/market-waterlevel/facts` | 同参数和分析版本；省略统计项及comparisons的chart，其他事实与页面一致，不请求模型。 |
 | GET `/api/market-waterlevel/revision` | 轻量research_revision、updating和errors_version；失败不发布数据也会改变错误版本，页面据此刷新覆盖与状态。 |
-| GET/PUT `/api/market-waterlevel/settings` | GET返回automatic、groups、expected_settings_revision和周期说明；PUT必须提交前三项。默认automatic=false；保存不采集，409不覆盖。 |
+| GET/PUT `/api/market-waterlevel/settings` | 兼容旧客户端。GET报告automatic=false。PUT仅接受automatic=false及原设置版本。 |
 | POST `/api/market-waterlevel/updates` | `{groups:["credit"],request_id:"client-generated-id"}`；202返回统一任务收据。等价于data-updates/run的`scopes:["market"],resources:[{scope:"market",group:"credit"}]`。 |
 | POST `/api/market-waterlevel/snapshots` | 原analysis_id、method、asof、expected_research_revision；冻结当前查看结果，返回snapshot_id、created_at、sha256、data。输入已变化返回409。相同分析ID幂等回读原报告，不重新抓取。 |
 | GET `/api/market-waterlevel/snapshots` | 最近50条不可变报告元数据items；不删除更早报告。 |
 | GET `/api/market-waterlevel/snapshots/{id}` | 精确回读冻结结果及摘要。 |
 | GET `/api/market-waterlevel/snapshots/{id}/export` | 下载HTML附件；只用冻结数据，含内联SVG，无脚本、字体或外部资源请求。 |
 
-市场来源支持11组，包括`full_market`（乐咕中位数PE/PB）和`composites`（新浪两综指）。`comparisons.pe/pb`含月度`chart`、共同基准`base_month`及对齐说明；`value/mean5/mean10`为估值，`sh/sz`为基准100的价格指数，`bond_inverse`为10Y收益率倒数（PE图展示），各参照保留实际日期。`chart_windows=[5,10,"all"]`只控制页面裁剪；分位窗口仍为5/10年。已冻结v1报告保持原样兼容。
+市场来源支持11组，包括`full_market`（理杏仁 A股全指1000002 PE/PB，按 method 读取对应估值）和`composites`（新浪两综指）。`comparisons.pe/pb`含月度`chart`、共同基准`base_month`及对齐说明；`value/mean5/mean10`为估值，`sh/sz`为基准100的价格指数，`bond_inverse`为10Y收益率倒数（PE图展示），各参照保留实际日期。`chart_windows=[5,10,"all"]`只控制页面裁剪；分位窗口仍为5/10年。已冻结v1/v2报告保持原样兼容。
 
-免费来源组为full_market、composites、calendar、china_rates、us_rates、credit、repo、pmi、prices、money、social_financing。原六类全局策略契约不扩充；市场自动更新用独立settings入口，统一任务支持第七类market资源。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
+市场更新仅手动提交 market 来源组。full_market 使用理杏仁额度。全局六类自动策略与市场任务独立。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
 
 数值为Decimal字符串或null。利率、CPI/PPI及货币/社融同比为百分数；期限利差、ERP和M2−M1为百分点；信用/回购利差为BP。股息率、percentile_ratio、deviation_ratio为比例。分位严格小于当前值且包含当前样本作分母；均值使用60/120个完整月末值，不能套用指数观察台的日频计算。statistics保留current、date、frequency、observations、status、windows、means、chart；窗口同时提供样本数与完整性状态。
 

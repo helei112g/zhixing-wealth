@@ -1,12 +1,12 @@
 """Waterlevel statistics; intentionally distinct from index-studio statistics."""
 from calendar import monthrange
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from statistics import median
 
 from ..common import day, dec, ds
 
-METHOD_VERSION = 'waterlevel-v2'
+METHOD_VERSION = 'waterlevel-v3'
 METHODS = ('mcw', 'ew', 'median')
 
 
@@ -66,8 +66,12 @@ def analyze(rows, asof, *, positive=False, stale_days=14, frequency='daily'):
         complete = bool(valid and valid[0]['date'] <= start and len(sample) >= 30)
         percentile = None
         if complete and latest and usable(latest['value'], positive):
-            current = dec(latest['value']).quantize(Decimal('0.0000000001'))
-            lower = sum(dec(row['value']).quantize(Decimal('0.0000000001')) < current for row in sample)
+            with localcontext() as ctx:
+                # The input guard accepts 19 integer digits, plus the 10 comparison decimals.
+                ctx.prec = 32
+                quantum = Decimal('0.0000000001')
+                current = dec(latest['value']).quantize(quantum)
+                lower = sum(dec(row['value']).quantize(quantum) < current for row in sample)
             percentile = ds(Decimal(lower) / len(sample))
         result['windows'][str(years)] = dict(percentile_ratio=percentile, count=len(sample),
                                            start=start, end=latest['date'] if latest else None,

@@ -19,8 +19,8 @@ description: 在知行财富本机系统读取指数资料和市场水位事实�
 
 ## 市场水位
 
-1. 通过`market_waterlevel(method, asof, facts=True)`读取事实包，核对分析ID、方法版本、观测日期、来源和有效覆盖。指数只有mcw/ew/median；全市场固定乐咕中位数，comparisons提供PE/PB与两综指的月度对照，PE附国债收益率倒数；历史日期截取当前修订版，不代表当时已知。GET不采集。
+1. 通过`market_waterlevel(method, asof, facts=True)`读取事实包，核对分析ID、方法版本、观测日期、来源和有效覆盖。mcw/ew/median适用于指数和理杏仁A股全指，comparisons提供所选口径PE/PB与两综指的月度对照，PE附国债收益率倒数。历史日期截取当前修订版。GET读取本地快照。
 2. 股票评分固定指数mcw与全市场中位数，方法视角不重复计分；负PE/PB、短历史、陈旧或来源失败保持原状态。均值为60/120个完整月末值，缺月不补；分位严格小于当前值，不能复用指数观察台的日频均值/分位解释。
-3. 明确更新时使用市场updates入口，或统一队列`{scope:"market",group}`资源与稳定request_id。仅提交授权的免费来源组；债券每周、宏观按发布周期检查，自动更新默认关闭。理杏仁估值仍遵守原订阅与预算流程，不读取Token。
+3. 明确更新时使用市场updates入口，或统一队列的 market 来源组与稳定request_id。市场水位仅支持手动更新。full_market 读取理杏仁 A股全指1000002，按本机理杏仁基本面额度计数。
 4. 冻结提交原analysis_id、method、asof与expected_research_revision，回读snapshot_id后下载离线报告。409不强行覆盖或自动重试。规则摘要与模型解释分开，未接入的转债、市值/GDP以及具体来源缺口不能替代或虚构。
 5. 详细来源、评分及迁移边界见[市场水位说明](../../../docs/waterlevel.md)。

@@ -1,10 +1,40 @@
 import React,{useEffect,useState} from 'react';
-import {Area,AreaChart,CartesianGrid,Line,LineChart,ReferenceArea,ReferenceDot,ReferenceLine,ResponsiveContainer,Tooltip,XAxis,YAxis} from 'recharts';
+import {Area,AreaChart,CartesianGrid,Legend,Line,LineChart,ReferenceArea,ReferenceDot,ReferenceLine,ResponsiveContainer,Tooltip,XAxis,YAxis} from 'recharts';
 import {api,money,Obj,percent} from './api';
 import {Button,Empty,ErrorBox,Field,Notice,Panel} from './components';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d),pct=(v:any)=>v==null?'-':percent(v);
 const colors=['#365f91','#bc8650','#298879','#8866a6','#6e7f8b'];
+
+export type ValuationLine = {
+ key:string;
+ label:string;
+ color:string;
+ axis?:'price';
+ dash?:string;
+};
+
+export function ValuationTrend({rows,label,lines,preserveBounds=false}:{
+ rows:Obj[];label:string;lines:ValuationLine[];preserveBounds?:boolean;
+}){
+ const [hidden,Hidden]=useState<string[]>([]);
+ return <div role="img" aria-label={label}><ResponsiveContainer width="100%" height={350} minWidth={0}>
+  <LineChart accessibilityLayer data={rows}>
+   <CartesianGrid stroke="var(--line)" vertical={false}/>
+   <XAxis dataKey="date" minTickGap={80} interval={preserveBounds?'preserveStartEnd':undefined}/>
+   <YAxis yAxisId="valuation" width={60} domain={['auto','auto']}/>
+   {lines.some(line=>line.axis==='price')&&<YAxis yAxisId="price" orientation="right" width={70} domain={['auto','auto']}/>}
+   <Tooltip/>
+   <Legend onClick={item=>{
+    const key=String(item.dataKey);
+    Hidden(current=>current.includes(key)?current.filter(value=>value!==key):[...current,key]);
+   }}/>
+   {lines.map(line=><Line key={line.key} dataKey={line.key} name={line.label} yAxisId={line.axis||'valuation'}
+    stroke={line.color} strokeDasharray={line.dash} hide={hidden.includes(line.key)} dot={false}
+    connectNulls={false} isAnimationActive={false}/>)}
+  </LineChart>
+ </ResponsiveContainer></div>;
+}
 function HistoryTooltip({active,payload,label,rows}:Obj){if(!active||!payload?.length)return null;const r=rows.find((r:Obj)=>r.date===label);if(!r)return null;return <div className="research-tooltip"><b>{label}</b><p>收盘 {num(r.close)} 点<br/>水下回撤 {num(r.drawdown)}%</p></div>;}
 export function LinkedHistory({d,window}:Obj){
  const [hover,Hover]=useState<string|null>(null),[hidden,Hidden]=useState<string[]>([]);

@@ -47,35 +47,49 @@ const asof = '2026-10-30';
     await shot('waterlevel-initial');
 
     await page.getByRole('tab', {name: '数据来源', exact: true}).click();
-    check(!(await page.getByLabel('启用市场数据自动更新').isChecked()), 'free-source automation defaults off');
-    await page.getByRole('button', {name: '更新全部免费来源', exact: true}).click();
+    check(await page.getByLabel('启用市场数据自动更新').count() === 0, 'market updates expose only manual controls');
+    await page.getByRole('button', {name: '更新全部来源', exact: true}).click();
     let job;
     for (let attempt = 0; attempt < 120; attempt++) {
       job = (await api('/data-updates/jobs')).jobs[0];
       if (job && ['complete', 'partial', 'error'].includes(job.state)) break;
       await page.waitForTimeout(500);
     }
-    check(job?.state === 'complete', 'all synthetic free-source groups complete in the common queue');
+    check(job?.state === 'complete', 'all synthetic source groups complete in the common queue');
     check(job.resources.every(resource => resource.scope === 'market'), 'market refresh does not consume index or ledger scopes');
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     await page.getByText('有效大类 3/3', {exact: true}).waitFor({timeout: 30000});
     const first = await api('/market-waterlevel?asof=' + asof);
     check(first.scores.categories.equity.included === 7, 'fixed index mcw and full-market median factors enter the score');
     const comparison = page.locator('.waterlevel-comparison').first();
-    check(await page.locator('.waterlevel-comparison-chart svg').count() === 2, 'both full-market PE and PB comparison charts render');
+    check(await page.locator('.waterlevel-comparison-chart .recharts-responsive-container').count() === 1, 'overview renders one shared valuation chart');
     await page.getByLabel('水位曲线窗口').selectOption('all');
     await page.waitForFunction(() => [...document.querySelectorAll('.waterlevel-comparison text[orientation="bottom"]')].some(node=>node.textContent.includes('2005')));
     check((await comparison.locator('text[orientation="bottom"]').allTextContents()).join(' ').includes('2005'), 'all-history curve extends back to the available start');
     const curves = await comparison.locator('.recharts-line-curve').count();
-    await comparison.getByRole('button', {name:'10Y国债收益率倒数', exact:true}).click();
+    await comparison.getByText('10Y国债收益率倒数', {exact:true}).click();
     await page.waitForFunction(count => document.querySelector('.waterlevel-comparison')?.querySelectorAll('.recharts-line-curve').length === count, curves - 1);
     check(await comparison.locator('.recharts-line-curve').count() === curves - 1, 'legend hides the bond reference curve');
-    await comparison.getByRole('button', {name:'10Y国债收益率倒数', exact:true}).click();
+    await comparison.getByText('10Y国债收益率倒数', {exact:true}).click();
     await page.getByLabel('水位曲线窗口').selectOption('5');
     await page.waitForFunction(() => [...document.querySelectorAll('.waterlevel-comparison text[orientation="bottom"]')].some(node=>node.textContent.includes('2021')));
     check(!(await comparison.locator('text[orientation="bottom"]').allTextContents()).join(' ').includes('2005') &&
           await comparison.locator('.recharts-line-curve').count() === curves, 'window clips display while retaining long-history moving means');
     await page.getByLabel('水位曲线窗口').selectOption('10');
+    const metricControls = comparison.getByRole('button', {name:'PB', exact:true});
+    await metricControls.click();
+    await comparison.getByText('PB · 总市值加权', {exact:true}).waitFor();
+    check(await page.locator('.waterlevel-comparison-chart .recharts-responsive-container').count() === 1, 'PB switches the existing chart');
+    await comparison.getByRole('button', {name:'等权', exact:true}).click();
+    await comparison.getByText('PB · 等权', {exact:true}).waitFor();
+    const ew = await api('/market-waterlevel?method=ew&asof=' + asof);
+    check(ew.series.find(x=>x.id==='full_market_pb').statistics.current !== first.series.find(x=>x.id==='full_market_pb').statistics.current,
+      'overview switches to separately sourced EW data');
+    await comparison.getByRole('button', {name:'中位数', exact:true}).click();
+    await comparison.getByText('PB · 中位数', {exact:true}).waitFor();
+    await comparison.getByRole('button', {name:'总市值加权', exact:true}).click();
+    await comparison.getByText('PB · 总市值加权', {exact:true}).waitFor();
+    await comparison.getByRole('button', {name:'PE TTM', exact:true}).click();
     await shot('waterlevel-overview');
 
     await page.getByRole('tab', {name: '数据来源', exact: true}).click();
@@ -94,9 +108,10 @@ const asof = '2026-10-30';
     await failedRecord.getByRole('button', {name: '重试此项', exact: true}).click();
     await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByText('已取得', {exact: true}).waitFor();
     const retried = (await api('/data-updates/jobs')).jobs[0];
-    check(retried.resources.length === 1 && retried.resources[0].group === 'credit', 'retry retains the exact failed free-source group');
+    check(retried.resources.length === 1 && retried.resources[0].group === 'credit', 'retry retains the exact failed source group');
 
     await page.getByRole('tab', {name: '股票估值', exact: true}).click();
+    check(await page.locator('.waterlevel-comparison-chart').count() === 0, 'stock tab has no duplicate full-market chart');
     await page.getByRole('button', {name: '等权 · ew', exact: true}).click();
     await page.getByRole('button', {name: '等权 · ew', exact: true}).getAttribute('aria-pressed');
     await page.waitForFunction(() => document.querySelector('[aria-label="市场估值方法"] button[aria-pressed="true"]')?.textContent.includes('ew'));

@@ -158,7 +158,11 @@ class UpdateJobs:
     def execute(self,r):
         if r['scope'] in ('quotes','fx'):return self._legacy(r)
         if r['scope'] == 'market':
+            if self.current_trigger in ('schedule', 'startup'):
+                raise DomainError('市场水位仅支持手动更新')
             asof = (self.current_job or {}).get('information_cutoff') or str(today())
+            if r['group'] == 'full_market':
+                asof = min(asof, (self.current_job or {}).get('market_cutoff') or providers.cutoff())
             return self.research.waterlevel.collect(r['group'], asof)
         iid,module=r['target'],r['module']
         cutoffs=self.current_job or {}
@@ -223,7 +227,6 @@ class UpdateJobs:
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning('自动更新检查失败，下一轮重试 scope=%s error=%s',p['scope'],type(exc).__name__)
-        self.research.waterlevel.tick(stamp, trigger)
 
     def recover(self,resume=True):
         query="SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running') OR (state='interrupted' AND json_extract(data,'$.resume_on_start')=1)"
@@ -232,7 +235,11 @@ class UpdateJobs:
         with self.research.transaction() as db:
             for r in rows:
                 job=json.loads(r[1]);job['lease_owner']=None;job['lease_expires']=None;job['resume_on_start']=True
-                db.execute('UPDATE data_update_tasks SET state=?,data=? WHERE id=?',('pending' if resume else 'interrupted',json_dumps(job),r[0]))
+                manual_market = any(resource['scope']=='market' for resource in job['resources'])
+                if manual_market:
+                    job['resume_on_start']=False
+                db.execute('UPDATE data_update_tasks SET state=?,data=? WHERE id=?',
+                           ('pending' if resume and not manual_market else 'interrupted',json_dumps(job),r[0]))
         if resume:self.start()
 
     def shutdown(self):

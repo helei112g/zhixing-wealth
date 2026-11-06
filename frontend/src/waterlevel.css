@@ -14,13 +14,6 @@
 .waterlevel-boundaries{margin:22px 0}.waterlevel-page summary{cursor:pointer}.waterlevel-page details ul{padding-left:22px;color:var(--muted);font-size:13px}
 .waterlevel-legend{display:flex;flex-wrap:wrap;gap:18px;font-size:12px;color:#365f91}.waterlevel-legend span:nth-child(2){color:#b88453}.waterlevel-legend span:nth-child(3){color:#268979}
 .waterlevel-page .instrument-tabs{overflow-x:auto}.waterlevel-page .instrument-tabs button{white-space:nowrap;flex:none}
-.waterlevel-comparison-legend{display:flex;gap:10px 20px;flex-wrap:wrap;margin:18px 0 12px}
-.waterlevel-comparison-legend button{display:flex;align-items:center;gap:7px;border:0;background:none;padding:3px 0;font-size:12px;cursor:pointer}
-.waterlevel-comparison-legend button[aria-pressed=false]{opacity:.35;text-decoration:line-through}
-.waterlevel-comparison-legend i{width:23px;border-top-width:2px}
-.waterlevel-axis-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px}
-.waterlevel-tooltip{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:12px;box-shadow:0 4px 18px #0001}
-.waterlevel-tooltip p{margin:7px 0}.waterlevel-tooltip small{display:block;color:var(--muted)}
 .waterlevel-archive{margin:20px 0}.waterlevel-archive .field{margin:0;max-width:100%}.waterlevel-archive select{max-width:100%}
 @media(max-width:1100px){.waterlevel-scores{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.waterlevel-grid{grid-template-columns:1fr}.waterlevel-score{padding:14px}.waterlevel-score>strong{font-size:28px}.waterlevel-page .segmented{flex-wrap:wrap}.waterlevel-comparison-legend{gap:8px 12px}}
+@media(max-width:760px){.waterlevel-grid{grid-template-columns:1fr}.waterlevel-score{padding:14px}.waterlevel-score>strong{font-size:28px}.waterlevel-page .segmented{flex-wrap:wrap}}

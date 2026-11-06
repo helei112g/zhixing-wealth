@@ -3,13 +3,12 @@ import hashlib
 import json
 import secrets
 from copy import deepcopy
-from datetime import timedelta
 
 from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, today
 from ..research.snapshots import encode, decode
 from . import sources, validation
 from .catalog import GROUPS, INDICES, LIMITATIONS, SERIES
-from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, month_shift, score
+from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, score
 
 
 class WaterlevelService:
@@ -22,11 +21,17 @@ class WaterlevelService:
         with self.store.connection() as db:
             row = db.execute('''SELECT s.id,s.sha256,s.data FROM market_heads h
                                 JOIN market_snapshots s ON s.id=h.snapshot_id WHERE h.group_id=?''', (group,)).fetchone()
-        return dict(decode(row[2], row[1]), snapshot_id=row[0], sha256=row[1]) if row else None
+        if not row:
+            return None
+        value = decode(row[2], row[1])
+        if value.get('publisher') != GROUPS[group]['publisher']:
+            return None
+        return dict(value, snapshot_id=row[0], sha256=row[1])
 
     def collect(self, group, asof):
         previous = self.source(group)
-        value = sources.collect(group, asof, previous, self.research.updates.stopping.is_set)
+        options = {'access': self.research.access} if group == 'full_market' else {}
+        value = sources.collect(group, asof, previous, self.research.updates.stopping.is_set, **options)
         validation.source(value)
         if self.research.updates.stopping.is_set():
             raise DomainError('市场更新已中断，未发布新快照')
@@ -52,12 +57,14 @@ class WaterlevelService:
             row = db.execute("SELECT data FROM market_settings WHERE id='settings'").fetchone()
             revision = self.research.revision('settings_revision')
         value = json.loads(row[0]) if row else dict(automatic=False, groups=list(GROUPS))
-        return dict(value, expected_settings_revision=revision,
+        return dict(value, automatic=False, expected_settings_revision=revision,
                     policies=[dict(group=key, **entry) for key, entry in GROUPS.items()])
 
     def save_settings(self, body):
         value = {key: body[key] for key in ('automatic', 'groups')}
         validation.settings(value)
+        if value['automatic']:
+            raise DomainError('市场水位仅支持手动更新')
         with self.research.transaction('settings_revision', body['expected_settings_revision'], bump=True) as db:
             db.execute("INSERT INTO market_settings VALUES ('settings',?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (json_dumps(value),))
         return self.settings()
@@ -84,39 +91,6 @@ class WaterlevelService:
             failures = self._failures(self.research.updates.jobs())
             return dict(research_revision=self.research.revision(), updating=self.research.updating(),
                         errors_version=hashlib.sha256(json_dumps(failures).encode()).hexdigest())
-
-    def tick(self, stamp, trigger):
-        settings = self.settings()
-        if not settings['automatic']:
-            return
-        date = day(stamp[:10])
-        if stamp[11:16] < '18:00':
-            date -= timedelta(days=1)
-        calendar = self.source('calendar')
-        calendar_data = (calendar or {}).get('calendar', {})
-        events = calendar_data.get('events', []) if calendar_data.get('year') == date.year else []
-        for group in settings['groups']:
-            current = self.source(group)
-            cadence = GROUPS[group]['cadence']
-            slot = date - timedelta(days=date.weekday())
-            if cadence == 'calendar':
-                slot = date.replace(day=1)
-            elif cadence in ('release', 'monthly'):
-                released = [event for event in events if event['group'] == group and event['date'] <= str(date)]
-                target = max((event['period'] for event in released), default=month_shift(str(date), -1))
-                latest = min((rows[-1]['date'][:7] for rows in (current or {}).get('series', {}).values()), default='')
-                if latest >= target:
-                    continue
-                # Release-aware three-day checks; without a verified calendar use weekly checks.
-                if (cadence == 'release' and released) or (cadence == 'monthly' and 8 <= date.day <= 25):
-                    slot = date - timedelta(days=(date.day - 1) % 3)
-            request_id = f'market:{group}:{slot}:{settings["expected_settings_revision"]}'
-            receipt = hashlib.sha256(request_id.encode()).hexdigest()
-            with self.store.connection() as db:
-                if db.execute('SELECT 1 FROM data_update_receipts WHERE id=?', (receipt,)).fetchone():
-                    continue
-            self.research.run(dict(scopes=['market'], resources=[dict(scope='market', group=group)],
-                                   request_id=request_id, slot_at=str(slot) + 'T18:00:00+08:00'), trigger=trigger)
 
     def dashboard(self, method='mcw', asof=None):
         if method not in METHODS:
@@ -156,7 +130,7 @@ class WaterlevelService:
                                          checked_at=source['checked_at']))
             raw_series.update((source or {}).get('series', {}))
         for key, (group, label, unit, frequency) in SERIES.items():
-            rows = raw_series.get(key, [])
+            rows = raw_series.get(f'{key}_{method}' if group == 'full_market' else key, [])
             stats = analyze(rows, asof, positive=group in ('full_market', 'composites'),
                             stale_days=80 if frequency == 'monthly' else 14, frequency=frequency)
             if failures.get(group) and stats['status'] == 'available':
@@ -213,8 +187,11 @@ class WaterlevelService:
                                 reason=None if valid_source else '尚未取得理杏仁估值，请在指数资料库添加并采集估值模块'))
         statistics = {item['id']: item['statistics'] for item in items}
         for metric in ('pe', 'pb'):
-            scoring.append(dict(id='full_market:' + metric, label='乐咕全市场 ' + metric.upper(),
-                                category='equity', method='median', statistics=statistics['full_market_' + metric]))
+            fixed = analyze(raw_series.get(f'full_market_{metric}_median', []), asof, positive=True)
+            if failures.get('full_market') and fixed['status'] == 'available':
+                fixed['status'] = 'source_error'
+            scoring.append(dict(id='full_market:' + metric, label='理杏仁 A股全指 ' + metric.upper(),
+                                category='equity', method='median', statistics=fixed))
         pe = (index_data.get('csi:000300') or {}).get('series', {}).get('pe', {}).get('mcw', {}).get('rows', [])
         if (index_data.get('csi:000300') or {}).get('provider_id') != 'lixinger':
             pe = []

@@ -1,9 +1,9 @@
 import React,{useEffect,useId,useRef,useState} from 'react';
 import {Info} from 'lucide-react';
-import {Bar,BarChart,Cell,CartesianGrid,Legend,Line,LineChart,ResponsiveContainer,Tooltip,XAxis,YAxis} from 'recharts';
+import {Bar,BarChart,Cell,CartesianGrid,Line,LineChart,ResponsiveContainer,Tooltip,XAxis,YAxis} from 'recharts';
 import {api,money,Obj,percent,query} from './api';
 import {Button,Empty,ErrorBox,Field,Modal,Notice,Panel} from './components';
-import {LinkedHistory,Scenario} from './research_charts';
+import {LinkedHistory,Scenario,ValuationTrend} from './research_charts';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d),pct=(v:any)=>v==null?'-':percent(v);
 export const moduleLabels:Obj={index_info:'指数基本信息',price:'价格日线',total_return:'全收益日线',valuations:'日频估值与场内基金/市值',memberships:'当前成分与权重',historical_memberships:'十年历史成分',index_financials:'指数季度/TTM财务',market_activity:'融资与北向持仓',tracking_funds:'跟踪基金',stock_valuations:'公司估值',financials:'公司财务',historical_financials:'历史财务备用汇总'};
@@ -85,7 +85,7 @@ function HistoryWindow({value,onChange,label}:Obj){
  )}</div>;
 }
 
-function ValuationMethods({methods,value,onChange}:{methods:string[];value:string;onChange:(method:string)=>void}){
+export function ValuationMethods({methods,value,onChange}:{methods:string[];value:string;onChange:(method:string)=>void}){
  const [help,Help]=useState<string|null>(null);
  const id=useId();
 
@@ -144,7 +144,6 @@ function CurrentValuationRanks({analysis,pending}:Obj){
 }
 
 export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
- const [hidden,Hidden]=useState<string[]>([]);
  const [metric,Metric]=useState('pe');
  const [valuationWindow,ValuationWindow]=useState(3);
  const [analysis,Analysis]=useState<Obj|null>(null);
@@ -197,16 +196,10 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
    <ErrorBox error={error}/>
    <p className="studio-valuation-status muted small" role="status">{pending?(currentAnalysis?`正在读取${windowName(valuationWindow)}，暂显示${windowName(currentAnalysis.window)}曲线…`:'正在读取估值分析…'):error&&currentAnalysis?`未完成切换，仍显示${windowName(currentAnalysis.window)}曲线。`:'\u00a0'}</p>
    <div className="studio-valuation-chart" aria-busy={pending} data-valuation-window={currentAnalysis?.window}>
-   {curve.length?<>
-    <div role="img" aria-label="估值与三五十年滚动均值"><ResponsiveContainer width="100%" height={350} minWidth={0}>
-     <LineChart accessibilityLayer data={curve}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="date" minTickGap={80}/>
-      <YAxis yAxisId="valuation" width={60} domain={['auto','auto']}/><YAxis yAxisId="price" orientation="right" width={70} domain={['auto','auto']}/><Tooltip/>
-      <Legend onClick={(item:any)=>{const k=String(item.dataKey);Hidden(hidden.includes(k)?hidden.filter(x=>x!==k):[...hidden,k]);}}/>
-      {['value','mean3','mean5','mean10'].map((k,i)=><Line key={k} yAxisId="valuation" dataKey={k} hide={hidden.includes(k)} name={i?`${[3,5,10][i-1]}年日频平均`:metricNames[metric]} stroke={colors[i]} dot={false} connectNulls={false} isAnimationActive={false}/>)}
-      <Line yAxisId="price" dataKey="close" hide={hidden.includes('close')} name="同日指数点位 · 右轴" stroke={colors[4]} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false}/>
-     </LineChart>
-    </ResponsiveContainer></div>
-   </>:pending?null:<Notice>{error?'估值分析读取失败。':'尚无所选方法的估值序列；可在数据来源页查看采集状态。'}</Notice>}
+   {curve.length?<ValuationTrend rows={curve} label="估值与三五十年滚动均值" lines={[
+    ...['value','mean3','mean5','mean10'].map((key,i)=>({key,label:i?`${[3,5,10][i-1]}年日频平均`:metricNames[metric],color:colors[i]})),
+    {key:'close',label:'同日指数点位 · 右轴',color:colors[4],axis:'price',dash:'4 3'},
+   ]}/>:pending?null:<Notice>{error?'估值分析读取失败。':'尚无所选方法的估值序列；可在数据来源页查看采集状态。'}</Notice>}
    </div>
    <p className="muted small">分位不含当日观测；估值每日等权滚动平均包含当日，不足整窗留空。点位使用独立右轴。</p>
    <ValuationRanks analysis={currentAnalysis}/>

@@ -5,7 +5,7 @@ from math import sin
 
 from backend.common import json_dumps
 from backend.research import providers
-from backend.waterlevel.catalog import GROUPS, SERIES
+from backend.waterlevel.catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, GROUPS, SERIES
 
 ASOF = '2026-10-30'
 
@@ -20,18 +20,26 @@ def history(value='10', monthly=False, start=date(2014, 1, 1)):
     return result
 
 
-def payload(group, asof=ASOF, previous=None, cancelled=lambda: False):
+def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=None):
     values = {'cn_2y':'1', 'cn_10y':'2', 'aaa_3y':'3', 'gov_3y':'2', 'fr007':'2.2', 'fdr007':'1.8',
               'm1_yoy':'4', 'm2_yoy':'7', 'pmi':'51', 'nonmanufacturing_pmi':'52', 'sf_stock_yoy':'8'}
     series = {key: history(values.get(key, '1'), frequency == 'monthly')
               for key, (owner, _, _, frequency) in SERIES.items() if owner == group}
+    if group == 'full_market':
+        series = {key: [] for key in FULL_MARKET_FIELDS}
     if group in ('full_market', 'composites'):
         for key in series:
-            rows = history(monthly=group == 'full_market', start=date(2005,1,1))
-            scale = {'full_market_pe':25, 'full_market_pb':2.5, 'sh_composite':1800, 'sz_composite':900}[key]
+            rows = history(start=date(2005,1,1))
+            if group == 'full_market':
+                field, method = FULL_MARKET_FIELDS[key].split('.')
+                scale = (25 if field=='pe_ttm' else 2.5) * {'mcw':1, 'ew':1.2, 'median':1.4}[method]
+            else:
+                scale = {'sh_composite':1800, 'sz_composite':900}[key]
             for row in rows:
                 offset = (date.fromisoformat(row['date'])-date(2005,1,1)).days / 365
                 row['value'] = f'{scale * (1 + .2*sin(offset) + offset*.01):.6f}'
+                if group == 'full_market':
+                    row['field'] = FULL_MARKET_FIELDS[key]
             series[key] = rows
     for rows in series.values():
         for row in rows:
@@ -40,6 +48,8 @@ def payload(group, asof=ASOF, previous=None, cancelled=lambda: False):
     value = dict(group=group, publisher=GROUPS[group]['publisher'], series=series, checked_at=ASOF+'T19:00:00+08:00',
                  requested_asof=asof, published_at=None, evidence=[dict(url='https://www.pbc.gov.cn/synthetic-test.html',
                  fetched_at=ASOF+'T19:00:00+08:00', sha256='a'*64)])
+    if group == 'full_market':
+        value['evidence'][0].update(url='https://www.lixinger.com/api/open-api/html-doc/cn/index/fundamental',stock_code=FULL_MARKET_CODE)
     if group == 'calendar':
         value['calendar'] = dict(year=2026, events=[dict(group='pmi', date='2026-10-31', period='2026-10'),
                                                   dict(group='prices', date='2026-11-09', period='2026-10')])

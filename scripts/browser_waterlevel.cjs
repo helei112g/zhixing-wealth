@@ -143,18 +143,22 @@ const asof = '2026-10-30';
     await page.getByRole('img', {name:'境内宽基指数 PE 对照',exact:true}).waitFor();
     check(await page.getByLabel('股票估值曲线窗口').getByRole('button',{name:'全历史'}).getAttribute('aria-pressed') === 'true',
       'stock comparison starts at its independent full-history window');
-    await page.getByRole('button', {name: '等权', exact: true}).click();
-    await page.waitForFunction(() => document.querySelector('[aria-label="估值方法"] button[aria-pressed="true"]')?.textContent.trim()==='等权');
+    const mainIndices = page.getByRole('region', {name:'主要指数估值',exact:true});
+    const selector = mainIndices.getByLabel('估值方法', {exact:true});
+    check(await selector.locator('button[aria-pressed]').count() === 4, 'main index section exposes all four valuation methods');
+    await selector.getByRole('button', {name:'等权',exact:true}).click();
+    await mainIndices.getByText('当前显示 等权（ew）。', {exact:false}).waitFor();
     const equal = await api('/market-waterlevel?method=ew&asof=' + asof);
     check(JSON.stringify(first.scores) === JSON.stringify(equal.scores), 'method switch leaves fixed scores unchanged');
-    check(await page.getByText('当前值无效', {exact: false}).count() > 0, 'negative ew is shown as invalid rather than replaced');
-    await page.getByRole('button', {name: '中位数', exact: true}).click();
-    await page.waitForFunction(() => document.querySelector('[aria-label="估值方法"] button[aria-pressed="true"]')?.textContent.trim()==='中位数');
-    await page.locator('.studio-valuation-chart[aria-busy="false"]').waitFor();
-    check(await page.locator('[aria-label="估值方法"]').evaluate(element =>
+    check(await mainIndices.getByText('当前值无效', {exact:false}).count() > 0, 'negative ew is shown as invalid rather than replaced');
+    check(await page.getByRole('button', {name:'等权',exact:true,pressed:true}).count() === 2,
+      'the comparison and main index selectors stay synchronized');
+    await selector.getByRole('button', {name:'中位数',exact:true}).click();
+    await mainIndices.getByText('当前显示 中位数（median）。', {exact:false}).waitFor();
+    check(await selector.evaluate(element =>
       getComputedStyle(element.querySelector('[aria-pressed="true"]')).backgroundColor !==
       getComputedStyle(element.querySelector('[aria-pressed="false"]')).backgroundColor), 'selected method has visible feedback');
-    await page.getByLabel('对照指标', {exact: true}).selectOption('pb');
+    await mainIndices.getByLabel('对照指标', {exact:true}).selectOption('pb');
     await page.getByRole('heading', {name: '沪深300 · PB', exact: true}).waitFor();
     check(await page.locator('.waterlevel-chart svg').count() >= 3, 'valuation charts render as actual SVG');
     await shot('waterlevel-valuations');

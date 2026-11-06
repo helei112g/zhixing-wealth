@@ -278,11 +278,19 @@ export function WaterlevelPage({today,onIndices}: Obj) {
       {tab==='overview'&&<><ScoreOverview data={data}/><ComparisonCard data={data} metric={fullMetric} setMetric={setFullMetric} setMethod={selectMethod} window={overviewWindow} setWindow={setOverviewWindow} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/><div className="waterlevel-grid">{lines(['erp','bond_inverse'],overviewWindow)}</div><details className="waterlevel-boundaries"><summary>当前覆盖与计算边界</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details></>}
       {tab==='equity'&&<>
         <BroadCard data={data} window={equityWindow} setWindow={setEquityWindow} setMethod={selectMethod} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/>
-        <div className="waterlevel-view-options"><h3>主要指数估值</h3>
-          <Field label="对照指标"><select aria-label="对照指标" value={metric} onChange={event=>setMetric(event.target.value)}>{Object.entries(metricNames).map(([key,label])=><option key={key} value={key}>{String(label)}</option>)}</select></Field></div>
-        <p className="muted small">下方曲线沿用对照图的估值方法与窗口。均值使用连续的60/120个完整月末观测。</p>
-        <p className="waterlevel-legend"><span>蓝线：月末观测</span><span>棕线：5年均值</span><span>绿线：10年均值</span></p>
-        <div className="waterlevel-grid">{data.indices.map((index:Obj)=><StatisticCard key={index.id} label={index.label+' · '+metricNames[metric]} statistics={index.metrics[metric]} unit={metric==='dividend_yield'?'%':'倍'} multiplier={metric==='dividend_yield'?100:1} window={equityWindow} asof={asof} means/>)}</div>
+        <section aria-labelledby="waterlevel-main-indices">
+          <h3 id="waterlevel-main-indices">主要指数估值</h3>
+          <div className="studio-controls">
+            <div className="studio-choice"><span>估值方法</span>
+              <ValuationMethods methods={Object.keys(methods)} value={selectedMethod} onChange={selectMethod}/>
+            </div>
+            <Field label="对照指标"><select aria-label="对照指标" value={metric} onChange={event=>setMetric(event.target.value)}>{Object.entries(metricNames).map(([key,label])=><option key={key} value={key}>{String(label)}</option>)}</select></Field>
+          </div>
+          <p className="muted small">当前显示 {methods[data.method]}（{data.method}）。估值方法和窗口与上方对照图同步。均值使用连续的60/120个完整月末观测。</p>
+          {methodStatus&&<p role="status" className="muted small waterlevel-method-status">{methodStatus}</p>}
+          <p className="waterlevel-legend"><span>蓝线：月末观测</span><span>棕线：5年均值</span><span>绿线：10年均值</span></p>
+          <div className="waterlevel-grid" aria-busy={loading}>{data.indices.map((index:Obj)=><StatisticCard key={index.id} label={index.label+' · '+metricNames[metric]} statistics={index.metrics[metric]} unit={metric==='dividend_yield'?'%':'倍'} multiplier={metric==='dividend_yield'?100:1} window={equityWindow} asof={asof} means/>)}</div>
+        </section>
         <Button onClick={onIndices}>在指数资料库管理采集</Button>
       </>}
       {tab==='bonds'&&<><p className="muted small">信用利差按同日AAA 3Y中票减3Y国债；FR007/FDR007是定盘利率，不是R007/DR007。1个百分点=100 BP。</p><div className="waterlevel-grid">{lines(['cn_10y','cn_2y','cn_30y','us_10y','us_2y','us_30y','cn_term','us_term','credit_spread','aaa_3y','gov_3y','fr007','fdr007','repo_spread'],0,true)}</div></>}

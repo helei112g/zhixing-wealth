@@ -7,6 +7,9 @@ from backend.research import lixinger
 def transport(endpoint, params):
     code=(params.get('stockCodes') or [params.get('stockCode')])[0]
     if endpoint=='cn/index':
+        if code in (None,'799901'):
+            return 200,dict(code=1,data=[dict(stockCode='799901',name='合成目录外指数',source='csi',
+                areaCode='cn',market='a',currency='CNY',launchDate='2015-01-01',series='thematic')])
         return 200,dict(code=1,data=[dict(stockCode=code,name='合成指数',source='cni' if code=='399006' else 'csi',areaCode='cn',market='a',currency='CNY',fsTableType='hybrid',rebalancingFrequency='quarterly')])
     if endpoint.endswith('/tracking-fund'):
         return 200,dict(code=1,data=[dict(stockCode='510001',name='合成跟踪基金',areaCode='cn',market='a',exchange='sh')])

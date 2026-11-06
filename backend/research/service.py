@@ -144,7 +144,7 @@ class ResearchService:
         return sid
 
     def detail(self, iid, basis='price', method='overall', window=3, *, summary=False):
-        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
+        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew','ewpvo') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
         with self.store.lock:
             p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff()
             recent=[] if summary else self.updates.jobs()
@@ -196,7 +196,8 @@ class ResearchService:
             last=next((i for job in recent for i in reversed(job.get('items',[])) if i.get('target')==iid and i.get('module')==module),None)
             module_status[module]=dict(supported=capability['supported'],status='error' if last and last.get('status')=='error' else 'available' if snapshot else 'unsupported' if not capability['supported'] else 'missing',
                                        reason=capability['reason'] or (last.get('error') if last else None), date=snapshot.get('effective_date') if snapshot else None)
-        result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=p['return_code'] if basis=='total_return' else p['code'],asof=asof,latest=prices[-1] if prices else None,
+        series_code=(p['return_code'] or p['code']) if basis=='total_return' else p['code']
+        result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=series_code,asof=asof,latest=prices[-1] if prices else None,
             research_revision=revision,method=method,window=window,method_version=METHOD_VERSION,analysis_id=hashlib.sha256(json_dumps([m['snapshot_id'] if m else None for m in resources.values()]+[basis,method,METHOD_VERSION]).encode()).hexdigest(),
             valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=moving_averages(prices,window,(price or {}).get('missing_dates',[])),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
@@ -298,7 +299,13 @@ def validate_structure(db):
 def validate_backup(db):
     validate_structure(db)
     for r in db.execute('SELECT id,data FROM research_indices'):
-        p=json.loads(r[1]);known=providers.identity(p['code'])
+        p=json.loads(r[1])
+        if 'lixinger_identity' in p:
+            known=providers.lixinger_identity(p['lixinger_identity'])
+            if any(p.get(key)!=known[key] for key in ('code','provider','currency','exposure','launch','return_code','method_url')):
+                raise DomainError('理杏仁指数档案与核验身份不一致')
+        else:
+            known=providers.identity(p['code'])
         if r[0]!=p.get('id') or r[0]!=known['provider']+':'+known['code'] or p['return_code']!=known['return_code']:raise DomainError('指数家族身份或配对无效')
         public_url(p['method_url'])
     summaries=price_chunks.validate_blocks(db)

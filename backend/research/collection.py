@@ -1,7 +1,10 @@
 """Subscribed, budgeted, resumable collection using existing versioned snapshots."""
 import hashlib
+import re
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import timedelta
+from threading import Lock
 from ..common import ConflictError, DomainError, day, json_dumps, now, today
 from . import lixinger, providers
 from .metrics import years_before
@@ -15,9 +18,53 @@ def subscription(profile):
 class Collection:
     def __init__(self, research):
         self.research = research
+        self.identities = OrderedDict()
+        self.identity_lock = Lock()
 
-    def preview(self, code, modules, history_start):
-        p = providers.identity(code)
+    def identity(self, code, *, lookup=False):
+        key = code.strip().upper()
+        if not key:
+            raise DomainError('请输入指数代码或名称')
+        try:
+            return providers.identity(key)
+        except providers.market.ProviderError:
+            pass
+
+        with self.identity_lock:
+            saved = self.research.profiles()
+            matches = {p['code']: p for p in [*self.identities.values(), *saved]
+                       if key in (p['code'], p['name'].upper())}
+            if not matches and lookup:
+                if not self.research.writes_allowed():
+                    raise DomainError('系统处于只读状态，无法联网核对新指数')
+                by_code = bool(re.fullmatch(r'[A-Z0-9]{4,16}', key))
+                params = {'stockCodes': [key]} if by_code else {}
+                rows = self.research.access.request('cn/index', params)
+                candidates = [row for row in rows if isinstance(row, dict) and
+                              (row.get('stockCode') == key if by_code else str(row.get('name', '')).strip().upper() == key)]
+                if len(candidates) > 1:
+                    raise DomainError('理杏仁返回多个同名指数，请输入指数代码')
+                if candidates:
+                    profile = providers.lixinger_identity(candidates[0])
+                    self.identities[profile['code']] = profile
+                    if len(self.identities) > 128:
+                        self.identities.popitem(last=False)
+                    matches[profile['code']] = profile
+            if len(matches) == 1:
+                return deepcopy(next(iter(matches.values())))
+            if matches:
+                raise DomainError('存在多个同名指数，请输入指数代码')
+        if lookup:
+            raise DomainError('理杏仁未找到该指数，请核对代码或准确名称')
+        raise DomainError('请先联网核对该指数，再按预览结果添加')
+
+    def preview(self, code, modules, history_start, *, lookup=False):
+        p = self.identity(code, lookup=lookup)
+        adding = modules is None
+        if adding:
+            if history_start is not None:
+                raise DomainError('添加指数默认使用全历史，请在管理采集中调整起始日')
+            modules = lixinger.NEW_INDEX_MODULES
         if not modules or len(modules) != len(set(modules)) or any(m not in lixinger.MODULES for m in modules):
             raise DomainError('请选择有效且不重复的采集模块')
         end = providers.cutoff()
@@ -35,17 +82,26 @@ class Collection:
             for call in lixinger.request_plan(p, m, start, end):
                 e = call['endpoint']; budget[e] = budget.get(e, 0)+1
         state = self.research.access.status()
+        iid = p['provider'] + ':' + p['code']
+        with self.research.store.connection() as db:
+            revision = self.research.revision()
+            existing = db.execute('SELECT id FROM research_indices WHERE id=?', (iid,)).fetchone()
         return dict(profile=p, modules=chosen, history_start=history_start, effective_start=start, end=end,
-                    research_revision=self.research.revision(), endpoint_budget=[dict(endpoint=e, calls=n,
+                    existing_id=existing[0] if existing else None, research_revision=revision, endpoint_budget=[dict(endpoint=e, calls=n,
                     remaining=max(0, state['limit']-state['counts'].get(e, 0))) for e, n in sorted(budget.items())],
                     dependencies_pending=pending, unsupported_modules=unsupported, configured=state['configured'], enabled=state['enabled'],
                     limitation='公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。添加仅保存订阅，点击更新才请求接口。')
 
     def save(self, code, modules, history_start, enabled, expected):
+        adding = modules is None
+        if adding and not enabled:
+            raise DomainError('新增指数默认启用采集，请在管理采集中暂停')
         plan = self.preview(code, modules, history_start)
         p = plan['profile']; iid = p['provider']+':'+p['code']
         with self.research.worker_lock, self.research.transaction(expected=expected, bump=True) as db:
             old = db.execute('SELECT data FROM research_indices WHERE id=?', (iid,)).fetchone()
+            if adding and old:
+                raise ConflictError('该指数已在指数库中，请打开已有档案或使用管理采集')
             import json
             value = json.loads(old[0]) if old else dict(p, id=iid, created_at=now())
             previous = subscription(value)
@@ -88,9 +144,14 @@ class Collection:
             start = max(start, str(years_before(end, 10)))
         full = (not old or old.get('provider_id') != 'lixinger' or not state.get('last_reconciled') or
                 (today()-day(state['last_reconciled'][:10])).days >= 15 or state.get('generation') != p.get('collection_generation', 0))
+        needs_valuation_backfill = (module == 'valuations' and old
+                                    and 'ewpvo' not in old.get('series', {}).get('pe', {}))
+        full = full or bool(needs_valuation_backfill)
         if not full and old.get('effective_date'): start = max(start, str(day(old['effective_date'])-timedelta(days=15)))
         # Resume the interrupted cycle with its original fixed cutoff and exact shards.
-        if state.get('phase') == 'collecting' and state.get('generation') == p.get('collection_generation',0):
+        if (state.get('phase') == 'collecting' and state.get('generation') == p.get('collection_generation',0)
+                and (not needs_valuation_backfill or (state['mode'] == 'reconcile' and
+                     'pe_ttm.ewpvo' in state['calls'][0]['params']['metricsList']))):
             start, end = state['range_start'], state['range_end']
             full = state['mode'] == 'reconcile'
         info = (self.research.module(iid, 'index_info') or {}).get('info')

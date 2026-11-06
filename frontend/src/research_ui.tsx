@@ -15,7 +15,7 @@ export function ResearchPage(_:Obj){
  useEffect(()=>{let active=true,busy=false;const refresh=async()=>{if(document.hidden||busy)return;busy=true;try{const v=await api('/research/revision');if(active){R(v.research_revision);Running(v.updating);}}catch(e:any){if(active)E(e.message);}finally{busy=false;}};refresh();const timer=setInterval(refresh,2500);return()=>{active=false;clearInterval(timer);};},[]);
  function select(id:string){S(id);try{localStorage.setItem('research-selected',id);const u=new URL(location.href);u.searchParams.set('index',id);history.replaceState(null,'',u);}catch{}}
  const profile=catalog?.subscriptions.find((p:Obj)=>p.id===selected);
- return <div className="research-page"><ErrorBox error={error}/><div className="studio-heading"><div><label htmlFor="research-index">观察指数</label><select id="research-index" aria-label="观察指数" value={selected} onChange={e=>select(e.target.value)}>{!selected&&<option value="">尚未添加</option>}{catalog?.subscriptions.map((p:Obj)=><option key={p.id} value={p.id}>{p.name} · {p.code}{p.subscription?.enabled===false?' · 已暂停':''}</option>)}</select><IndexInformation d={detail?.id===selected?detail:profile}/></div><div className="inline-actions">{profile&&<Button onClick={()=>Dialog(profile)}>管理采集</Button>}<Button primary onClick={()=>Dialog(true)}><Plus size={15}/>添加采集</Button></div></div>{selected?<IndexDetail key={selected} id={selected} revision={revision} onLoaded={Detail}/>:<Empty title="还没有指数档案" action={<Button primary onClick={()=>Dialog(true)}>添加采集</Button>}>选择要采集的指数和模块。内置目录不会自动采集，打开页面只读取本地数据。</Empty>}{running&&<p role="status" className="muted small"><LoaderCircle size={14} className="spin"/>采集正在执行，已有有效快照可继续查看。</p>}{dialog&&catalog&&<CollectionDialog catalog={catalog} profile={dialog===true?null:dialog} onClose={()=>Dialog(null)} onSaved={async(v:Obj)=>{Dialog(null);select(v.id);R(v.research_revision);await load();}}/>}</div>;
+ return <div className="research-page"><ErrorBox error={error}/><div className="studio-heading"><div><label htmlFor="research-index">观察指数</label><select id="research-index" aria-label="观察指数" value={selected} onChange={e=>select(e.target.value)}>{!selected&&<option value="">尚未添加</option>}{catalog?.subscriptions.map((p:Obj)=><option key={p.id} value={p.id}>{p.name} · {p.code}{p.subscription?.enabled===false?' · 已暂停':''}</option>)}</select><IndexInformation d={detail?.id===selected?detail:profile}/></div><div className="inline-actions">{profile&&<Button onClick={()=>Dialog(profile)}>管理采集</Button>}<Button primary onClick={()=>Dialog(true)}><Plus size={15}/>添加指数</Button></div></div>{selected?<IndexDetail key={selected} id={selected} revision={revision} onLoaded={Detail}/>:<Empty title="还没有指数档案" action={<Button primary onClick={()=>Dialog(true)}>添加指数</Button>}>输入指数代码或名称，添加到指数库。</Empty>}{running&&<p role="status" className="muted small"><LoaderCircle size={14} className="spin"/>采集正在执行，已有有效快照可继续查看。</p>}{dialog&&catalog&&<CollectionDialog catalog={catalog} profile={dialog===true?null:dialog} onClose={()=>Dialog(null)} onSaved={async(v:Obj)=>{Dialog(null);select(v.id);R(v.research_revision);await load();}}/>}</div>;
 }
 
 function IndexDetail({id,revision,onLoaded}:Obj){
@@ -32,12 +32,12 @@ function IndexInformation({d}:Obj){
   <button className="index-info-button" aria-expanded={open} aria-haspopup="dialog" onFocus={()=>Open(true)} onClick={()=>Open(true)}>ⓘ 基本资料</button>
   {open&&<div className="index-info-popover" role="dialog" aria-label="指数基本资料">
    <h3>{p.name} · 基本资料</h3><dl className="key-values">
-    <dt>价格 / 全收益代码</dt><dd>{p.code} / {p.return_code}</dd>
+    <dt>价格 / 全收益代码</dt><dd>{p.code} / {p.return_code || '理杏仁全收益口径'}</dd>
     <dt>编制机构 / 币种</dt><dd>{p.provider==='csi'?'中证指数':'国证指数'} / CNY</dd>
     <dt>成分数量</dt><dd>{d.companies?.length||'尚未采集'}</dd>
     <dt>价格指数发布日期</dt><dd>{p.launch}</dd>
     <dt>全收益独立发布日期</dt><dd>{p.return_launch||'待核验'}</dd>
-    <dt>编制方案与规则</dt><dd><a href={p.method_url} target="_blank" rel="noopener noreferrer">官方资料 ↗</a></dd>
+    <dt>{p.lixinger_identity?'身份核对来源':'编制方案与规则'}</dt><dd><a href={p.method_url} target="_blank" rel="noopener noreferrer">{p.lixinger_identity?'理杏仁指数接口 ↗':'官方资料 ↗'}</a></dd>
     <dt>加权 / 调样</dt><dd>{d.index_info?.calculationMethod||'以官方方案为准'} / {d.index_info?.rebalancingFrequency||'待核验'}</dd>
    </dl>
   </div>}

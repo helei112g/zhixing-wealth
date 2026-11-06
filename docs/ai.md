@@ -112,7 +112,7 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 ## 指数研究
 
-读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start)` 展示指数家族、范围、预计调用数和原research_revision；在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交enabled与expected_research_revision，再按id回读。保存不启动采集；使用原有 `refresh_index` 或精确resource提交带稳定request_id的更新任务。
+读取 capabilities 和研究目录。添加时使用 `collection_preview(code)` 核对指数家族、全部可用模块、全历史范围和原 research_revision。若返回 existing_id，直接读取原档案。目录外大陆A股指数经用户授权使用 collection_preview(code, lookup=True) 联网核对，并计入本机额度。新增写入只提交 code 与 expected_research_revision，重复请求返回 409。管理采集时通过 `collection_preview(code, modules, history_start)` 预览显式配置，再提交原研究版本并按 id 回读。保存不启动采集；使用原有 `refresh_index` 或精确resource提交带稳定request_id的更新任务。
 
 `research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口；不再提供收益回测或指数重叠。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
 

@@ -9,7 +9,7 @@ class ResolveRequest(BaseModel):
 
 Scope=Literal['quotes','fx','index_prices','memberships','valuations','financials']
 Basis=Literal['price','total_return']
-Method=Literal['overall','median','arithmetic','mcw','ew']
+Method=Literal['overall','median','arithmetic','mcw','ew','ewpvo']
 Part=Literal['series','constituents','financials','sources']
 
 
@@ -113,14 +113,19 @@ class ScenarioResult(BaseModel):
 
 class CollectionPreview(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    code:str=Field(min_length=1,max_length=16)
-    modules:list[str]=Field(min_length=1,max_length=12)
+    code:str=Field(min_length=1,max_length=120)
+    modules:list[str]|None=Field(default=None,min_length=1,max_length=12,
+                                description='省略或 null 时按全历史预览全部可用新建模块，保存仅允许新增。显式列表用于配置采集。')
     history_start:str|None=None
 
 
 class CollectionSave(CollectionPreview):
     enabled:StrictBool=True
     expected_research_revision:int=Field(ge=0,strict=True)
+
+
+class CollectionLookup(CollectionPreview):
+    lookup:StrictBool=False
 
 
 class TokenSave(BaseModel):
@@ -153,7 +158,8 @@ def router(service):
         from .lixinger import MODULES,DEFAULT_MODULES,MODULE_SOURCES
         return dict(items=CATALOG,modules=MODULES,module_sources=MODULE_SOURCES,default_modules=DEFAULT_MODULES,subscriptions=service.profiles(),research_revision=service.revision())
     @api.post('/api/research/collection/preview')
-    def collection_preview(body:CollectionPreview):return service.collection.preview(body.code,body.modules,body.history_start)
+    def collection_preview(body:CollectionLookup):
+        return service.collection.preview(body.code,body.modules,body.history_start,lookup=body.lookup)
     @api.put('/api/research/collection')
     def collection_save(body:CollectionSave):return service.collection.save(body.code,body.modules,body.history_start,body.enabled,body.expected_research_revision)
     @api.get('/api/settings/lixinger')

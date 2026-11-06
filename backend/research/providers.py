@@ -26,16 +26,44 @@ CATALOG = [
     dict(code='930955', return_code='H20955', name='红利低波100', provider='csi', kind='策略', launch='2017-05-26'),
     dict(code='399998', return_code='H20596', name='中证煤炭', provider='csi', kind='行业', launch='2015-02-13'),
     dict(code='000991', return_code='H00991', name='全指医药', provider='csi', kind='行业', launch='2011-08-02'),
+    dict(code='399989', return_code='H20451', name='中证医疗', aliases=('中证医疗指数',),
+         provider='csi', kind='行业', launch='2014-10-31'),
 ]
 def identity(code):
     code = str(code).strip().upper()
-    found = next((p for p in CATALOG if code in (p['code'], p['return_code'])), None)
-    if not found: raise market.ProviderError('当前尚未支持这个指数的官方代码配对；不按代码前缀猜测')
+    found = next((p for p in CATALOG if code in
+                  (p['code'], p['return_code'], p['name'].upper(), *p.get('aliases', ()))), None)
+    if not found:
+        raise market.ProviderError('未找到已核验的指数，请核对代码或使用目录中的完整名称')
     p = dict(found, currency='CNY', input_basis='total_return' if code == found['return_code'] else 'price')
     p['method_url'] = (CNI + '/docs/gz_399006.pdf' if p['provider'] == 'cni' else
         'https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/' + p['code'] + 'factsheet.pdf')
     p['return_launch_status'] = 'verified' if p.get('return_launch') else 'not_independently_verified'
     return p
+
+
+LIXINGER_INDEX_INFO = 'https://www.lixinger.com/api/open-api/html-doc/cn/index'
+INDEX_SERIES = {'size':'宽基', 'composite':'宽基', 'sector':'行业', 'style':'风格',
+                'thematic':'主题', 'strategy':'策略'}
+
+
+def lixinger_identity(row):
+    """Normalize a mainland equity index identified by the supplier."""
+    if not isinstance(row, dict):
+        raise market.ProviderError('理杏仁指数信息格式无效')
+    code, name, source = row.get('stockCode'), row.get('name'), row.get('source')
+    if (not isinstance(code, str) or not re.fullmatch(r'[0-9A-Z]{4,16}', code)
+            or not isinstance(name, str) or not name.strip() or len(name) > 120
+            or source not in ('csi', 'cni', 'lxri')
+            or (row.get('areaCode'), row.get('market'), row.get('currency')) != ('cn', 'a', 'CNY')):
+        raise market.ProviderError('该指数的大陆A股市场、币种或编制方未获确认')
+    launch = str(day(str(row.get('launchDate'))[:10]))
+    evidence = {key: row.get(key) for key in
+                ('stockCode', 'name', 'source', 'areaCode', 'market', 'currency', 'launchDate', 'series')}
+    return dict(code=code, name=name.strip(), provider=source, kind=INDEX_SERIES.get(str(row.get('series')), '指数'),
+                launch=launch, currency='CNY', exposure='CN', input_basis='price', return_code=None,
+                return_launch_status='not_independently_verified', method_url=LIXINGER_INDEX_INFO,
+                identity_source=LIXINGER_INDEX_INFO, lixinger_identity=evidence)
 
 
 def module_capabilities(profile):

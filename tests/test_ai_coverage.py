@@ -42,7 +42,7 @@ class AICoverageTests(unittest.TestCase):
         paths, models = schema['paths'], schema['components']['schemas']
         params = {p['name']: p['schema'] for p in paths['/api/research/indices/{index_id}']['get']['parameters']}
         self.assertEqual(params['basis']['enum'], ['price', 'total_return'])
-        self.assertEqual(params['method']['enum'], ['overall', 'median', 'arithmetic','mcw','ew'])
+        self.assertEqual(params['method']['enum'], ['overall', 'median', 'arithmetic','mcw','ew','ewpvo'])
         self.assertEqual(params['window']['enum'], [0,3,5,10])
         self.assertIn('409', paths['/api/research/indices/{index_id}/scenarios']['post']['responses'])
         self.assertIn('ScenarioResult', models)
@@ -51,7 +51,13 @@ class AICoverageTests(unittest.TestCase):
         self.assertIn('unallocated_target_amount', models['PlanFunding']['properties'])
         resources = models['UpdateRequest']['properties']['resources']['anyOf'][0]['items']
         self.assertEqual(resources['discriminator']['propertyName'], 'scope')
-        self.assertEqual(len(resources['oneOf']), 6)
+        self.assertEqual(len(resources['oneOf']), 7)
+        self.assertEqual(set(resources['discriminator']['mapping']),
+                         {'quotes','fx','index_prices','memberships','valuations','financials','market'})
+        market = models['MarketResource']
+        self.assertEqual(set(market['required']), {'scope','group'})
+        self.assertIn('social_financing', market['properties']['group']['enum'])
+        self.assertNotIn('market', models['Policy']['properties']['scope']['enum'])
         self.assertNotIn('/api/tags', paths)
 
     def test_dashboard_schema_preserves_full_and_summary_values_including_unknowns(self):
@@ -76,14 +82,18 @@ class AICoverageTests(unittest.TestCase):
                      dict(scope='index_prices', target='synthetic', module='total_return'),
                      dict(scope='memberships', target='synthetic', module='historical_memberships'),
                      dict(scope='valuations', target='synthetic', module='stock_valuations'),
-                     dict(scope='financials', target='synthetic', module='historical_financials')]
+                     dict(scope='financials', target='synthetic', module='historical_financials'),
+                     dict(scope='market', group='credit'), dict(scope='market', group='credit', full=True),
+                     dict(scope='financials', target='synthetic', module='financials', full=True)]
         for resource in resources:
             body = dict(scopes=[resource['scope']], resources=[resource], request_id='synthetic-scope')
             self.assertEqual(UpdateRequest.model_validate(body).model_dump(exclude_unset=True), body)
         for resource in [dict(scope='quotes'), dict(scope='fx', currency='CNY'),
                          dict(scope='fx', currency='HKD', full='true'),
                          dict(scope='index_prices', target='synthetic', module='financials'),
-                         dict(scope='financials', target='synthetic', module='financials', full=True)]:
+                         dict(scope='financials', target='synthetic', module='financials', full='true'),
+                         dict(scope='market', group='unknown'), dict(scope='market'),
+                         dict(scope='market', group='credit', target='synthetic')]:
             with self.subTest(resource=resource), self.assertRaises(ValidationError):
                 UpdateRequest.model_validate(dict(resources=[resource], request_id='synthetic-invalid'))
 

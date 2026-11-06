@@ -59,6 +59,8 @@ class StorageTests(unittest.TestCase):
             db.execute('CREATE INDEX fx_scope ON fx(currency,date)')
             for table in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):
                 db.execute('DROP TABLE IF EXISTS '+table)
+            from tests.waterlevel_fixtures import drop_tables
+            drop_tables(db)
             db.execute('DROP TABLE IF EXISTS family_expense_plans'); db.execute('DROP TABLE IF EXISTS family_expense_months')
             db.execute("UPDATE meta SET value='6' WHERE key='schema'")
             db.execute("UPDATE alembic_version SET version_num='0005_family_income'")

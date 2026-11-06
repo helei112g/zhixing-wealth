@@ -116,8 +116,18 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 `research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口；不再提供收益回测或指数重叠。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
 
-Token只能由用户在本机「全局设置 → 理杏仁数据源」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。默认每端点20次本机预算，失败也消耗尝试；1000次是供应商试用上限，不是本机已知余额。试用自动采集默认关闭，不自动提高预算或解除权限阻断。
+Token只能由用户在本机「全局设置 → 理杏仁数据源」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。默认每端点20次本机预算，失败也消耗尝试；1000次是供应商试用上限，不是本机已知余额。指数采集仅手动触发，不自动提高预算或解除权限阻断。
 
-详情与快照历史读取不触发网络；只有显式更新或已启用的应用定时策略调用供应商。价格、估值、权重、财报和披露日各自保留。财务按年度/一季度/半年/三季度跨年读取；源端曲线按历史当期成分加总，当前可得版本不是严格PIT；mcw条件试算须明确接受全部成分同比例变化假设，不声称已核验实际点位映射。完整规范见 [研究合同](research.md) 与 [API](api.md)。
+详情与快照历史读取不触发网络；只有用户授权的显式更新调用供应商。价格、估值、权重、财报和披露日各自保留。财务按年度/一季度/半年/三季度跨年读取；源端曲线按历史当期成分加总，当前可得版本不是严格PIT；mcw条件试算须明确接受全部成分同比例变化假设，不声称已核验实际点位映射。完整规范见 [研究合同](research.md) 与 [API](api.md)。
 
 `research_source_check(index_id, analysis_id)` 仅在明确授权联网核验时调用；先以mcw价格口径读取analysis_id，结果保存在独立官方参考快照，不改变理杏仁历史或估值分母映射。
+
+## 市场水位
+
+使用`market_waterlevel(method='mcw', asof=None, facts=True)`或`GET /api/market-waterlevel/facts`读取版本化事实。指数估值来自现有理杏仁快照；全市场估值来自理杏仁 A股全指1000002，按请求选择估值方法。两综指、宏观与债券来自公开来源。comparisons提供两综指共同基准月及对齐说明，完整dashboard包含曲线。GET读取本地数据。先核对asof、实际观测日、来源、method_version、窗口样本、状态和缺口，再解释历史位置。
+
+用户授权更新时，通过`write('/api/market-waterlevel/updates', {groups,indices,full,request_id})`提交精确来源组或共享指数估值。省略full走增量，显式true执行全量校对，保存收据并回读任务状态。复用稳定request_id；结果未知先查询，不新建ID盲目重试，不扩大为全部订阅指数或持仓行情。市场水位仅手动更新。full_market 消耗理杏仁基本面额度。
+
+冻结流程为读取事实包→按原analysis_id、method、asof、expected_research_revision提交`write('/api/market-waterlevel/snapshots', payload)`→精确ID回读→按需下载export。409先重新读取核对，不替换成最新revision强行提交。冻结保存不触发供应商调用，报告独立于后续来源更新。
+
+各估值方法不重复计分，评分固定指数mcw与理杏仁 A股全指中位数；负PE/PB不能用另一口径代替。均值是连续60/120个完整月末观测，分位严格小于当前值，与指数研究页的日频均值/分位不同。历史日期只截取当前可得修订版，不能用于声称严格PIT的回测。未接入项、缺类后的覆盖变化和M1口径变化必须保留。程序规则摘要不是模型生成分析；如需解释，应明确区分事实与推断。详见[市场水位契约](waterlevel.md)。

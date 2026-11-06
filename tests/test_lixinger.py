@@ -105,6 +105,49 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(d['top10_weight'],'100');self.assertFalse(d['mapping_available'])
         with self.store.connection() as db:validate_backup(db)
         self.assertNotIn(SYNTHETIC,json.dumps(d));self.assertTrue(d['curve']);self.assertTrue(d['drawdown']['3']['partial'])
+    def test_volatility_follows_price_subscription_and_keeps_independent_snapshot(self):
+        start = '2026-09-01'
+        saved = self.r.collection.save('000905', ['price'], start, True, self.r.revision())
+        iid = saved['id']
+        preview = self.r.collection.preview('000905', ['price'], start)
+        self.assertTrue(any(e['endpoint'] == 'cn/index/volatility' for e in preview['endpoint_budget']))
+        plan = self.r.updates.plan(dict(scopes=['index_prices'], targets=[iid], full=True))
+        self.assertEqual([item['module'] for item in plan], ['index_info', 'price', 'volatility'])
+        for module in ('index_info', 'price', 'volatility'):
+            self.r.collection.collect(iid, module, '2026-11-04')
+        latest = self.r.collection.collect(iid, 'volatility', '2026-11-05')
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-10-20')
+        point = self.r.detail(iid, window=0)['daily_series'][-1]
+        self.assertEqual(point['date'], '2026-11-04')
+        self.assertEqual(point['volatility'], latest['rows'][-2]['value'])
+        with patch.object(self.r.access, 'request', return_value=[]), self.assertRaises(DomainError):
+            self.r.collection.collect(iid, 'volatility', '2026-11-05', full=True)
+        self.assertEqual(self.r.module(iid, 'volatility')['snapshot_id'], latest['snapshot_id'])
+        with self.store.connection() as db:
+            validate_backup(db)
+        self.r.collection.save('000905', ['valuations'], start, True, self.r.revision())
+        self.assertNotIn('volatility', [item['module'] for item in self.r.updates.plan(dict(scopes=['index_prices'], targets=[iid]))])
+
+    def test_full_valuation_rechecks_old_dates_and_preserves_snapshot_on_truncation(self):
+        self.r.collection.save('000905', ['valuations'], '2026-09-01', True, self.r.revision())
+        iid = 'csi:000905'
+        self.r.collection.collect(iid, 'index_info', '2026-11-04')
+        self.r.collection.collect(iid, 'valuations', '2026-11-04')
+        self.r.collection.collect(iid, 'valuations', '2026-11-05')
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-10-20')
+        old = self.r.module(iid, 'valuations')['snapshot_id']
+
+        def truncated(endpoint, params, **kwargs):
+            self.assertEqual(params['startDate'], '2026-09-01')
+            return transport(endpoint, dict(params, startDate='2026-10-20'))[1]['data']
+
+        with patch.object(self.r.access, 'request', side_effect=truncated), self.assertRaisesRegex(DomainError, '历史缩水'):
+            self.r.collection.collect(iid, 'valuations', '2026-11-05', full=True)
+        self.assertEqual(self.r.module(iid, 'valuations')['snapshot_id'], old)
+        result = self.r.collection.collect(iid, 'valuations', '2026-11-05', full=True)
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-09-01')
+        self.assertIn('revised', result['update_difference'])
+
     def test_condition_scenario_requires_explicit_uniform_change_and_same_day(self):
         iid=self.add()
         for module in lixinger.DEFAULT_MODULES:self.r.collection.collect(iid,module,'2026-11-04')
@@ -144,6 +187,37 @@ class CollectionTests(unittest.TestCase):
         for module in ('index_info','index_financials','market_activity'):self.r.collection.collect(iid,module,'2026-11-04')
         for module in ('index_financials','market_activity'):
             self.assertEqual(self.r.module(iid,'stage.'+module)['range_start'],'2010-06-01')
+
+    def test_existing_financial_history_is_backfilled_for_added_fields(self):
+        iid = self.add(['index_financials'])
+        self.r.collection.save('000905', ['index_financials'], '2026-01-01', True, self.r.revision())
+        self.r.collection.collect(iid, 'index_info', '2026-11-04')
+        old = self.r.collection.collect(iid, 'index_financials', '2026-11-04')
+        old.pop('metrics')
+        self.r.publish(iid, 'index_financials', old)
+        current = self.r.collection.collect(iid, 'index_financials', '2026-11-05')
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-01-01')
+        self.assertTrue(all('q.m.roe.t' in row['values'] for row in current['rows']))
+        self.assertTrue(all('q.bs.gw.t' in row['values'] for row in current['rows']))
+
+    def test_retired_tracking_fund_subscription_and_codes_are_hidden(self):
+        iid = self.add(['price'])
+        with self.r.transaction(bump=True) as db:
+            profile = self.r.profile(iid)
+            profile['subscription']['modules'].append('tracking_funds')
+            db.execute('UPDATE research_indices SET data=? WHERE id=?', (json.dumps(profile), iid))
+        archived = self.r.publish(iid, 'tracking_funds', dict(rows=[dict(stockCode='510001')], evidence=[]))
+        self.assertNotIn('tracking_funds', self.r.profile(iid)['subscription']['modules'])
+        self.assertNotIn('tracking_funds', self.r.detail(iid))
+        self.assertFalse(self.r.versions(iid)['items'])
+        with self.assertRaises(DomainError):
+            self.r.frozen(iid, archived)
+        with self.assertRaises(DomainError):
+            self.r.updates.plan(dict(scopes=['memberships'], resources=[
+                dict(scope='memberships', target=iid, module='tracking_funds'),
+            ]))
+        with self.store.connection() as db:
+            validate_backup(db)
 
     def test_checkpoint_resume_after_budget_failure_does_not_repeat_successful_shard(self):
         iid=self.add(['market_activity']);self.r.collection.collect(iid,'index_info','2026-11-04');s=self.r.access.status();self.r.access.configure(s['revision'],True,1)

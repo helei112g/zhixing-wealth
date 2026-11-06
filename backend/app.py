@@ -99,6 +99,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     app.state.research = research
     app.include_router(household_router)
     app.include_router(research_router(research))
+    from .waterlevel.api import router as waterlevel_router
+    app.include_router(waterlevel_router(research.waterlevel))
     app.add_middleware(GZipMiddleware, minimum_size=2000, compresslevel=4)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'] + (['testserver'] if testing else []))
 
@@ -194,17 +196,35 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                           'required_context': ['analysis_id', 'accept_fixed_basket_assumption'],
                                           'basis': 'same-date positive price and overall/mcw valuation; explicit uniform price and earnings/book-value scaling, fixed constituents/shares/weights/divisor; no total-return mapping'},
                              'revision_field':'expected_research_revision','request_id_required':False,'scope':'verified index registry including cross-market families; consult module_status; no name or prefix guessing',
-                             'windows':[0,3,5,10],'bases':['price','total_return'],'valuation_methods':['mcw','ew','median'],'legacy_read_methods':['overall','arithmetic'],
-                             'detail_fields':['scenario_metrics','scenario_assumption','module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources','collection','index_financials','market_activity','tracking_funds'],
+                             'windows':[0,3,5,10],'bases':['price','total_return'],'valuation_methods':['mcw','ew','ewpvo','median'],'legacy_read_methods':['overall','arithmetic'],
+                             'detail_fields':['scenario_metrics','scenario_assumption','module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources','collection','index_financials','market_activity'],
                              'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-studio-4','missing':'null with status; UI -'},
+                'market_waterlevel': {
+                    'read': '/api/market-waterlevel', 'facts': '/api/market-waterlevel/facts',
+                    'revision': '/api/market-waterlevel/revision',
+                    'methods': ['mcw', 'ew', 'ewpvo', 'median'], 'windows': [5, 10], 'chart_windows': [5, 10, 'all'],
+                    'comparisons': 'Lixinger A-share all index 1000002 PE/PB by selected method, complete-month means, normalized SSE/SZSE composites; bond inverse on PE',
+                    'settings': '/api/market-waterlevel/settings', 'settings_revision': 'expected_settings_revision',
+                    'updates': '/api/market-waterlevel/updates', 'update_scope': 'market',
+                    'update_fields': ['groups', 'indices', 'full', 'request_id'],
+                    'snapshots': '/api/market-waterlevel/snapshots',
+                    'freeze_context': ['analysis_id', 'method', 'asof', 'expected_research_revision'],
+                    'export': '/api/market-waterlevel/snapshots/{id}/export',
+                    'model_commentary': 'read versioned facts; UI and export contain deterministic rule summaries only',
+                    'score': 'fixed index mcw and full-market median factors; inverse sovereign yield and credit spread; category medians',
+                    'percentile': 'strict less-than, current included in denominator, complete 5/10 year span',
+                    'mean': '60/120 consecutive completed months, monthly last observation, no fill',
+                    'cadence': 'manual only',
+                    'historical_asof': 'truncate currently available revisions, not point-in-time knowledge',
+                },
                 'instrument_price_history':{'start':'six calendar months before earliest purchase; shared cache uses earliest purchase across portfolios','detail_field':'price_history_start','backfill':'next quote update backfills missing requested range once; subsequent updates are incremental'},
                 'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
                                  'job': '/api/data-updates/jobs/{job_id}', 'history':'/api/data-updates/history', 'history_limit':5, 'request_id_required': True,
-                                 'current_index': {'targets':'one exact index ID','scopes':['index_prices','memberships','valuations','financials'],'subscribed_modules_only':True,
+                                 'current_index': {'targets':'one exact index ID','full_reconciliation_field':'full','scopes':['index_prices','memberships','valuations','financials'],'subscribed_modules_only':True,
                                                    'cutoffs':'completed trading day for prices; today for published information; inspect actual module dates'},
-                                 'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials'],
+                                 'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials','market'],
                                  'retry':'unknown outcome: read back and preserve original request_id/payload; confirmed failed resource: submit a new request_id with the exact failed item.resource',
-                                 'execution':'while app runs only; restart resumes durable work unless --no-sync or read-only'},
+                                 'execution':'index library and market waterlevel require manual submission; only quote/FX tasks may resume on startup'},
                 'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',
                                        'field': 'capital_summary', 'cumulative_input': 'cost',
                                        'cumulative_input_basis': '历次买入及红利再投含费税成本累计；不扣卖出与分红，再投非新增个人本金',

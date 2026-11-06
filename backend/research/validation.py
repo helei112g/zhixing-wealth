@@ -5,7 +5,7 @@ from ..common import DomainError,day,dec
 from .metrics import clean_prices
 
 MODULES={'price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials'}
-MODULES.update(('index_info','index_financials','market_activity','tracking_funds','official_reference'))
+MODULES.update(('index_info','index_financials','market_activity','tracking_funds','official_reference','volatility'))
 HOSTS={'www.csindex.com.cn','oss-ch.csindex.com.cn','hq.cnindex.com.cn','www.cnindex.com.cn','legulegu.com','push2.eastmoney.com','datacenter-web.eastmoney.com','www.lixinger.com'}
 
 
@@ -29,6 +29,15 @@ def validate(module,value):
         if not effective or not value.get('rows'):raise DomainError('价格快照缺少有效行情')
         rows=clean_prices(value['rows'],effective)
         if len(rows)!=len(value['rows']) or rows[-1]['date']!=effective:raise DomainError('行情日期与快照截止不一致')
+    if module == 'volatility':
+        from .lixinger import VOLATILITY_DAYS
+        rows = value.get('rows', [])
+        dates = [str(day(row['date'])) for row in rows]
+        if (value.get('provider_id') != 'lixinger' or value.get('sample_days') != VOLATILITY_DAYS
+                or not dates or dates != sorted(set(dates)) or dates[-1] != effective):
+            raise DomainError('波动率快照的来源、样本或日期无效')
+        for row in rows:
+            dec(row['value'], nonnegative=True)
     if module in ('memberships','stock_valuations'):
         rows=value.get('rows',[])
         if len({r['code'] for r in rows})!=len(rows):raise DomainError('公司代码重复')

@@ -17,7 +17,7 @@ sys.path.insert(0,str(ROOT))
 from backend.environment import LedgerProcessLock, claim_environment, workspace_for
 from backend.deployment_guard import require_empty
 
-SCENARIOS = ('allocation_expenses','empty','research','acceptance','pagination','profit','holdings','holding_analysis','refinements','portfolio_layout','entry','reinvestment','dividend_review','notes','plan_forward','status_quotes','brand','family','settings','interface_refinements','cashflow_archive')
+SCENARIOS = ('allocation_expenses','empty','waterlevel','research','acceptance','pagination','profit','holdings','holding_analysis','refinements','portfolio_layout','entry','reinvestment','dividend_review','notes','plan_forward','status_quotes','brand','family','settings','interface_refinements','cashflow_archive')
 
 
 def run(command, **kwargs):
@@ -53,6 +53,8 @@ def main():
                      '--runtime-dir',str(runtime),'--port',str(args.port),'--no-open','--no-sync']
             if name == 'research':
                 command=[sys.executable,'-c',"import runpy,sys;from tests.research_fixtures import install_providers;install_providers();sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')",*command[1:]]
+            if name == 'waterlevel':
+                command=[sys.executable,'-c',"import runpy,sys;from tests.waterlevel_fixtures import install_providers;install_providers();sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')",*command[1:]]
             if name == 'empty':
                 config=base/'config.toml'
                 config.write_text(f'environment = "test"\nport = {args.port}\ndata_dir = "browser-test"\nruntime_dir = ".runtime"\nauto_sync = true\n')

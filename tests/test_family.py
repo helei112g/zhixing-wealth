@@ -163,6 +163,8 @@ class FamilyTests(unittest.TestCase):
             for table in reversed(TABLES):db.execute('DROP TABLE '+table)
             for table in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):
                 db.execute('DROP TABLE IF EXISTS '+table)
+            from tests.waterlevel_fixtures import drop_tables
+            drop_tables(db)
             db.execute('DROP TABLE IF EXISTS family_expense_plans'); db.execute('DROP TABLE IF EXISTS family_expense_months')
             db.execute("UPDATE meta SET value='3' WHERE key='schema'");db.execute("UPDATE alembic_version SET version_num='0002_fx_daily'");db.commit()
         self.assertTrue(migrate(self.store.path));self.assertFalse(migrate(self.store.path));self.assertEqual(self.store.state()['portfolios'],before)
@@ -371,6 +373,8 @@ class FamilyTests(unittest.TestCase):
             db.execute('DROP TABLE family_income')
             for table in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):
                 db.execute('DROP TABLE IF EXISTS '+table)
+            from tests.waterlevel_fixtures import drop_tables
+            drop_tables(db)
             db.execute('DROP TABLE IF EXISTS family_expense_plans'); db.execute('DROP TABLE IF EXISTS family_expense_months')
             db.execute("UPDATE meta SET value='4' WHERE key='schema'");db.execute("UPDATE alembic_version SET version_num='0003_family'");db.commit()
         self.assertTrue(migrate(path));self.assertFalse(migrate(path))

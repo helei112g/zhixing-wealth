@@ -7,9 +7,10 @@ class ResolveRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     code:str=Field(min_length=1,max_length=16)
 
-Scope=Literal['quotes','fx','index_prices','memberships','valuations','financials']
+Scope=Literal['quotes','fx','index_prices','memberships','valuations','financials','market']
+PolicyScope=Literal['quotes','fx','index_prices','memberships','valuations','financials']
 Basis=Literal['price','total_return']
-Method=Literal['overall','median','arithmetic','mcw','ew']
+Method=Literal['overall','median','arithmetic','mcw','ew','ewpvo']
 Part=Literal['series','constituents','financials','sources']
 
 
@@ -29,17 +30,18 @@ class QuoteResource(BaseModel):
 
 class IndexResource(BaseModel):
     model_config=ConfigDict(extra='forbid')
+    full:StrictBool=False
     target:str=Field(description='研究列表返回的正式指数ID')
 
 
 class IndexPriceResource(IndexResource):
     scope:Literal['index_prices']
-    module:Literal['index_info','price','total_return']
+    module:Literal['index_info','price','total_return','volatility']
 
 
 class MembershipResource(IndexResource):
     scope:Literal['memberships']
-    module:Literal['memberships','historical_memberships','tracking_funds']
+    module:Literal['memberships','historical_memberships']
 
 
 class ValuationResource(IndexResource):
@@ -52,11 +54,18 @@ class FinancialResource(IndexResource):
     module:Literal['financials','historical_financials','index_financials']
 
 
-UpdateResource=Annotated[FxResource|QuoteResource|IndexPriceResource|MembershipResource|ValuationResource|FinancialResource,Field(discriminator='scope')]
+class MarketResource(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    scope: Literal['market']
+    full: StrictBool = False
+    group: Literal['full_market','composites','calendar','china_rates','us_rates','credit','repo','pmi','prices','money','social_financing']
+
+
+UpdateResource=Annotated[FxResource|QuoteResource|IndexPriceResource|MembershipResource|ValuationResource|FinancialResource|MarketResource,Field(discriminator='scope')]
 
 class Policy(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    scope:Scope
+    scope:PolicyScope
     enabled:StrictBool
     cadence:Literal['daily','trade_day','weekly','manual']
     time:str=Field(pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
@@ -69,8 +78,9 @@ class SettingsRequest(BaseModel):
 
 class UpdateRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    scopes:list[Scope]=Field(default_factory=lambda:['quotes','fx','index_prices','memberships','valuations','financials'],min_length=1,max_length=6)
+    scopes:list[Scope]=Field(default_factory=lambda:['quotes','fx','index_prices','memberships','valuations','financials'],min_length=1,max_length=7)
     request_id:str=Field(min_length=1,max_length=160)
+    full:StrictBool=False
     targets:list[str]|None=Field(None,min_length=1,max_length=100)
     resources:list[UpdateResource]|None=Field(None,min_length=1,max_length=200,description='精确更新或重试范围；每项scope须属于scopes，重试保持失败项原resource')
 
@@ -157,7 +167,7 @@ def router(service):
     @api.put('/api/research/collection')
     def collection_save(body:CollectionSave):return service.collection.save(body.code,body.modules,body.history_start,body.enabled,body.expected_research_revision)
     @api.get('/api/settings/lixinger')
-    def access_status():return service.access.status()
+    def access_status():return dict(service.access.status(), automatic=False)
     @api.put('/api/settings/lixinger/token',summary='仅由用户在本机页面输入凭据；保存到本地文件，响应不返回Token')
     def access_token(body:TokenSave):
         if not service.writes_allowed():raise DomainError('系统处于只读状态')
@@ -165,7 +175,7 @@ def router(service):
     @api.put('/api/settings/lixinger')
     def access_settings(body:AccessSettings):
         if not service.writes_allowed():raise DomainError('系统处于只读状态')
-        return service.access.configure(body.expected_revision,body.enabled,body.limit,body.automatic,body.clear_block)
+        return service.access.configure(body.expected_revision,body.enabled,body.limit,False,body.clear_block)
     @api.get('/api/research/indices/{index_id}/studio')
     def studio(index_id:str,basis:Basis='price',method:Method='mcw',window:int=Query(3),metric:Literal['pe','pb','ps','dividend_yield']='pe'):
         from .analytics import studio_analysis

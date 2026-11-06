@@ -1,0 +1,23 @@
+.waterlevel-view-options,.waterlevel-settings{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+.waterlevel-view-options{justify-content:space-between;margin-top:18px}.waterlevel-view-options .field{margin:0;min-width:160px}
+.waterlevel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.waterlevel-grid>.panel{margin:0}
+.waterlevel-scores{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0 12px}
+.waterlevel-score{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:20px}
+.waterlevel-score>span,.waterlevel-score>small{display:block;color:var(--muted);font-size:12px}
+.waterlevel-score>strong{display:inline-block;font-size:34px;line-height:1.6;font-variant-numeric:tabular-nums;margin-right:10px}.waterlevel-score>b{font-size:12px;font-weight:500}
+.waterlevel-meter{height:5px;background:linear-gradient(90deg,#d8e9e4,#e9e6d1,#ead8d6);position:relative;margin:12px 0}
+.waterlevel-meter i{position:absolute;height:13px;top:-4px;width:3px;background:#394c5a;transform:translateX(-50%);border-radius:2px}
+.waterlevel-current{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}.waterlevel-current strong{font-size:25px;font-variant-numeric:tabular-nums}.waterlevel-current>span{font-size:12px;color:var(--muted)}
+.waterlevel-current small{width:100%;color:var(--muted)}.waterlevel-chart{margin:12px -8px}.waterlevel-chart-empty{height:180px;display:grid;place-items:center;color:var(--muted);font-size:13px;background:var(--bg);border-radius:8px;margin:15px 0}
+.waterlevel-window-values{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line);gap:14px;padding-top:12px;font-size:12px}
+.waterlevel-window-values>div{display:flex;flex-direction:column;gap:4px}.waterlevel-window-values small{color:var(--muted)}.waterlevel-window-values b{font-weight:500}
+.waterlevel-boundaries{margin:22px 0}.waterlevel-page summary{cursor:pointer}.waterlevel-page details ul{padding-left:22px;color:var(--muted);font-size:13px}
+.waterlevel-legend{display:flex;flex-wrap:wrap;gap:18px;font-size:12px;color:#365f91}.waterlevel-legend span:nth-child(2){color:#b88453}.waterlevel-legend span:nth-child(3){color:#268979}
+.waterlevel-page .instrument-tabs{overflow-x:auto}.waterlevel-page .instrument-tabs button{white-space:nowrap;flex:none}
+.waterlevel-archive{margin:20px 0}.waterlevel-archive .field{margin:0;max-width:100%}.waterlevel-archive select{max-width:100%}
+@media(max-width:1100px){.waterlevel-scores{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.waterlevel-grid{grid-template-columns:1fr}.waterlevel-score{padding:14px}.waterlevel-score>strong{font-size:28px}.waterlevel-page .segmented{flex-wrap:wrap}}
+
+.waterlevel-zoom-chart {user-select:none; cursor:crosshair}
+.waterlevel-zoom-controls {display:flex; align-items:center; justify-content:space-between; min-height:30px}
+.waterlevel-zoom-controls button {cursor:pointer}

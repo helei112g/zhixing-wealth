@@ -296,6 +296,20 @@ def main():
     cashflow=client.cashflow(2023)
     check(cashflow['rows'][0]['planned']=='3500' and cashflow['rows'][0]['surplus']=='8000' and abs(float(cashflow['summary']['savings_rate'])-2/3)<1e-12,'AI cashflow uses actual total once and annual matched-month savings')
     check(client.request('/api/portfolios/'+plan_portfolio['id']+'/dashboard?view=summary')['cash_total']=='100000','AI plans and expenses never mutate portfolio cash')
+    before_market = revision()
+    jobs = client.request('/api/data-updates/jobs')
+    market = client.market_waterlevel(method='median')
+    facts = client.market_waterlevel(method='median', facts=True)
+    check(cap['market_waterlevel']['chart_windows']==[5,10,'all'], 'AI discovers market chart windows independently from scoring windows')
+    check(market['analysis_id']==facts['analysis_id'] and market['scores']==facts['scores'], 'AI facts and market page share one analysis and score')
+    check(set(facts['comparisons'])=={'pe','pb'} and all('chart' not in value for value in facts['comparisons'].values()),
+          'AI comparison facts preserve definitions without chart arrays')
+    check(client.request('/api/data-updates/jobs')==jobs, 'AI market reads never collect external data')
+    frozen = client.write('/api/market-waterlevel/snapshots',dict(analysis_id=market['analysis_id'],method=market['method'],
+        asof=market['asof'],expected_research_revision=market['research_revision']),'POST')
+    check(client.request('/api/market-waterlevel/snapshots/'+frozen['snapshot_id'])['data']==market,
+          'AI freezes and reads back the exact market analysis including comparison curves')
+    check(revision()==before_market, 'AI market reads and archives preserve ledger revision')
     (output/'ai-passed.json').write_text(json.dumps({'checks':len(checks),'passed':checks},ensure_ascii=False,indent=2))
 
 

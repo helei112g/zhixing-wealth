@@ -18,7 +18,8 @@ ENDPOINTS = ('cn/index', 'cn/index/candlestick', 'cn/index/fundamental',
              'cn/index/constituents', 'cn/index/constituent-weightings',
              'cn/index/fs/hybrid', 'cn/index/fs/non_financial', 'cn/index/fs/bank', 'cn/index/fs/security',
              'cn/index/margin-trading-and-securities-lending', 'cn/index/mutual-market',
-             'cn/index/tracking-fund', 'cn/index/volatility')
+             'cn/index/volatility', 'cn/index/drawdown')
+BUDGET_ENDPOINTS = (*ENDPOINTS, 'cn/index/tracking-fund')
 ROOT_URL = 'https://open.lixinger.com/api/'
 
 
@@ -85,8 +86,8 @@ class LocalAccess:
             if set(value)-{'revision','enabled','automatic','limit','counts','blocked','mode','last_attempt'}: raise ValueError()
             if type(value['enabled']) is not bool or type(value['automatic']) is not bool or value['mode'] != 'trial': raise ValueError()
             if not isinstance(value['counts'],dict) or not isinstance(value['blocked'],dict): raise ValueError()
-            if any(k not in ENDPOINTS or type(v) is not int or v < 0 for k, v in value['counts'].items()): raise ValueError()
-            if any(k not in ENDPOINTS or v not in ('permission_or_quota','provider_rejected') for k,v in value['blocked'].items()): raise ValueError()
+            if any(k not in BUDGET_ENDPOINTS or type(v) is not int or v < 0 for k, v in value['counts'].items()): raise ValueError()
+            if any(k not in BUDGET_ENDPOINTS or v not in ('permission_or_quota','provider_rejected') for k,v in value['blocked'].items()): raise ValueError()
             if 'last_attempt' in value and (not isinstance(value['last_attempt'],str) or not re.fullmatch(r'[0-9T:+. -]{19,40}',value['last_attempt'])): raise ValueError()
             return value
         except (ValueError, KeyError, TypeError): raise DomainError('调用计数文件损坏；已阻断真实采集，禁止自动重置额度') from None

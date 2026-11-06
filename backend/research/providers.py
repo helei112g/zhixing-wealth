@@ -17,6 +17,8 @@ CATALOG = [
     dict(code='H11136', return_code='H01136', name='中国互联网', provider='csi', kind='行业', launch='2011-09-20', exposure='overseas'),
     dict(code='000300', return_code='H00300', name='沪深300', provider='csi', kind='宽基', launch='2005-04-08'),
     dict(code='000905', return_code='H00905', name='中证500', provider='csi', kind='宽基', launch='2007-01-15'),
+    dict(code='000852', return_code='H00852', name='中证1000', provider='csi', kind='宽基', launch='2014-10-17'),
+    dict(code='930050', return_code='930050CNY010', name='中证A50', provider='csi', kind='宽基', launch='2024-01-02'),
     dict(code='000985', return_code='H00985', name='中证全指', provider='csi', kind='宽基', launch='2011-08-02'),
     dict(code='399006', return_code='399606', name='创业板指', provider='cni', kind='宽基', launch='2010-06-01',return_launch='2010-06-01',identity_source='https://www.cnindex.com.cn/zh_information/notices_news/2010/201206/P020191213351661589949.pdf'),
     dict(code='000922', return_code='H00922', name='中证红利', provider='csi', kind='策略', launch='2008-05-26'),
@@ -40,9 +42,9 @@ def identity(code):
 
 def module_capabilities(profile):
     from .lixinger import MODULES
-    result={m:dict(supported=True,reason=None) for m in MODULES}
+    result={m:dict(supported=True,reason=None) for m in (*MODULES, 'volatility')}
     if profile.get('exposure')=='overseas':
-        for m in MODULES:
+        for m in result:
             if m not in ('price','total_return','memberships'):
                 result[m]=dict(supported=False,reason='跨市场理杏仁身份、权限及币种未核验；已有官方行情与当前成分保留')
     return result

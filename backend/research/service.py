@@ -11,7 +11,7 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from . import providers,price_chunks
 from .snapshots import encode,decode
 from .validation import validate as validate_snapshot,public_url
-from .updates import UpdateJobs,SCOPES,MODULES
+from .updates import AUTOMATIC_SCOPES, UpdateJobs,SCOPES,MODULES
 from .metrics import WINDOWS, METHOD_VERSION, clean_prices, drawdown, valuation, financial_totals,price_changes,moving_averages
 from .lixinger_access import LocalAccess
 from .collection import Collection, subscription
@@ -26,6 +26,8 @@ class ResearchService:
         self.access = LocalAccess(store.directory)
         self.collection = Collection(self)
         self.updates = UpdateJobs(self)
+        from ..waterlevel.service import WaterlevelService
+        self.waterlevel = WaterlevelService(self)
         self.worker_lock = self.updates.worker_lock
         self.cache = OrderedDict()
 
@@ -56,7 +58,12 @@ class ResearchService:
         return dict(profile=providers.identity(code), research_revision=self.revision())
 
     def profiles(self):
-        with self.store.connection() as db: return [json.loads(r[0]) for r in db.execute('SELECT data FROM research_indices ORDER BY id')]
+        with self.store.connection() as db:
+            profiles = [json.loads(row[0]) for row in db.execute('SELECT data FROM research_indices ORDER BY id')]
+        for profile in profiles:
+            if profile.get('subscription'):
+                profile['subscription'] = subscription(profile)
+        return profiles
 
     def profile(self, iid):
         p=next((p for p in self.profiles() if p['id']==iid),None)
@@ -66,13 +73,13 @@ class ResearchService:
     def versions(self,iid):
         self.profile(iid)
         with self.store.connection() as db:
-            rows=db.execute("SELECT id,module,created_at,sha256 FROM research_snapshots WHERE index_id=? AND module NOT LIKE 'stage.%' ORDER BY rowid DESC LIMIT 100",(iid,)).fetchall()
+            rows=db.execute("SELECT id,module,created_at,sha256 FROM research_snapshots WHERE index_id=? AND module NOT LIKE 'stage.%' AND module <> 'tracking_funds' ORDER BY rowid DESC LIMIT 100",(iid,)).fetchall()
         return dict(items=[dict(id=r[0],module=r[1],created_at=r[2],sha256=r[3]) for r in rows],limit=100)
 
     def frozen(self,iid,sid):
         self.profile(iid)
         with self.store.connection() as db:
-            row=db.execute("SELECT module,created_at,sha256,data FROM research_snapshots WHERE index_id=? AND id=? AND module NOT LIKE 'stage.%'",(iid,sid)).fetchone()
+            row=db.execute("SELECT module,created_at,sha256,data FROM research_snapshots WHERE index_id=? AND id=? AND module NOT LIKE 'stage.%' AND module <> 'tracking_funds'",(iid,sid)).fetchone()
             if not row:raise DomainError('该指数的来源版本不存在')
             value=decode(row[3],row[2])
             if row[0] in ('price','total_return'):value=price_chunks.expand(db,value)
@@ -144,7 +151,7 @@ class ResearchService:
         return sid
 
     def detail(self, iid, basis='price', method='overall', window=3, *, summary=False):
-        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
+        if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew','ewpvo') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
         with self.store.lock:
             p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff()
             recent=[] if summary else self.updates.jobs()
@@ -153,7 +160,7 @@ class ResearchService:
             if key in self.cache:
                 self.cache.move_to_end(key)
                 return deepcopy(self.cache[key])
-            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials','index_info','index_financials','market_activity','tracking_funds','official_reference')
+            names=('price','valuations') if summary else ('price','total_return','valuations','memberships','stock_valuations','financials','historical_memberships','historical_financials','index_info','index_financials','market_activity','official_reference','volatility')
             resources={name:self.module(iid,name) for name in names}
         price=resources[basis];v=resources['valuations'];members=resources.get('memberships');stocks=resources.get('stock_valuations');finance=resources.get('financials')
         asof=price['effective_date'] if price else providers.cutoff()
@@ -196,9 +203,14 @@ class ResearchService:
             last=next((i for job in recent for i in reversed(job.get('items',[])) if i.get('target')==iid and i.get('module')==module),None)
             module_status[module]=dict(supported=capability['supported'],status='error' if last and last.get('status')=='error' else 'available' if snapshot else 'unsupported' if not capability['supported'] else 'missing',
                                        reason=capability['reason'] or (last.get('error') if last else None), date=snapshot.get('effective_date') if snapshot else None)
-        result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=p['return_code'] if basis=='total_return' else p['code'],asof=asof,latest=prices[-1] if prices else None,
+        series_code=p['return_code'] if basis=='total_return' else p['code']
+        daily_series = moving_averages(prices, window, (price or {}).get('missing_dates', []))
+        volatility = {row['date']: row['value'] for row in (resources['volatility'] or {}).get('rows', [])}
+        for row in daily_series:
+            row['volatility'] = volatility.get(row['date'])
+        result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=series_code,asof=asof,latest=prices[-1] if prices else None,
             research_revision=revision,method=method,window=window,method_version=METHOD_VERSION,analysis_id=hashlib.sha256(json_dumps([m['snapshot_id'] if m else None for m in resources.values()]+[basis,method,METHOD_VERSION]).encode()).hexdigest(),
-            valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=moving_averages(prices,window,(price or {}).get('missing_dates',[])),changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
+            valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=daily_series,changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
             sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('mapping_verified')) and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb'))),
             scenario_metrics={m:bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('provider_id')=='lixinger') and valuations.get(m,{}).get('date')==asof and dec(valuations.get(m,{}).get('current') or '0')>0) for m in ('pe','pb')},
@@ -206,7 +218,7 @@ class ResearchService:
             collection=self.collection.status(iid),official_reference=resources.get('official_reference'),source_coverage=(price or {}).get('coverage'),memberships_complete=(members or {}).get('weights_complete',True),
             historical_memberships=(resources.get('historical_memberships') or {}).get('baskets',[]),membership_comparison_coverage=(resources.get('historical_memberships') or {}).get('comparison_coverage',[]),index_info=(resources.get('index_info') or {}).get('info'),
             index_financials=(resources.get('index_financials') or {}).get('rows',[]),fundamental_activity=(v or {}).get('activity_rows',[]),
-            market_activity=(resources.get('market_activity') or {}).get('series',{}),tracking_funds=(resources.get('tracking_funds') or {}).get('rows',[])))
+            market_activity=(resources.get('market_activity') or {}).get('series',{})))
         return self._remember(key,result,revision)
 
     def _remember(self,key,result,revision):
@@ -264,7 +276,8 @@ class ResearchService:
             saved={r[0]:json.loads(r[1]) for r in db.execute('SELECT id,data FROM data_update_policies')}
             row=db.execute("SELECT value FROM research_meta WHERE key='settings_revision'").fetchone();revision=int(row[0]) if row else 0
         defaults=[dict(scope=scope,enabled=True,cadence='daily',time='23:30',timezone='Asia/Shanghai') for scope in SCOPES]
-        return dict(policies=[saved.get(p['scope'],p) for p in defaults],settings_revision=revision)
+        policies = [saved.get(p['scope'], p) for p in defaults]
+        return dict(policies=[manual_policy(p) for p in policies], settings_revision=revision)
 
     def save_settings(self, body):
         rows=body.get('policies');revision=body.get('expected_settings_revision')
@@ -276,7 +289,7 @@ class ResearchService:
             try:datetime.strptime(r['time'],'%H:%M')
             except (ValueError,KeyError,TypeError):raise DomainError('更新时刻应为HH:MM') from None
         with self.transaction('settings_revision',revision,bump=True) as db:
-            for r in rows:db.execute('INSERT INTO data_update_policies VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',(r['scope'],json_dumps(r)))
+            for r in rows:db.execute('INSERT INTO data_update_policies VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',(r['scope'],json_dumps(manual_policy(r))))
         return self.settings()
 
     def updating(self):return self.updates.active()
@@ -287,16 +300,29 @@ class ResearchService:
     def shutdown(self):return self.updates.shutdown()
 
 
+def manual_policy(policy):
+    if policy['scope'] in AUTOMATIC_SCOPES:
+        return policy
+    return dict(policy, enabled=False, cadence='manual')
+
+
 def validate_structure(db):
     names={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if not TABLES.issubset(names):raise DomainError('研究或调度数据表缺失')
     for key,value in db.execute('SELECT key,value FROM research_meta'):
         if key not in ('revision','settings_revision') or not value.isdigit():raise DomainError('研究版本元数据无效')
     if db.execute('SELECT 1 FROM research_heads h LEFT JOIN research_snapshots s ON s.id=h.snapshot_id WHERE s.id IS NULL OR h.index_id<>s.index_id OR h.module<>s.module LIMIT 1').fetchone():raise DomainError('研究快照引用不完整')
+    schema = int(db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0])
+    if schema >= 12:
+        from ..waterlevel.validation import structure
+        structure(db)
 
 
 def validate_backup(db):
     validate_structure(db)
+    if int(db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]) >= 12:
+        from ..waterlevel.validation import backup
+        backup(db)
     for r in db.execute('SELECT id,data FROM research_indices'):
         p=json.loads(r[1]);known=providers.identity(p['code'])
         if r[0]!=p.get('id') or r[0]!=known['provider']+':'+known['code'] or p['return_code']!=known['return_code']:raise DomainError('指数家族身份或配对无效')

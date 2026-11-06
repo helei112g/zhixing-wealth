@@ -19,6 +19,9 @@ def transport(endpoint, params):
             row=dict(date=cursor.isoformat()+'T00:00:00+08:00')
             if endpoint.endswith('/candlestick'):
                 row['close']=price*(1.5 if params['type']=='total_return' else 1);rows.append(row)
+            elif endpoint.endswith('/volatility'):
+                assert params['volatilityDays'] == lixinger.VOLATILITY_DAYS
+                rows.append(dict(row, value=(150+n%125)/1000))
             elif endpoint.endswith('/fundamental'):
                 row['stockCode']=code
                 for k in params['metricsList']:
@@ -31,11 +34,13 @@ def transport(endpoint, params):
                     if cursor.day!=calendar.monthrange(cursor.year,cursor.month)[1]:cursor+=timedelta(days=1);continue
                     row.update(stockCode=code,currency='CNY',reportDate=str(cursor+timedelta(days=1)),reportType='synthetic',q={})
                     for k in params['metricsList']:
-                        _,table,field,expr=k.split('.');row['q'].setdefault(table,{}).setdefault(field,{})[expr]=.12 if expr.endswith('y2y') else 1e9+n*1000
+                        _,table,field,expr=k.split('.');row['q'].setdefault(table,{}).setdefault(field,{})[expr]=.10 if table=='m' or field.endswith('_r') else .12 if expr.endswith('y2y') else 1e9+n*1000
                     rows.append(row)
             elif endpoint.endswith('/mutual-market'):
-                if cursor.month in (3,6,9,12) and cursor.day==calendar.monthrange(cursor.year,cursor.month)[1]:rows.append(dict(row,shareholdingsMoney=1e8+n*1000,netBuyAmount=1000000))
-            else:rows.append(dict(row,financingBalance=1e8+n*1000,financingNetPurchaseAmount=10000,financingPurchaseAmount=12000,financingRepaymentAmount=2000))
+                if cursor.month in (3,6,9,12) and cursor.day==calendar.monthrange(cursor.year,cursor.month)[1]:rows.append(dict(row,shareholdingsMoney=1e8+n*1000,netBuyAmount=1000000,shareholdingsMoneyToMarketCap=.025))
+            else:rows.append(dict(row,financingBalance=1e8+n*1000,financingNetPurchaseAmount=10000,financingPurchaseAmount=12000,financingRepaymentAmount=2000,financingBalanceToMarketCap=.014,
+                                  securitiesBalance=1e7+n*100,securitiesSellAmount=200,securitiesRepaymentAmount=80,
+                                  securitiesNetSellAmount=120,securitiesBalanceToMarketCap=.002))
         cursor+=timedelta(days=1)
     return 200,dict(code=1,data=rows)
 

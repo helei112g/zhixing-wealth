@@ -47,7 +47,7 @@ def main():
         if value['state'] not in ('pending','running'):break
         time.sleep(.05)
     check(value['state']=='complete','explicit subscribed refresh completes')
-    check(len(value['resources'])==5 and all(r['target']==saved['id'] for r in value['resources']),'refresh limited to exact subscribed index modules')
+    check(len(value['resources'])==6 and all(r['target']==saved['id'] for r in value['resources']),'refresh limited to exact subscribed index modules')
     check(c.connect()['revision']==before,'research does not change ledger revision')
     try:c.write('/api/settings/lixinger/token',{'token':'never-sent'},'PUT')
     except ValueError:check(True,'AI client does not accept credential mutation')

@@ -80,22 +80,40 @@ def valuation_curve(series, prices, window):
     return sample(out)
 
 
-def flow_months(rows, prices, stock_field, flow_field, quarterly=False, missing_dates=()):
+def flow_months(rows, prices, stock_field, flow_field, quarterly=False, missing_dates=(), *,
+                purchase_field=None, repayment_field=None, ratio_field=None):
     groups=defaultdict(list)
     for r in sorted(rows,key=lambda r:r['date']): groups[r['date'][:7]].append(r)
-    output=[]; previous=None; calendar={r['date'] for r in prices}
-    for month,values in sorted(groups.items()):
-        stock=next((r for r in reversed(values) if r.get(stock_field) is not None),None)
-        known=[r for r in values if r.get(flow_field) is not None] if flow_field else []
-        expected={d for d in calendar if d.startswith(month)}
-        complete=bool(expected and expected<={r['date'] for r in known} and month<max(calendar)[:7]) if calendar else False
-        if any(d.startswith(month) for d in missing_dates): complete=False
-        if quarterly: complete=len(known)==1
-        total=sum((dec(r[flow_field]) for r in known),Decimal(0)) if complete and known else None
-        value=stock.get(stock_field) if stock else None
-        change=ds(dec(value)-dec(previous)) if value is not None and previous is not None else None
-        output.append(dict(date=stock['date'] if stock else values[-1]['date'],stock=value,flow=ds(total) if total is not None else None,change=change,complete=complete,observations=len(known)))
-        previous=value
+    output = []
+    previous = None
+    calendar = defaultdict(set)
+    for row in prices:
+        calendar[row['date'][:7]].add(row['date'])
+    last_month = max(calendar, default='')
+    gap_months = {d[:7] for d in missing_dates}
+    for month, values in sorted(groups.items()):
+        stock = next((row for row in reversed(values) if row.get(stock_field) is not None), None)
+        expected = calendar.get(month)
+        def total(field):
+            known = [row for row in values if row.get(field) is not None] if field else []
+            complete = len(known) == 1 if quarterly else bool(
+                expected and month < last_month and month not in gap_months and expected <= {row['date'] for row in known})
+            amount = ds(sum((dec(row[field]) for row in known), Decimal(0))) if complete else None
+            return amount, complete, len(known)
+
+        flow, complete, count = total(flow_field)
+        value = stock[stock_field] if stock else None
+        change = ds(dec(value) - dec(previous)) if value is not None and previous is not None else None
+        observation = dict(date=stock['date'] if stock else values[-1]['date'], stock=value, flow=flow,
+                           change=change, complete=complete, observations=count)
+        if purchase_field:
+            observation['purchase'] = total(purchase_field)[0]
+        if repayment_field:
+            observation['repayment'] = total(repayment_field)[0]
+        if ratio_field:
+            observation['ratio'] = stock.get(ratio_field) if stock else None
+        output.append(observation)
+        previous = value
     return output
 
 
@@ -113,11 +131,24 @@ def studio_analysis(service,iid,basis,method,window,metric):
         avg=sum(changes)/len(changes); vol=ds(dec(str(sqrt(sum((r-avg)**2 for r in changes)/(len(changes)-1))*sqrt(250))))
     weighted=d['memberships_complete'] and bool(d['companies']) and all(r.get('weight') is not None for r in d['companies'])
     hhi=sum((dec(r['weight'])/100)**2 for r in d['companies']) if weighted else None
-    funds=dict(etf=flow_months(fundamental,price_rows,'fet_as_ma','fet_snif_ma',missing_dates=price.get('missing_dates',[])),
-               margin=flow_months(activity.get('margin',[]),price_rows,'financingBalance','financingNetPurchaseAmount',missing_dates=price.get('missing_dates',[])),
-               northbound=flow_months([r for r in activity.get('northbound',[]) if r['date']>='2024-08-16'],price_rows,'shareholdingsMoney','netBuyAmount',True),
-               northbound_daily=flow_months([r for r in activity.get('northbound',[]) if r['date']<'2024-08-16'],price_rows,'shareholdingsMoney','netBuyAmount'),
-               capitalization={k:flow_months(fundamental,price_rows,k,None) for k in ('mc','cmc','ecmc')})
+    missing = price.get('missing_dates', [])
+    margin = activity.get('margin', [])
+    northbound = activity.get('northbound', [])
+    north_args = ('shareholdingsMoney', 'netBuyAmount')
+    funds = dict(
+        etf=flow_months(fundamental, price_rows, 'fet_as_ma', 'fet_snif_ma', missing_dates=missing),
+        margin=flow_months(margin, price_rows, 'financingBalance', 'financingNetPurchaseAmount', missing_dates=missing,
+                          purchase_field='financingPurchaseAmount', repayment_field='financingRepaymentAmount',
+                          ratio_field='financingBalanceToMarketCap'),
+        securities=flow_months(margin, price_rows, 'securitiesBalance', 'securitiesNetSellAmount', missing_dates=missing,
+                              purchase_field='securitiesSellAmount', repayment_field='securitiesRepaymentAmount',
+                              ratio_field='securitiesBalanceToMarketCap'),
+        northbound=flow_months([r for r in northbound if r['date'] >= '2024-08-16'], price_rows, *north_args,
+                              quarterly=True, ratio_field='shareholdingsMoneyToMarketCap'),
+        northbound_daily=flow_months([r for r in northbound if r['date'] < '2024-08-16'], price_rows, *north_args,
+                                    missing_dates=missing, ratio_field='shareholdingsMoneyToMarketCap'),
+        capitalization={k: flow_months(fundamental, price_rows, k, None) for k in ('mc', 'cmc', 'ecmc')},
+    )
     return wire(dict(analysis_id=d['analysis_id'],research_revision=d['research_revision'],metric=metric,method=method,window=window,basis=basis,
                      ranks=ranks(series,allow_zero=metric=='dividend_yield'),valuation_curve=valuation_curve(series,price_rows,window),
                      funds=funds,

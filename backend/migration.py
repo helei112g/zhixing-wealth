@@ -9,8 +9,8 @@ from sqlalchemy.engine import URL
 
 from .common import DomainError
 
-SCHEMA = 11
-HEAD = '0010_monthly_expenses'
+SCHEMA = 12
+HEAD = '0011_market_waterlevel'
 ROOT = Path(__file__).resolve().parents[1]
 
 

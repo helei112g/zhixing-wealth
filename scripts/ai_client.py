@@ -115,9 +115,10 @@ class Client:
                  method in ('PUT', 'DELETE') and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes/[^/]+', path))
         assets = method == 'POST' and path == '/api/family/commands'
         revision_field='expected_revision'
-        research=method=='PUT' and path=='/api/research/collection'
-        settings=method=='PUT' and path=='/api/settings/data-updates'
-        update=method=='POST' and path=='/api/data-updates/run'
+        research=(method=='PUT' and path=='/api/research/collection' or
+                  method=='POST' and path=='/api/market-waterlevel/snapshots')
+        settings=method=='PUT' and path in ('/api/settings/data-updates','/api/market-waterlevel/settings')
+        update=method=='POST' and path in ('/api/data-updates/run','/api/market-waterlevel/updates')
         if research:revision_field='expected_research_revision'
         if settings:revision_field='expected_settings_revision'
         if not (core or notes or assets or research or settings or update):raise ValueError('Use a documented mutation')
@@ -145,6 +146,12 @@ class Client:
 
     def research_studio(self,index_id,**options):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/studio?'+urllib.parse.urlencode(options))
+
+    def market_waterlevel(self, method='mcw', asof=None, facts=False):
+        params = dict(method=method)
+        if asof is not None:
+            params['asof'] = asof
+        return self.request('/api/market-waterlevel' + ('/facts' if facts else '') + '?' + urllib.parse.urlencode(params))
 
     def research_index(self,index_id,basis='price',window=3,method='mcw'):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))

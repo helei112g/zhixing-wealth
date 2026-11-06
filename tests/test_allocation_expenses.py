@@ -213,6 +213,8 @@ class AllocationExpenseTests(unittest.TestCase):
     def test_schema10_upgrade_preserves_every_existing_table_and_revision(self):
         self.income();self.purchase()
         with self.store.connection() as db:
+            from tests.waterlevel_fixtures import drop_tables
+            drop_tables(db)
             db.execute('DROP TABLE family_expense_plans');db.execute('DROP TABLE family_expense_months')
             db.execute("UPDATE meta SET value='10' WHERE key='schema'")
             db.execute("UPDATE alembic_version SET version_num='0009_index_research'");db.commit()

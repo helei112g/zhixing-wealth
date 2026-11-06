@@ -121,3 +121,13 @@ Token只能由用户在本机「全局设置 → 理杏仁数据源」输入。A
 详情与快照历史读取不触发网络；只有显式更新或已启用的应用定时策略调用供应商。价格、估值、权重、财报和披露日各自保留。财务按年度/一季度/半年/三季度跨年读取；源端曲线按历史当期成分加总，当前可得版本不是严格PIT；mcw条件试算须明确接受全部成分同比例变化假设，不声称已核验实际点位映射。完整规范见 [研究合同](research.md) 与 [API](api.md)。
 
 `research_source_check(index_id, analysis_id)` 仅在明确授权联网核验时调用；先以mcw价格口径读取analysis_id，结果保存在独立官方参考快照，不改变理杏仁历史或估值分母映射。
+
+## 市场水位
+
+使用`market_waterlevel(method='mcw', asof=None, facts=True)`或`GET /api/market-waterlevel/facts`读取版本化事实。指数估值来自现有理杏仁快照；宏观与债券来自免费来源。两类均不在GET中联网。先核对asof、实际观测日、来源、method_version、窗口样本、状态和缺口，再解释历史位置。
+
+用户授权更新时，通过`write('/api/market-waterlevel/updates', {groups,request_id})`提交精确来源组，保存收据并回读任务状态。复用稳定request_id；结果未知先查询，不新建ID盲目重试，不扩大为全部订阅指数或持仓行情。自动策略需明确启用，保存时使用读取的expected_settings_revision。
+
+冻结流程为读取事实包→按原analysis_id、method、asof、expected_research_revision提交`write('/api/market-waterlevel/snapshots', payload)`→精确ID回读→按需下载export。409先重新读取核对，不替换成最新revision强行提交。冻结保存不触发供应商调用，报告独立于后续来源更新。
+
+三种估值方法不重复计分，评分固定mcw；负PE/PB不能用另一口径代替。均值是连续60/120个完整月末观测，分位严格小于当前值，与指数资料库日频均值/分位不同。历史日期只截取当前可得修订版，不能用于声称严格PIT的回测。未接入项、缺类后的覆盖变化和M1口径变化必须保留。程序规则摘要不是模型生成分析；如需解释，应明确区分事实与推断。详见[市场水位契约](waterlevel.md)。

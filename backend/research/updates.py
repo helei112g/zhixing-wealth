@@ -11,6 +11,7 @@ from .snapshots import encode,decode
 from .collection import subscription
 
 SCOPES=('quotes','fx','index_prices','memberships','valuations','financials')
+UPDATE_SCOPES = (*SCOPES, 'market')
 MODULES={'index_prices':('index_info','price','total_return'),'memberships':('memberships','historical_memberships','tracking_funds'),
          'valuations':('valuations','market_activity','stock_valuations'),'financials':('index_financials','financials','historical_financials')}
 
@@ -62,17 +63,20 @@ class UpdateJobs:
 
     def plan(self,body):
         scopes=body.get('scopes',list(SCOPES));targets=body.get('targets');resources=body.get('resources')
-        if not isinstance(scopes,list) or not scopes or any(s not in SCOPES for s in scopes):raise DomainError('更新范围无效')
+        if not isinstance(scopes,list) or not scopes or any(s not in UPDATE_SCOPES for s in scopes):raise DomainError('更新范围无效')
         if targets is not None and (not isinstance(targets,list) or not targets or any(not isinstance(t,str) for t in targets)):raise DomainError('更新对象无效')
         if targets:
             for iid in targets:self.research.profile(iid)
         targets=targets or [p['id'] for p in self.research.profiles() if subscription(p)['enabled']]
         if resources is None:
             resources=[]
-            for scope in SCOPES:
+            for scope in UPDATE_SCOPES:
                 if scope not in scopes:continue
                 if scope=='fx':resources += [dict(scope=scope,currency=c) for c in ('HKD','USD')]
                 elif scope=='quotes':resources.append(dict(scope=scope,instrument_id=None))
+                elif scope == 'market':
+                    from ..waterlevel.catalog import GROUPS
+                    resources.extend(dict(scope=scope, group=group) for group in GROUPS)
                 else:resources += [dict(scope=scope,target=iid,module=m) for iid in targets for m in MODULES[scope] if subscription(self.research.profile(iid))['enabled'] and m in subscription(self.research.profile(iid))['modules']]
         if not isinstance(resources,list) or not resources or len(resources)>200:raise DomainError('没有可更新的对象，或任务超过200项')
         for r in resources:
@@ -84,11 +88,15 @@ class UpdateJobs:
             elif scope=='quotes':
                 if set(r)-{'full'}!={'scope','instrument_id'}:raise DomainError('行情资源无效')
                 if r['instrument_id'] is not None and not any(i['id']==r['instrument_id'] for i in self.store.state()['instruments']):raise DomainError('行情标的不存在')
+            elif scope == 'market':
+                from ..waterlevel.catalog import GROUPS
+                if set(r) != {'scope', 'group'} or r['group'] not in GROUPS:
+                    raise DomainError('市场来源组无效')
             else:
                 if set(r)!={'scope','target','module'} or r['module'] not in MODULES[scope]:raise DomainError('指数模块资源无效')
                 self.research.profile(r['target'])
                 self.research.collection.active(r['target'],r['module'])
-        return sorted({key(r):r for r in resources}.values(),key=lambda r:(SCOPES.index(r['scope']),r.get('target',''),MODULES.get(r['scope'],('',)).index(r.get('module','')) if r['scope'] in MODULES else r.get('currency','')))
+        return sorted({key(r):r for r in resources}.values(),key=lambda r:(UPDATE_SCOPES.index(r['scope']),r.get('target',''),MODULES.get(r['scope'],('',)).index(r.get('module','')) if r['scope'] in MODULES else r.get('currency',r.get('group',''))))
 
     def run(self,body,trigger='manual'):
         resources=self.plan(body);request_id=body.get('request_id')
@@ -149,6 +157,9 @@ class UpdateJobs:
 
     def execute(self,r):
         if r['scope'] in ('quotes','fx'):return self._legacy(r)
+        if r['scope'] == 'market':
+            asof = (self.current_job or {}).get('information_cutoff') or str(today())
+            return self.research.waterlevel.collect(r['group'], asof)
         iid,module=r['target'],r['module']
         cutoffs=self.current_job or {}
         asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','stock_valuations','valuations','market_activity') else (cutoffs.get('information_cutoff') or str(today()))
@@ -212,6 +223,7 @@ class UpdateJobs:
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning('自动更新检查失败，下一轮重试 scope=%s error=%s',p['scope'],type(exc).__name__)
+        self.research.waterlevel.tick(stamp, trigger)
 
     def recover(self,resume=True):
         query="SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running') OR (state='interrupted' AND json_extract(data,'$.resume_on_start')=1)"

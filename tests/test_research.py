@@ -139,12 +139,12 @@ class ResearchTests(unittest.TestCase):
             row = db.execute('SELECT data,sha256 FROM research_snapshots WHERE id=?',(snapshot,)).fetchone()
             self.assertEqual(decode(row[0],row[1])['missing_dates'], value['missing_dates'])
 
-    def test_listing_reuses_all_thirteen_summaries_without_loading_company_history(self):
+    def test_listing_reuses_catalog_summaries_without_loading_company_history(self):
         for p in providers.CATALOG:self.add(p['code'],'synthetic-'+p['code'])
         with patch.object(self.r,'module',wraps=self.r.module) as load:
             first=self.r.listing()
-            self.assertEqual(len(first['items']),13)
-            self.assertEqual(load.call_count,26)
+            self.assertEqual(len(first['items']),len(providers.CATALOG))
+            self.assertEqual(load.call_count,2*len(providers.CATALOG))
             self.assertTrue(all(call.args[1] in ('price','valuations') for call in load.call_args_list))
             load.reset_mock()
             self.assertEqual(first,self.r.listing())
@@ -282,6 +282,8 @@ class ResearchTests(unittest.TestCase):
         p=self.legacy.save_portfolio(dict(name='合成迁移',planned_amount='1000',start_date='2024-01-01'))
         with self.store.connection() as db:
             for t in ('research_heads','research_snapshots','research_indices','research_meta','research_price_chunks','data_update_tasks','data_update_policies','data_update_receipts'):db.execute('DROP TABLE '+t)
+            from tests.waterlevel_fixtures import drop_tables
+            drop_tables(db)
             db.execute('DROP TABLE IF EXISTS family_expense_plans'); db.execute('DROP TABLE IF EXISTS family_expense_months')
             db.execute("UPDATE meta SET value='9' WHERE key='schema'");db.execute("UPDATE alembic_version SET version_num='0008_retire_legacy_labels'");db.commit()
         before=capture(self.path)

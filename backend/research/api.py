@@ -7,7 +7,8 @@ class ResolveRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     code:str=Field(min_length=1,max_length=16)
 
-Scope=Literal['quotes','fx','index_prices','memberships','valuations','financials']
+Scope=Literal['quotes','fx','index_prices','memberships','valuations','financials','market']
+PolicyScope=Literal['quotes','fx','index_prices','memberships','valuations','financials']
 Basis=Literal['price','total_return']
 Method=Literal['overall','median','arithmetic','mcw','ew']
 Part=Literal['series','constituents','financials','sources']
@@ -52,11 +53,17 @@ class FinancialResource(IndexResource):
     module:Literal['financials','historical_financials','index_financials']
 
 
-UpdateResource=Annotated[FxResource|QuoteResource|IndexPriceResource|MembershipResource|ValuationResource|FinancialResource,Field(discriminator='scope')]
+class MarketResource(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    scope: Literal['market']
+    group: Literal['calendar','china_rates','us_rates','credit','repo','pmi','prices','money','social_financing']
+
+
+UpdateResource=Annotated[FxResource|QuoteResource|IndexPriceResource|MembershipResource|ValuationResource|FinancialResource|MarketResource,Field(discriminator='scope')]
 
 class Policy(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    scope:Scope
+    scope:PolicyScope
     enabled:StrictBool
     cadence:Literal['daily','trade_day','weekly','manual']
     time:str=Field(pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
@@ -69,7 +76,7 @@ class SettingsRequest(BaseModel):
 
 class UpdateRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    scopes:list[Scope]=Field(default_factory=lambda:['quotes','fx','index_prices','memberships','valuations','financials'],min_length=1,max_length=6)
+    scopes:list[Scope]=Field(default_factory=lambda:['quotes','fx','index_prices','memberships','valuations','financials'],min_length=1,max_length=7)
     request_id:str=Field(min_length=1,max_length=160)
     targets:list[str]|None=Field(None,min_length=1,max_length=100)
     resources:list[UpdateResource]|None=Field(None,min_length=1,max_length=200,description='精确更新或重试范围；每项scope须属于scopes，重试保持失败项原resource')

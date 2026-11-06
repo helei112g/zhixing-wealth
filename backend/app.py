@@ -99,6 +99,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     app.state.research = research
     app.include_router(household_router)
     app.include_router(research_router(research))
+    from .waterlevel.api import router as waterlevel_router
+    app.include_router(waterlevel_router(research.waterlevel))
     app.add_middleware(GZipMiddleware, minimum_size=2000, compresslevel=4)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'] + (['testserver'] if testing else []))
 
@@ -197,12 +199,28 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                              'windows':[0,3,5,10],'bases':['price','total_return'],'valuation_methods':['mcw','ew','median'],'legacy_read_methods':['overall','arithmetic'],
                              'detail_fields':['scenario_metrics','scenario_assumption','module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources','collection','index_financials','market_activity','tracking_funds'],
                              'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-studio-4','missing':'null with status; UI -'},
+                'market_waterlevel': {
+                    'read': '/api/market-waterlevel', 'facts': '/api/market-waterlevel/facts',
+                    'revision': '/api/market-waterlevel/revision',
+                    'methods': ['mcw', 'ew', 'median'], 'windows': [5, 10],
+                    'settings': '/api/market-waterlevel/settings', 'settings_revision': 'expected_settings_revision',
+                    'updates': '/api/market-waterlevel/updates', 'update_scope': 'market',
+                    'snapshots': '/api/market-waterlevel/snapshots',
+                    'freeze_context': ['analysis_id', 'method', 'asof', 'expected_research_revision'],
+                    'export': '/api/market-waterlevel/snapshots/{id}/export',
+                    'model_commentary': 'read versioned facts; UI and export contain deterministic rule summaries only',
+                    'score': 'fixed mcw equity factors; inverse sovereign yield and credit spread; category medians',
+                    'percentile': 'strict less-than, current included in denominator, complete 5/10 year span',
+                    'mean': '60/120 consecutive completed months, monthly last observation, no fill',
+                    'cadence': 'weekly rates with daily backfill; release-aware macro checks; automatic off by default',
+                    'historical_asof': 'truncate currently available revisions, not point-in-time knowledge',
+                },
                 'instrument_price_history':{'start':'six calendar months before earliest purchase; shared cache uses earliest purchase across portfolios','detail_field':'price_history_start','backfill':'next quote update backfills missing requested range once; subsequent updates are incremental'},
                 'data_updates': {'settings':'/api/settings/data-updates','run':'/api/data-updates/run','jobs':'/api/data-updates/jobs',
                                  'job': '/api/data-updates/jobs/{job_id}', 'history':'/api/data-updates/history', 'history_limit':5, 'request_id_required': True,
                                  'current_index': {'targets':'one exact index ID','scopes':['index_prices','memberships','valuations','financials'],'subscribed_modules_only':True,
                                                    'cutoffs':'completed trading day for prices; today for published information; inspect actual module dates'},
-                                 'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials'],
+                                 'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials','market'],
                                  'retry':'unknown outcome: read back and preserve original request_id/payload; confirmed failed resource: submit a new request_id with the exact failed item.resource',
                                  'execution':'while app runs only; restart resumes durable work unless --no-sync or read-only'},
                 'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',

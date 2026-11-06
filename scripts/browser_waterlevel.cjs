@@ -1,0 +1,124 @@
+/* Synthetic market histories only; every external adapter is replaced by the harness. */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE_PATH || '../frontend/node_modules/playwright');
+const base = process.env.PORTFOLIO_TEST_URL;
+const output = process.env.PORTFOLIO_TEST_OUTPUT;
+
+(async () => {
+  const browser = await chromium.launch({headless: true});
+  const page = await browser.newPage({viewport: {width: 1500, height: 1050}});
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let csrf = '';
+  let checks = 0;
+  const check = (condition, label) => { assert.ok(condition, label); console.log('PASS', ++checks, label); };
+  const api = async (url, body, method = body === undefined ? 'GET' : 'POST') => {
+    const response = await page.request.fetch(base + '/api' + url, {method, data: body, headers: {'X-CSRF-Token': csrf}});
+    assert.ok(response.ok(), await response.text());
+    return response.json();
+  };
+  const shot = name => page.screenshot({path: path.join(output, name + '.png'), fullPage: true, animations: 'disabled'});
+  try {
+    const health = await api('/health');
+    assert.equal(health.environment, 'test');
+    assert.equal(health.data_directory, process.env.PORTFOLIO_TEST_DATA_DIR);
+    const boot = await api('/bootstrap');
+    csrf = boot.csrf_token;
+    await page.goto(base);
+    await page.getByRole('button', {name: '市场水位', exact: true}).click();
+    await page.getByRole('heading', {name: '规则摘要', exact: true}).waitFor();
+    check(boot.portfolios.length === 0, 'market page works without a portfolio');
+    check((await api('/data-updates/jobs')).jobs.length === 0, 'opening market page does not fetch data');
+    check(await page.locator('.waterlevel-score').count() === 4, 'four waterlevel cards render');
+    await shot('waterlevel-initial');
+
+    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
+    check(!(await page.getByLabel('启用市场数据自动更新').isChecked()), 'free-source automation defaults off');
+    await page.getByRole('button', {name: '更新全部免费来源', exact: true}).click();
+    let job;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      job = (await api('/data-updates/jobs')).jobs[0];
+      if (job && ['complete', 'partial', 'error'].includes(job.state)) break;
+      await page.waitForTimeout(500);
+    }
+    check(job?.state === 'complete', 'all synthetic free-source groups complete in the common queue');
+    check(job.resources.every(resource => resource.scope === 'market'), 'market refresh does not consume index or ledger scopes');
+    await page.getByRole('tab', {name: '水位总览', exact: true}).click();
+    await page.getByText('有效大类 3/3', {exact: true}).waitFor({timeout: 30000});
+    const first = await api('/market-waterlevel');
+    check(first.scores.categories.equity.included === 5, 'only fixed mcw equity factors enter the score');
+    await shot('waterlevel-overview');
+
+    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
+    await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByRole('button', {name: '更新', exact: true}).click();
+    await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByText('合成信用来源失败，用于验收保留旧值与重试', {exact: true}).waitFor();
+    const failed = await api('/market-waterlevel');
+    check(failed.research_revision === first.research_revision, 'failed collection preserves data revision');
+    check(failed.scores.categories.credit.included === 0, 'failed source is excluded from score while old observations remain');
+    await page.getByRole('tab', {name: '水位总览', exact: true}).click();
+    await page.getByText('有效大类 2/3', {exact: true}).waitFor();
+    check(true, 'fast failure refreshes the rendered score without a data revision change');
+    await shot('waterlevel-source-failure');
+    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
+    const failedRecord = page.locator('.job-record').filter({hasText: '合成信用来源失败'}).first();
+    if (await failedRecord.getAttribute('open') === null) await failedRecord.locator('summary').click();
+    await failedRecord.getByRole('button', {name: '重试此项', exact: true}).click();
+    await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByText('已取得', {exact: true}).waitFor();
+    const retried = (await api('/data-updates/jobs')).jobs[0];
+    check(retried.resources.length === 1 && retried.resources[0].group === 'credit', 'retry retains the exact failed free-source group');
+
+    await page.getByRole('tab', {name: '股票估值', exact: true}).click();
+    await page.getByRole('button', {name: '等权 · ew', exact: true}).click();
+    await page.getByRole('button', {name: '等权 · ew', exact: true}).getAttribute('aria-pressed');
+    await page.waitForFunction(() => document.querySelector('[aria-label="市场估值方法"] button[aria-pressed="true"]')?.textContent.includes('ew'));
+    const equal = await api('/market-waterlevel?method=ew');
+    check(JSON.stringify(first.scores) === JSON.stringify(equal.scores), 'method switch leaves fixed scores unchanged');
+    check(await page.getByText('当前值无效', {exact: false}).count() > 0, 'negative ew is shown as invalid rather than replaced');
+    await page.getByRole('button', {name: '中位数 · median', exact: true}).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="市场估值方法"] button[aria-pressed="true"]')?.textContent.includes('median'));
+    check(await page.locator('[aria-label="市场估值方法"]').evaluate(element =>
+      getComputedStyle(element.querySelector('[aria-pressed="true"]')).backgroundColor !==
+      getComputedStyle(element.querySelector('[aria-pressed="false"]')).backgroundColor), 'selected method has visible feedback');
+    await page.getByLabel('对照指标', {exact: true}).selectOption('pb');
+    await page.getByRole('heading', {name: '沪深300 · PB', exact: true}).waitFor();
+    check(await page.locator('.waterlevel-chart svg').count() >= 3, 'valuation charts render as actual SVG');
+    await shot('waterlevel-valuations');
+
+    await page.getByRole('tab', {name: '宏观背景', exact: true}).click();
+    await page.getByRole('heading', {name: 'M2−M1同比剪刀差', exact: true}).waitFor();
+    const gap = first.series.find(item => item.id === 'money_gap');
+    check(gap.statistics.current === '3' && gap.unit === '百分点', 'money gap uses M2 minus M1 percentage points');
+    await shot('waterlevel-macro');
+    await page.getByRole('button', {name: '冻结研究快照', exact: true}).click();
+    await page.getByRole('link', {name: '下载离线报告', exact: true}).waitFor();
+    const snapshotId = await page.getByLabel('研究快照', {exact: true}).inputValue();
+    const frozen = await api('/market-waterlevel/snapshots/' + snapshotId);
+    check(frozen.data.method === 'median', 'frozen snapshot keeps the viewed method');
+    const response = await page.request.get(base + '/api/market-waterlevel/snapshots/' + snapshotId + '/export');
+    const html = await response.text();
+    fs.writeFileSync(path.join(output, 'synthetic-market-report.html'), html);
+    const offline = await browser.newPage();
+    let external = 0;
+    await offline.route('**/*', route => { external++; return route.abort(); });
+    await offline.setContent(html);
+    check(await offline.locator('svg').count() > 0 && external === 0, 'offline report renders without external assets or scripts');
+    await offline.screenshot({path: path.join(output, 'waterlevel-offline.png'), fullPage: false});
+    await offline.close();
+
+    await page.getByLabel('研究快照', {exact: true}).selectOption('');
+    await page.setViewportSize({width: 390, height: 844});
+    await page.getByRole('tab', {name: '水位总览', exact: true}).click();
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'mobile layout has no page overflow');
+    await shot('waterlevel-mobile');
+    check((await api('/bootstrap')).revision === boot.revision, 'market data and snapshots preserve ledger revision');
+    check(errors.length === 0, 'no browser runtime errors');
+    fs.writeFileSync(path.join(output, 'waterlevel-checks.json'), JSON.stringify({checks, errors}, null, 2));
+  } catch (error) {
+    await shot('waterlevel-error');
+    throw error;
+  } finally {
+    await browser.close();
+  }
+})().catch(error => { console.error(error); process.exit(1); });

@@ -26,6 +26,8 @@ class ResearchService:
         self.access = LocalAccess(store.directory)
         self.collection = Collection(self)
         self.updates = UpdateJobs(self)
+        from ..waterlevel.service import WaterlevelService
+        self.waterlevel = WaterlevelService(self)
         self.worker_lock = self.updates.worker_lock
         self.cache = OrderedDict()
 
@@ -293,10 +295,17 @@ def validate_structure(db):
     for key,value in db.execute('SELECT key,value FROM research_meta'):
         if key not in ('revision','settings_revision') or not value.isdigit():raise DomainError('研究版本元数据无效')
     if db.execute('SELECT 1 FROM research_heads h LEFT JOIN research_snapshots s ON s.id=h.snapshot_id WHERE s.id IS NULL OR h.index_id<>s.index_id OR h.module<>s.module LIMIT 1').fetchone():raise DomainError('研究快照引用不完整')
+    schema = int(db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0])
+    if schema >= 12:
+        from ..waterlevel.validation import structure
+        structure(db)
 
 
 def validate_backup(db):
     validate_structure(db)
+    if int(db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]) >= 12:
+        from ..waterlevel.validation import backup
+        backup(db)
     for r in db.execute('SELECT id,data FROM research_indices'):
         p=json.loads(r[1]);known=providers.identity(p['code'])
         if r[0]!=p.get('id') or r[0]!=known['provider']+':'+known['code'] or p['return_code']!=known['return_code']:raise DomainError('指数家族身份或配对无效')

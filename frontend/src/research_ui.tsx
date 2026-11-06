@@ -32,12 +32,12 @@ function IndexInformation({d}:Obj){
   <button className="index-info-button" aria-expanded={open} aria-haspopup="dialog" onFocus={()=>Open(true)} onClick={()=>Open(true)}>ⓘ 基本资料</button>
   {open&&<div className="index-info-popover" role="dialog" aria-label="指数基本资料">
    <h3>{p.name} · 基本资料</h3><dl className="key-values">
-    <dt>价格 / 全收益代码</dt><dd>{p.code} / {p.return_code}</dd>
+    <dt>价格 / 全收益代码</dt><dd>{p.code} / {p.return_code || '理杏仁全收益口径'}</dd>
     <dt>编制机构 / 币种</dt><dd>{p.provider==='csi'?'中证指数':'国证指数'} / CNY</dd>
     <dt>成分数量</dt><dd>{d.companies?.length||'尚未采集'}</dd>
     <dt>价格指数发布日期</dt><dd>{p.launch}</dd>
     <dt>全收益独立发布日期</dt><dd>{p.return_launch||'待核验'}</dd>
-    <dt>编制方案与规则</dt><dd><a href={p.method_url} target="_blank" rel="noopener noreferrer">官方资料 ↗</a></dd>
+    <dt>{p.lixinger_identity?'身份核对来源':'编制方案与规则'}</dt><dd><a href={p.method_url} target="_blank" rel="noopener noreferrer">{p.lixinger_identity?'理杏仁指数接口 ↗':'官方资料 ↗'}</a></dd>
     <dt>加权 / 调样</dt><dd>{d.index_info?.calculationMethod||'以官方方案为准'} / {d.index_info?.rebalancingFrequency||'待核验'}</dd>
    </dl>
   </div>}

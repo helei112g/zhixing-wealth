@@ -67,6 +67,11 @@ def main():
     except RuntimeError as e:check('409' in str(e),'duplicate add rejected with a current revision')
     else:raise AssertionError('duplicate add accepted')
     check(c.request('/api/research/catalog')==catalog,'duplicate add preserves subscription and research revision')
+    outsider=c.collection_preview('合成目录外指数',lookup=True)
+    check(outsider['profile']['code']=='799901' and not outsider['existing_id'],'look up an index outside the registry by name')
+    new=c.write('/api/research/collection',dict(code='799901',expected_research_revision=outsider['research_revision']),'PUT')
+    check(new['id']=='csi:799901' and c.collection_preview('799901')['existing_id']==new['id'],
+          'save and resolve a provider-verified index locally')
     try:c.write('/api/settings/lixinger/token',{'token':'never-sent'},'PUT')
     except ValueError:check(True,'AI client does not accept credential mutation')
     else:raise AssertionError('AI credential mutation accepted')

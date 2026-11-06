@@ -1,7 +1,10 @@
 """Subscribed, budgeted, resumable collection using existing versioned snapshots."""
 import hashlib
+import re
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import timedelta
+from threading import Lock
 from ..common import ConflictError, DomainError, day, json_dumps, now, today
 from . import lixinger, providers
 from .metrics import years_before
@@ -15,9 +18,48 @@ def subscription(profile):
 class Collection:
     def __init__(self, research):
         self.research = research
+        self.identities = OrderedDict()
+        self.identity_lock = Lock()
 
-    def preview(self, code, modules, history_start):
-        p = providers.identity(code)
+    def identity(self, code, *, lookup=False):
+        key = code.strip().upper()
+        if not key:
+            raise DomainError('请输入指数代码或名称')
+        try:
+            return providers.identity(key)
+        except providers.market.ProviderError:
+            pass
+
+        with self.identity_lock:
+            saved = self.research.profiles()
+            matches = {p['code']: p for p in [*self.identities.values(), *saved]
+                       if key in (p['code'], p['name'].upper())}
+            if not matches and lookup:
+                if not self.research.writes_allowed():
+                    raise DomainError('系统处于只读状态，无法联网核对新指数')
+                by_code = bool(re.fullmatch(r'[A-Z0-9]{4,16}', key))
+                params = {'stockCodes': [key]} if by_code else {}
+                rows = self.research.access.request('cn/index', params)
+                candidates = [row for row in rows if isinstance(row, dict) and
+                              (row.get('stockCode') == key if by_code else str(row.get('name', '')).strip().upper() == key)]
+                if len(candidates) > 1:
+                    raise DomainError('理杏仁返回多个同名指数，请输入指数代码')
+                if candidates:
+                    profile = providers.lixinger_identity(candidates[0])
+                    self.identities[profile['code']] = profile
+                    if len(self.identities) > 128:
+                        self.identities.popitem(last=False)
+                    matches[profile['code']] = profile
+            if len(matches) == 1:
+                return deepcopy(next(iter(matches.values())))
+            if matches:
+                raise DomainError('存在多个同名指数，请输入指数代码')
+        if lookup:
+            raise DomainError('理杏仁未找到该指数，请核对代码或准确名称')
+        raise DomainError('请先联网核对该指数，再按预览结果添加')
+
+    def preview(self, code, modules, history_start, *, lookup=False):
+        p = self.identity(code, lookup=lookup)
         adding = modules is None
         if adding:
             if history_start is not None:

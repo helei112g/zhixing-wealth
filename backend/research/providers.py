@@ -42,6 +42,30 @@ def identity(code):
     return p
 
 
+LIXINGER_INDEX_INFO = 'https://www.lixinger.com/api/open-api/html-doc/cn/index'
+INDEX_SERIES = {'size':'宽基', 'composite':'宽基', 'sector':'行业', 'style':'风格',
+                'thematic':'主题', 'strategy':'策略'}
+
+
+def lixinger_identity(row):
+    """Normalize a mainland equity index identified by the supplier."""
+    if not isinstance(row, dict):
+        raise market.ProviderError('理杏仁指数信息格式无效')
+    code, name, source = row.get('stockCode'), row.get('name'), row.get('source')
+    if (not isinstance(code, str) or not re.fullmatch(r'[0-9A-Z]{4,16}', code)
+            or not isinstance(name, str) or not name.strip() or len(name) > 120
+            or source not in ('csi', 'cni', 'lxri')
+            or (row.get('areaCode'), row.get('market'), row.get('currency')) != ('cn', 'a', 'CNY')):
+        raise market.ProviderError('该指数的大陆A股市场、币种或编制方未获确认')
+    launch = str(day(str(row.get('launchDate'))[:10]))
+    evidence = {key: row.get(key) for key in
+                ('stockCode', 'name', 'source', 'areaCode', 'market', 'currency', 'launchDate', 'series')}
+    return dict(code=code, name=name.strip(), provider=source, kind=INDEX_SERIES.get(str(row.get('series')), '指数'),
+                launch=launch, currency='CNY', exposure='CN', input_basis='price', return_code=None,
+                return_launch_status='not_independently_verified', method_url=LIXINGER_INDEX_INFO,
+                identity_source=LIXINGER_INDEX_INFO, lixinger_identity=evidence)
+
+
 def module_capabilities(profile):
     from .lixinger import MODULES
     result={m:dict(supported=True,reason=None) for m in MODULES}

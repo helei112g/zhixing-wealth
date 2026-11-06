@@ -172,7 +172,7 @@ def assemble(profile, module, parts, end):
         rows = [r for p in parts for r in p['rows'] if r['date'] >= profile['launch']]
         if not rows: raise DomainError('该范围内没有有效行情；不以另一口径替代')
         return dict(common, rows=rows, effective_date=max(r['date'] for r in rows), basis=module,
-                    series_code=profile['code'] if module == 'price' else profile['return_code'])
+                    series_code=(profile['return_code'] or profile['code']) if module == 'total_return' else profile['code'])
     if module == 'index_info': return dict(common, info=parts[0]['rows'][0])
     if module == 'tracking_funds': return dict(common, rows=parts[0]['rows'])
     if module == 'valuations':

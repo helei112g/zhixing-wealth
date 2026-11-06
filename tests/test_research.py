@@ -194,6 +194,18 @@ class ResearchTests(unittest.TestCase):
     def test_unknown_and_similar_code_never_guessed(self):
         for code in ('000906','399999','中证50','399005','中证医疗科技'):
             with self.assertRaises(DomainError):self.r.resolve(code)
+    def test_dynamic_index_identity_survives_backup_and_new_service(self):
+        record=dict(stockCode='799901',name='合成目录外指数',source='csi',areaCode='cn',market='a',
+                    currency='CNY',launchDate='2015-01-01',series='thematic')
+        with patch.object(self.r.access,'request',return_value=[record]) as request:
+            preview=self.r.collection.preview('799901',None,None,lookup=True)
+            saved=self.r.collection.save('799901',None,None,True,preview['research_revision'])
+        request.assert_called_once_with('cn/index',{'stockCodes':['799901']})
+        with self.store.connection() as db:
+            validate_backup(db)
+        restored=ResearchService(self.store,self.r.legacy)
+        self.assertEqual(restored.collection.preview('合成目录外指数',None,None)['existing_id'],saved['id'])
+        self.assertEqual(restored.detail(saved['id'],'total_return')['series_code'],'799901')
     def test_added_csi_families_deduplicate_both_bases_and_preserve_backup_identity(self):
         ledger_revision=self.store.state()['revision']
         for code,tr in [('930955','H20955'),('399998','H20596'),('000991','H00991')]:

@@ -6,7 +6,7 @@ Leo · 2026.11.05
 
 ## 数据与身份
 
-内置目录提供14个已核验的官方价格/全收益代码家族，仅用于识别；只有保存的订阅才会采集。支持按目录名称、价格代码或全收益代码识别同一档案。中证医疗的价格代码为399989，全收益代码为H20451，依据[中证指数官方事实表](https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/399989factsheet.pdf)。供应商身份必须核对地区、编制方与币种，指数财报还需确认fsTableType。
+内置目录提供14个已核验的官方价格/全收益代码家族，用于本地识别。目录之外的大陆A股指数可用代码或准确名称向理杏仁显式核对，保存后纳入指数库。独立全收益代码缺失时，使用理杏仁同一指数代码的全收益类型。支持按目录名称、价格代码或全收益代码识别同一档案。中证医疗的价格代码为399989，全收益代码为H20451，依据[中证指数官方事实表](https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/399989factsheet.pdf)。供应商身份必须核对地区、编制方与币种，指数财报还需确认fsTableType。
 
 | 内容 | 当前来源与处理 | 明确保留的边界 |
 |---|---|---|

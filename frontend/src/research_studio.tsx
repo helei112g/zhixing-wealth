@@ -90,7 +90,7 @@ export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
   B(true);
   invalidate();
   try{
-   const request=managing?{code,modules,history_start:limited?start:null}:{code};
+   const request=managing?{code,modules,history_start:limited?start:null}:{code,lookup:true};
    P(await api('/research/collection/preview',request));
   }catch(e:any){
    E(e.message);
@@ -126,7 +126,7 @@ export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
   </Field>
   {!managing&&<>
    <datalist id="index-catalog-options">{catalog.items.map((p:Obj)=><option key={p.code} value={p.name}>{p.code}</option>)}</datalist>
-   <p className="muted small">默认启用全部可用采集项，使用全历史范围。添加后可在「管理采集」调整。</p>
+   <p className="muted small">支持录入目录外的指数。点击核对时先查本地，缺少档案时通过理杏仁核对。默认启用全部可用采集项与全历史。</p>
   </>}
   {managing&&<>
    <div className="collection-modules">
@@ -151,7 +151,7 @@ export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
   </Button>
   {preview&&<div className="collection-preview">
    <h3>{preview.profile.name} · {preview.profile.code}</h3>
-   <p>价格 {preview.profile.code} / 全收益 {preview.profile.return_code}</p>
+   <p>价格 {preview.profile.code} / 全收益 {preview.profile.return_code || '理杏仁全收益口径'}</p>
    {!managing&&preview.existing_id
     ? <><Notice>该指数已在指数库中。</Notice>
        <Button primary disabled={busy} onClick={()=>onSaved({id:preview.existing_id,research_revision:preview.research_revision})}>查看已有指数</Button></>

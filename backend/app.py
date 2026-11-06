@@ -196,7 +196,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                           'required_context': ['analysis_id', 'accept_fixed_basket_assumption'],
                                           'basis': 'same-date positive price and overall/mcw valuation; explicit uniform price and earnings/book-value scaling, fixed constituents/shares/weights/divisor; no total-return mapping'},
                              'revision_field':'expected_research_revision','request_id_required':False,'scope':'verified catalog and saved profiles, with explicit Lixinger lookup for additional A-share indices',
-                             'windows':[0,3,5,10],'bases':['price','total_return'],'valuation_methods':['mcw','ew','median'],'legacy_read_methods':['overall','arithmetic'],
+                             'windows':[0,3,5,10],'bases':['price','total_return'],'valuation_methods':['mcw','ew','ewpvo','median'],'legacy_read_methods':['overall','arithmetic'],
                              'detail_fields':['scenario_metrics','scenario_assumption','module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources','collection','index_financials','market_activity','tracking_funds'],
                              'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-studio-4','missing':'null with status; UI -'},
                 'instrument_price_history':{'start':'six calendar months before earliest purchase; shared cache uses earliest purchase across portfolios','detail_field':'price_history_start','backfill':'next quote update backfills missing requested range once; subsequent updates are incremental'},

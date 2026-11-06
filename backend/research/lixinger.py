@@ -7,7 +7,7 @@ from ..common import DomainError, day, dec, ds, json_dumps
 from .metrics import years_before
 
 SOURCE = '理杏仁'
-METHODS = ('mcw', 'ew', 'median')
+METHODS = ('mcw', 'ew', 'ewpvo', 'median')
 METRICS = {'pe': 'pe_ttm', 'pb': 'pb', 'ps': 'ps_ttm', 'dividend_yield': 'dyr'}
 ACTIVITY = ('mc', 'cmc', 'ecmc', 'fet_as_ma', 'fet_snif_ma', 'to_r', 'cp', 'r_cp')
 MODULES = ('index_info', 'price', 'total_return', 'valuations', 'memberships',
@@ -183,7 +183,7 @@ def assemble(profile, module, parts, end):
         if not all(series[m]['mcw']['rows'] for m in ('pe','pb')):raise DomainError('PE/PB主方法未完整取得，保留旧版本')
         return dict(common, effective_date=max(r['date'] for r in rows), series=series,
                     activity_rows=[{k: r.get(k) for k in ('date', *ACTIVITY)} for r in rows],
-                    mapping_verified=False, methodology_note='供应商三方法独立保存；mcw与条件点位分母关系待认证核验，试算暂不开放')
+                    mapping_verified=False, methodology_note='供应商各估值方法独立保存；mcw与条件点位分母关系待认证核验，试算暂不开放')
     if module == 'market_activity':
         return dict(common, effective_date=max((r['date'] for p in parts for r in p['rows']),default=None),
                     series={k: [r for p in parts if p['call']['kind'] == k for r in p['rows']] for k in ('margin', 'northbound')})

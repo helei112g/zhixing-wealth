@@ -75,8 +75,10 @@ class WaterlevelService:
     def update(self, groups, request_id, *, full=False, indices=()):
         if any(iid not in dict(INDICES) for iid in indices):
             raise DomainError('市场水位指数范围无效')
-        resources = [dict(scope='market', group=group, full=full) for group in groups]
-        resources.extend(dict(scope='valuations', target=iid, module='valuations', full=full) for iid in indices)
+        resources = [dict(scope='market', group=group) for group in groups]
+        resources.extend(dict(scope='valuations', target=iid, module='valuations') for iid in indices)
+        if full:
+            resources = [dict(resource, full=True) for resource in resources]
         return self.research.run(dict(scopes=list(dict.fromkeys(r['scope'] for r in resources)),
                                       request_id=request_id, resources=resources))
 

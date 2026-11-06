@@ -254,6 +254,11 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(self.market.settings()['automatic'])
         fetch.assert_not_called()
 
+    def test_incremental_market_request_replays_legacy_receipt(self):
+        body = dict(scopes=['market'], resources=[dict(scope='market', group='pmi')], request_id='legacy')
+        previous = self.research.run(body)
+        self.assertEqual(self.market.update(['pmi'], 'legacy'), previous)
+
     def test_full_source_coverage_failure_preserves_market_head(self):
         value = payload('pmi')
         with patch.object(sources, 'collect', return_value=value):

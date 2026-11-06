@@ -26,7 +26,7 @@ function History({statistics, label, unit, multiplier=1, window='10', asof, mean
     <ResponsiveContainer width="100%" height={220} minWidth={0}>
       <LineChart data={rows} accessibilityLayer margin={{top:12,right:12,bottom:0,left:0}}>
         <CartesianGrid stroke="var(--line)" vertical={false}/>
-        <XAxis dataKey="date" minTickGap={65} tick={{fontSize:10}} tickFormatter={value=>value.slice(0,7)}/>
+        <XAxis dataKey="date" interval="preserveStartEnd" minTickGap={65} tick={{fontSize:10}} tickFormatter={value=>value.slice(0,7)}/>
         <YAxis domain={['auto','auto']} width={58} tick={{fontSize:10}}/>
         <Tooltip formatter={(value:any)=>number(value)+' '+unit} contentStyle={{fontSize:12,borderRadius:8}}/>
         {zero&&<ReferenceLine y={0} stroke="var(--muted)" strokeDasharray="3 3"/>}
@@ -81,7 +81,7 @@ function ComparisonCard({data, metric, window}: Obj) {
         <ResponsiveContainer width="100%" height={390} minWidth={0}>
           <LineChart data={rows} accessibilityLayer margin={{top:12,right:0,bottom:0,left:0}}>
             <CartesianGrid stroke="var(--line)" vertical={false}/>
-            <XAxis dataKey="date" minTickGap={55} tick={{fontSize:11}}/>
+            <XAxis dataKey="date" interval="preserveStartEnd" minTickGap={55} tick={{fontSize:11}}/>
             <YAxis yAxisId="valuation" domain={['auto','auto']} width={48} tick={{fontSize:11}}/>
             <YAxis yAxisId="price" orientation="right" domain={['auto','auto']} width={52} tick={{fontSize:11}}/>
             <Tooltip content={({active,payload,label:month}:any)=>active&&payload?.length?<div className="waterlevel-tooltip"><b>{month}</b>

@@ -1,9 +1,11 @@
 """Explicit series definitions. Source and statistical identities never alias."""
+from ..research.lixinger import METHODS
+
 FULL_MARKET_CODE = '1000002'
 FULL_MARKET_START = '1994-01-01'
 FULL_MARKET_FIELDS = {f'full_market_{metric}_{method}': f'{field}.{method}'
                       for metric, field in (('pe', 'pe_ttm'), ('pb', 'pb'))
-                      for method in ('mcw', 'ew', 'median')}
+                      for method in METHODS}
 
 GROUPS = {
     'full_market': dict(label='A股全指 PE / PB', cadence='manual', publisher='理杏仁'),
@@ -52,7 +54,7 @@ INDICES = (
 LIMITATIONS = [
     '历史分位是相对位置，不是内在价值、收益概率或仓位建议。综合水位是股票、利率债、信用债有效分数的中位数，缺类时覆盖范围改变。',
     '股票评分固定使用沪深300/中证500/中证1000的mcw PE、沪深300/中证500的mcw PB及理杏仁A股全指中位数PE/PB。图表方法切换不改变评分。',
-    '全市场使用理杏仁A股全指（1000002）的PE TTM和PB，分别保存mcw、ew与median的日频历史。两综指为价格指数，不含分红再投资；收益率倒数仅作跨资产参照。',
+    '全市场使用理杏仁A股全指（1000002）的PE TTM和PB，分别保存mcw、ew、ewpvo与median的日频历史。两综指为价格指数，不含分红再投资；收益率倒数仅作跨资产参照。',
     '全历史指本地已取得的全部有效覆盖，不保证供应商全部历史。转债价格/溢价率、市值/GDP及未经核验的宏观调整估值公式未接入。',
     'M2−M1为同月同比增速之差，单位百分点。M1自2025年启用新口径，2024年回溯覆盖未经逐点确认，跨口径历史仅供参考。',
     '统计月份、实际数据日、发布日期和抓取时间分别保留。来源历史可能修订；按截止日截取当前可得数据，不代表当时已知版本。',

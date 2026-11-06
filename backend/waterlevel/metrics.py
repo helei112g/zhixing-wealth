@@ -5,9 +5,9 @@ from decimal import Decimal, localcontext
 from statistics import median
 
 from ..common import day, dec, ds
+from ..research.lixinger import METHODS
 
-METHOD_VERSION = 'waterlevel-v3'
-METHODS = ('mcw', 'ew', 'median')
+METHOD_VERSION = 'waterlevel-v4'
 
 
 def month_shift(month, offset):

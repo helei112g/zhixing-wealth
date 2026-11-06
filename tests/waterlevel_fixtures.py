@@ -32,7 +32,7 @@ def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=
             rows = history(start=date(2005,1,1))
             if group == 'full_market':
                 field, method = FULL_MARKET_FIELDS[key].split('.')
-                scale = (25 if field=='pe_ttm' else 2.5) * {'mcw':1, 'ew':1.2, 'median':1.4}[method]
+                scale = (25 if field=='pe_ttm' else 2.5) * {'mcw':1, 'ew':1.2, 'ewpvo':1.1, 'median':1.4}[method]
             else:
                 scale = {'sh_composite':1800, 'sz_composite':900}[key]
             for row in rows:
@@ -65,7 +65,7 @@ def seed_indices(research):
         series = {}
         for metric in ('pe', 'pb', 'dividend_yield'):
             series[metric] = {}
-            for method, value in (('mcw', '10'), ('ew', '-4'), ('median', '20')):
+            for method, value in (('mcw', '10'), ('ew', '-4'), ('ewpvo', '15'), ('median', '20')):
                 if metric == 'dividend_yield':
                     value = '.02'
                 rows = [row for row in history(value) if row['date'] >= profile['launch']]

@@ -119,7 +119,7 @@ def full_market(reader, asof, previous, access):
         raise DomainError('全市场估值需要本机理杏仁访问配置')
     endpoint = 'cn/index/fundamental'
     start = FULL_MARKET_START
-    if previous:
+    if previous and FULL_MARKET_FIELDS.keys() <= previous['series'].keys():
         last = min(rows[-1]['date'] for rows in previous['series'].values())
         start = max(start, str(day(last) - timedelta(days=30)))
     result = {key: [] for key in FULL_MARKET_FIELDS}

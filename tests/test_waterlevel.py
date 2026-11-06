@@ -251,7 +251,11 @@ class ServiceTests(unittest.TestCase):
         self.populate()
         one=self.market.dashboard('mcw',ASOF)
         two=self.market.dashboard('ew',ASOF)
+        positive=self.market.dashboard('ewpvo',ASOF)
         self.assertEqual(one['scores'],two['scores'])
+        self.assertEqual(one['scores'],positive['scores'])
+        self.assertEqual(positive['indices'][0]['metrics']['pe']['current'],'15')
+        self.assertNotEqual(one['comparisons']['pe']['chart'][-1]['value'],positive['comparisons']['pe']['chart'][-1]['value'])
         self.assertEqual(one['scores']['categories']['equity']['included'],7)
         self.assertEqual(two['indices'][0]['metrics']['pe']['status'],'invalid_current')
         self.assertIsNone(next(row for row in one['indices'] if row['id']=='csi:930050')['metrics']['pe']['means']['5']['value'])
@@ -323,6 +327,14 @@ class ServiceTests(unittest.TestCase):
         first=self.market.update(['credit'],'synthetic-request')
         self.assertEqual(first,self.market.update(['credit'],'synthetic-request'))
         with self.assertRaises(ConflictError):self.market.update(['repo'],'synthetic-request')
+
+    def test_previous_lixinger_market_snapshot_remains_restorable(self):
+        from backend.waterlevel.validation import source
+        old = payload('full_market')
+        old['series'] = {k:v for k,v in old['series'].items() if not k.endswith('_ewpvo')}
+        source(old, archival=True)
+        with self.assertRaises(DomainError):
+            source(old)
 
     def test_v1_frozen_reports_remain_readable_exportable_and_backup_valid(self):
         from backend.research.snapshots import encode

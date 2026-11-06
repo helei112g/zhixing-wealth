@@ -34,7 +34,10 @@ def source(value, *, archival=False):
     expected = {key for key, entry in SERIES.items() if entry[0] == group}
     if group == 'full_market' and not legacy:
         expected = set(FULL_MARKET_FIELDS)
-    if not isinstance(series, dict) or set(series) != expected:
+    old_fields = {key for key in expected if not key.endswith('_ewpvo')}
+    valid_fields = isinstance(series, dict) and (set(series) == expected or
+                   (archival and group == 'full_market' and not legacy and set(series) == old_fields))
+    if not valid_fields:
         raise DomainError('市场指标集合与来源组不符')
     for key, rows in series.items():
         if not isinstance(rows, list) or not rows or len(rows) > 20000:
@@ -97,7 +100,7 @@ def backup(db):
         settings(json.loads(row[1]))
     for row in db.execute('SELECT id,sha256,data FROM market_reports'):
         value = decode(row[2], row[1])
-        if value.get('analysis_id') != row[0] or value.get('method') not in METHODS or value.get('method_version') not in ('waterlevel-v1', 'waterlevel-v2', METHOD_VERSION):
+        if value.get('analysis_id') != row[0] or value.get('method') not in METHODS or value.get('method_version') not in ('waterlevel-v1', 'waterlevel-v2', 'waterlevel-v3', METHOD_VERSION):
             raise DomainError('市场研究快照身份无效')
         for ref in value.get('sources', []):
             table = 'research_snapshots' if ref['kind'] == 'index' else 'market_snapshots'

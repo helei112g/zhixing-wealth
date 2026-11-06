@@ -37,8 +37,8 @@ class WaterlevelService:
             raise DomainError('市场更新已中断，未发布新快照')
         if previous:
             for key, rows in value['series'].items():
-                old_rows = previous['series'][key]
-                if rows[-1]['date'] < old_rows[-1]['date']:
+                old_rows = previous['series'].get(key, [])
+                if old_rows and rows[-1]['date'] < old_rows[-1]['date']:
                     raise DomainError('来源返回旧日期，保留有效历史')
         sid = secrets.token_hex(16)
         sha, raw = encode(value)
@@ -94,7 +94,7 @@ class WaterlevelService:
 
     def dashboard(self, method='mcw', asof=None):
         if method not in METHODS:
-            raise DomainError('市场估值方法只支持mcw、ew、median')
+            raise DomainError('市场估值方法只支持mcw、ew、ewpvo、median')
         asof = str(day(asof)) if asof else str(today())
         if asof > str(today()):
             raise DomainError('市场研究截止日不能晚于今天')

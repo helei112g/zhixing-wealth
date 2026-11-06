@@ -40,7 +40,7 @@ const asof = '2026-10-30';
     await page.getByRole('heading', {name: '规则摘要', exact: true}).waitFor();
     await page.waitForFunction(value => document.querySelector('.waterlevel-view-options')?.textContent.includes('截至 ' + value), asof);
     check(await page.getByLabel('研究截止日', {exact: true}).count() === 0 && await page.locator('.waterlevel-toolbar').count() === 0, 'current-date page has no cutoff or snapshot toolbar');
-    check(JSON.stringify(await page.getByLabel('水位曲线窗口').locator('option').allTextContents()) === JSON.stringify(['5年','10年','全历史']), 'all three chart windows are available');
+    check(JSON.stringify(await page.getByLabel('全市场曲线窗口').getByRole('button').allTextContents()) === JSON.stringify(['5年','10年','全历史']), 'all three chart windows sit inside the overview valuation card');
     check(boot.portfolios.length === 0, 'market page works without a portfolio');
     check((await api('/data-updates/jobs')).jobs.length === 0, 'opening market page does not fetch data');
     check(await page.locator('.waterlevel-score').count() === 4, 'four waterlevel cards render');
@@ -63,7 +63,7 @@ const asof = '2026-10-30';
     check(first.scores.categories.equity.included === 7, 'fixed index mcw and full-market median factors enter the score');
     const comparison = page.locator('.waterlevel-comparison').first();
     check(await page.locator('.waterlevel-comparison-chart .recharts-responsive-container').count() === 1, 'overview renders one shared valuation chart');
-    await page.getByLabel('水位曲线窗口').selectOption('all');
+    await page.getByLabel('全市场曲线窗口').getByRole('button', {name:'全历史'}).click();
     await page.waitForFunction(() => [...document.querySelectorAll('.waterlevel-comparison text[orientation="bottom"]')].some(node=>node.textContent.includes('2005')));
     check((await comparison.locator('text[orientation="bottom"]').allTextContents()).join(' ').includes('2005'), 'all-history curve extends back to the available start');
     const curves = await comparison.locator('.recharts-line-curve').count();
@@ -71,14 +71,14 @@ const asof = '2026-10-30';
     await page.waitForFunction(count => document.querySelector('.waterlevel-comparison')?.querySelectorAll('.recharts-line-curve').length === count, curves - 1);
     check(await comparison.locator('.recharts-line-curve').count() === curves - 1, 'legend hides the bond reference curve');
     await comparison.getByText('10Y国债收益率倒数', {exact:true}).click();
-    await page.getByLabel('水位曲线窗口').selectOption('5');
+    await page.getByLabel('全市场曲线窗口').getByRole('button', {name:'5年',exact:true}).click();
     await page.waitForFunction(() => [...document.querySelectorAll('.waterlevel-comparison text[orientation="bottom"]')].some(node=>node.textContent.includes('2021')));
     check(!(await comparison.locator('text[orientation="bottom"]').allTextContents()).join(' ').includes('2005') &&
           await comparison.locator('.recharts-line-curve').count() === curves, 'window clips display while retaining long-history moving means');
-    await page.getByLabel('水位曲线窗口').selectOption('10');
+    await page.getByLabel('全市场曲线窗口').getByRole('button', {name:'10年',exact:true}).click();
     const metricControls = comparison.getByRole('button', {name:'PB', exact:true});
     await metricControls.click();
-    await comparison.getByText('PB · 总市值加权', {exact:true}).waitFor();
+    await comparison.getByText('PB · 正数等权', {exact:true}).waitFor();
     check(await page.locator('.waterlevel-comparison-chart .recharts-responsive-container').count() === 1, 'PB switches the existing chart');
     await comparison.getByRole('button', {name:'等权', exact:true}).click();
     await comparison.getByText('PB · 等权', {exact:true}).waitFor();
@@ -112,15 +112,18 @@ const asof = '2026-10-30';
 
     await page.getByRole('tab', {name: '股票估值', exact: true}).click();
     check(await page.locator('.waterlevel-comparison-chart').count() === 0, 'stock tab has no duplicate full-market chart');
-    await page.getByRole('button', {name: '等权 · ew', exact: true}).click();
-    await page.getByRole('button', {name: '等权 · ew', exact: true}).getAttribute('aria-pressed');
-    await page.waitForFunction(() => document.querySelector('[aria-label="市场估值方法"] button[aria-pressed="true"]')?.textContent.includes('ew'));
+    await page.getByRole('img', {name:'境内宽基指数 PE 对照',exact:true}).waitFor();
+    check(await page.getByLabel('股票估值曲线窗口').getByRole('button',{name:'全历史'}).getAttribute('aria-pressed') === 'true',
+      'stock comparison starts at its independent full-history window');
+    await page.getByRole('button', {name: '等权', exact: true}).click();
+    await page.getByRole('button', {name: '等权', exact: true}).getAttribute('aria-pressed');
+    await page.waitForFunction(() => document.querySelector('[aria-label="估值方法"] button[aria-pressed="true"]')?.textContent.trim()==='等权');
     const equal = await api('/market-waterlevel?method=ew&asof=' + asof);
     check(JSON.stringify(first.scores) === JSON.stringify(equal.scores), 'method switch leaves fixed scores unchanged');
     check(await page.getByText('当前值无效', {exact: false}).count() > 0, 'negative ew is shown as invalid rather than replaced');
-    await page.getByRole('button', {name: '中位数 · median', exact: true}).click();
-    await page.waitForFunction(() => document.querySelector('[aria-label="市场估值方法"] button[aria-pressed="true"]')?.textContent.includes('median'));
-    check(await page.locator('[aria-label="市场估值方法"]').evaluate(element =>
+    await page.getByRole('button', {name: '中位数', exact: true}).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="估值方法"] button[aria-pressed="true"]')?.textContent.trim()==='中位数');
+    check(await page.locator('[aria-label="估值方法"]').evaluate(element =>
       getComputedStyle(element.querySelector('[aria-pressed="true"]')).backgroundColor !==
       getComputedStyle(element.querySelector('[aria-pressed="false"]')).backgroundColor), 'selected method has visible feedback');
     await page.getByLabel('对照指标', {exact: true}).selectOption('pb');
@@ -130,6 +133,17 @@ const asof = '2026-10-30';
 
     await page.getByRole('tab', {name: '宏观背景', exact: true}).click();
     await page.getByRole('heading', {name: 'M2−M1同比剪刀差', exact: true}).waitFor();
+    check(await page.getByLabel('股票估值曲线窗口').count() === 0, 'macro has no preset windows');
+    const macroChart = page.getByRole('img', {name:'制造业PMI历史曲线',exact:true});
+    const grid = await macroChart.locator('.recharts-cartesian-grid').boundingBox();
+    await page.mouse.move(grid.x+grid.width*.30,grid.y+grid.height*.5);
+    await page.mouse.down();
+    await page.mouse.move(grid.x+grid.width*.65,grid.y+grid.height*.5,{steps:12});
+    await page.mouse.up();
+    const reset = macroChart.locator('..').getByRole('button',{name:'恢复全历史',exact:true});
+    await reset.waitFor();
+    await reset.click();
+    check(await reset.count() === 0, 'drag selects a date range and reset restores all history');
     const gap = first.series.find(item => item.id === 'money_gap');
     check(gap.statistics.current === '3' && gap.unit === '百分点', 'money gap uses M2 minus M1 percentage points');
     await shot('waterlevel-macro');

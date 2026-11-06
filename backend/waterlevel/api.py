@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-Method = Literal['mcw', 'ew', 'median']
+Method = Literal['mcw', 'ew', 'ewpvo', 'median']
 Group = Literal['full_market', 'composites', 'calendar', 'china_rates', 'us_rates', 'credit', 'repo', 'pmi', 'prices', 'money', 'social_financing']
 
 

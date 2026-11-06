@@ -202,7 +202,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'market_waterlevel': {
                     'read': '/api/market-waterlevel', 'facts': '/api/market-waterlevel/facts',
                     'revision': '/api/market-waterlevel/revision',
-                    'methods': ['mcw', 'ew', 'median'], 'windows': [5, 10], 'chart_windows': [5, 10, 'all'],
+                    'methods': ['mcw', 'ew', 'ewpvo', 'median'], 'windows': [5, 10], 'chart_windows': [5, 10, 'all'],
                     'comparisons': 'Lixinger A-share all index 1000002 PE/PB by selected method, complete-month means, normalized SSE/SZSE composites; bond inverse on PE',
                     'settings': '/api/market-waterlevel/settings', 'settings_revision': 'expected_settings_revision',
                     'updates': '/api/market-waterlevel/updates', 'update_scope': 'market',

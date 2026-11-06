@@ -119,7 +119,7 @@ def render(snapshot):
             '<div class="grid">' + ''.join(cards) + '</div><h2>规则摘要</h2><p>' + escape(data['commentary']['overall']) + '</p><ul>'
             + ''.join('<li>' + escape(text) + '</li>' for text in data['commentary']['evidence'])
             + '</ul><h2>全市场估值对照</h2>'
-            + ''.join(comparison_chart(key, item, data['method'] if data.get('method_version') == 'waterlevel-v3' else None)
+            + ''.join(comparison_chart(key, item, data['method'] if data.get('method_version') in ('waterlevel-v3', 'waterlevel-v4') else None)
                       for key, item in data.get('comparisons', {}).items())
             + '<h2>主要指数估值</h2><p>蓝色：月末观测；棕色：5年均值；绿色：10年均值。股息率保持接口比例单位。</p><div class="grid">'
             + ''.join(indices) + '</div><h2>利率、宏观与跨资产参照</h2><div class="grid">'

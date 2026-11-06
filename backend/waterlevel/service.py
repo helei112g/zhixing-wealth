@@ -5,9 +5,10 @@ import secrets
 from copy import deepcopy
 
 from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, today
+from ..research.collection import subscription
 from ..research.snapshots import encode, decode
 from . import sources, validation
-from .catalog import GROUPS, INDICES, LIMITATIONS, SERIES
+from .catalog import FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, SERIES
 from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, score
 
 
@@ -28,9 +29,11 @@ class WaterlevelService:
             return None
         return dict(value, snapshot_id=row[0], sha256=row[1])
 
-    def collect(self, group, asof):
+    def collect(self, group, asof, *, full=False):
         previous = self.source(group)
         options = {'access': self.research.access} if group == 'full_market' else {}
+        if full:
+            options['full'] = True
         value = sources.collect(group, asof, previous, self.research.updates.stopping.is_set, **options)
         validation.source(value)
         if self.research.updates.stopping.is_set():
@@ -50,7 +53,7 @@ class WaterlevelService:
                           DO UPDATE SET snapshot_id=excluded.snapshot_id''', (group, sid))
         latest = max((rows[-1]['date'] for rows in value['series'].values()), default=None)
         return [dict(scope='market', resource=dict(scope='market', group=group), name=GROUPS[group]['label'],
-                     status='complete', snapshot_id=sid, date=latest)]
+                     status='complete', snapshot_id=sid, date=latest, difference=value.get('difference'))]
 
     def settings(self):
         with self.store.connection() as db:
@@ -69,9 +72,13 @@ class WaterlevelService:
             db.execute("INSERT INTO market_settings VALUES ('settings',?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (json_dumps(value),))
         return self.settings()
 
-    def update(self, groups, request_id):
-        return self.research.run(dict(scopes=['market'], request_id=request_id,
-                                      resources=[dict(scope='market', group=group) for group in groups]))
+    def update(self, groups, request_id, *, full=False, indices=()):
+        if any(iid not in dict(INDICES) for iid in indices):
+            raise DomainError('市场水位指数范围无效')
+        resources = [dict(scope='market', group=group, full=full) for group in groups]
+        resources.extend(dict(scope='valuations', target=iid, module='valuations', full=full) for iid in indices)
+        return self.research.run(dict(scopes=list(dict.fromkeys(r['scope'] for r in resources)),
+                                      request_id=request_id, resources=resources))
 
     @staticmethod
     def _failures(jobs):
@@ -107,7 +114,8 @@ class WaterlevelService:
                 return deepcopy(self.cache[key])
             source_data = {group: self.source(group) for group in GROUPS}
             profiles = {profile['id']: profile for profile in self.research.profiles()}
-            index_data = {iid: self.research.module(iid, 'valuations') for iid, _ in INDICES if iid in profiles}
+            observed = {FULL_MARKET_ID, *(iid for iid, _ in INDICES)}
+            index_data = {iid: self.research.module(iid, 'valuations') for iid in observed & profiles.keys()}
         value = self._assemble(method, asof, revision, source_data, index_data, profiles, failures)
         with self.store.lock:
             if self.research.revision() == revision:
@@ -118,17 +126,26 @@ class WaterlevelService:
 
     def _assemble(self, method, asof, revision, source_data, index_data, profiles, failures):
         sources_list, groups, items, raw_series, scoring = [], [], [], {}, []
+        all_index = index_data.get(FULL_MARKET_ID) or {}
+        all_series = {f'full_market_{metric}_{method}': all_index.get('series', {}).get(metric, {}).get(method, {}).get('rows', [])
+                      for metric in ('pe', 'pb') for method in METHODS}
+        shared = all_index.get('provider_id') == 'lixinger' and all(all_series.values())
+        if FULL_MARKET_ID in failures:
+            failures = dict(failures, full_market=failures[FULL_MARKET_ID])
+
         for group, definition in GROUPS.items():
-            source = source_data[group]
+            use_shared = group == 'full_market' and shared
+            source = all_index if use_shared else source_data[group]
             status = 'error' if failures.get(group) else 'available' if source else 'missing'
-            groups.append(dict(group=group, **definition, status=status, error=failures.get(group),
-                               notes=(source or {}).get('notes', []),
-                               checked_at=source.get('checked_at') if source else None))
+            checked_at = source.get('fetched_at' if use_shared else 'checked_at') if source else None
+            updatable = group != 'full_market' or FULL_MARKET_ID not in profiles or valuation_enabled(profiles[FULL_MARKET_ID])
+            groups.append(dict(group=group, **definition, status=status, error=failures.get(group), updatable=updatable,
+                               notes=(source or {}).get('notes', []), checked_at=checked_at))
             if source:
-                sources_list.append(dict(kind='market', group=group, snapshot_id=source['snapshot_id'],
-                                         sha256=source['sha256'], publisher=source['publisher'], evidence=source['evidence'],
-                                         checked_at=source['checked_at']))
-            raw_series.update((source or {}).get('series', {}))
+                identity = dict(kind='index', index_id=FULL_MARKET_ID) if use_shared else dict(kind='market', group=group)
+                sources_list.append(dict(identity, snapshot_id=source['snapshot_id'], sha256=source['sha256'],
+                                         publisher=definition['publisher'], evidence=source['evidence'], checked_at=checked_at))
+            raw_series.update(all_series if use_shared else (source or {}).get('series', {}))
         for key, (group, label, unit, frequency) in SERIES.items():
             rows = raw_series.get(f'{key}_{method}' if group == 'full_market' else key, [])
             stats = analyze(rows, asof, positive=group in ('full_market', 'composites'),
@@ -183,7 +200,8 @@ class WaterlevelService:
                     scoring.append(dict(id=iid + ':' + metric, label=label + ' ' + metric.upper(),
                                         category='equity', method='mcw', statistics=fixed_stats))
             indices.append(dict(id=iid, label=label, method=method, metrics=metrics,
-                                subscribed=iid in profiles, source='理杏仁' if valid_source else None,
+                                subscribed=iid in profiles, updatable=valuation_enabled(profiles.get(iid)),
+                                source='理杏仁' if valid_source else None,
                                 reason=None if valid_source else '尚未取得理杏仁估值，请在指数资料库添加并采集估值模块'))
         statistics = {item['id']: item['statistics'] for item in items}
         for metric in ('pe', 'pb'):
@@ -247,3 +265,7 @@ class WaterlevelService:
         if not row:
             raise DomainError('市场研究快照不存在')
         return dict(snapshot_id=sid, created_at=row[0], sha256=row[1], data=decode(row[2], row[1]))
+
+
+def valuation_enabled(profile):
+    return bool(profile and subscription(profile)['enabled'] and 'valuations' in subscription(profile)['modules'])

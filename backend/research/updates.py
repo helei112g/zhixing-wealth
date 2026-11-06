@@ -10,7 +10,8 @@ from . import providers
 from .snapshots import encode,decode
 from .collection import subscription
 
-SCOPES=('quotes','fx','index_prices','memberships','valuations','financials')
+AUTOMATIC_SCOPES = ('quotes', 'fx')
+SCOPES=(*AUTOMATIC_SCOPES,'index_prices','memberships','valuations','financials')
 UPDATE_SCOPES = (*SCOPES, 'market')
 MODULES={'index_prices':('index_info','price','total_return'),'memberships':('memberships','historical_memberships','tracking_funds'),
          'valuations':('valuations','market_activity','stock_valuations'),'financials':('index_financials','financials','historical_financials')}
@@ -67,7 +68,11 @@ class UpdateJobs:
         if targets is not None and (not isinstance(targets,list) or not targets or any(not isinstance(t,str) for t in targets)):raise DomainError('更新对象无效')
         if targets:
             for iid in targets:self.research.profile(iid)
-        targets=targets or [p['id'] for p in self.research.profiles() if subscription(p)['enabled']]
+        full=body.get('full',False)
+        if type(full) is not bool or (full and (resources is not None or set(scopes) & set(AUTOMATIC_SCOPES))):
+            raise DomainError('全量校对须指定研究范围，精确资源请在各项内指定')
+        profiles = {p['id']:p for p in self.research.profiles()}
+        targets=targets or [iid for iid,p in profiles.items() if subscription(p)['enabled']]
         if resources is None:
             resources=[]
             for scope in UPDATE_SCOPES:
@@ -78,11 +83,13 @@ class UpdateJobs:
                     from ..waterlevel.catalog import GROUPS
                     resources.extend(dict(scope=scope, group=group) for group in GROUPS)
                 else:resources += [dict(scope=scope,target=iid,module=m) for iid in targets for m in MODULES[scope] if subscription(self.research.profile(iid))['enabled'] and m in subscription(self.research.profile(iid))['modules']]
+        if full:
+            resources = [dict(r, full=True) for r in resources]
         if not isinstance(resources,list) or not resources or len(resources)>200:raise DomainError('没有可更新的对象，或任务超过200项')
         for r in resources:
             if not isinstance(r,dict) or r.get('scope') not in scopes:raise DomainError('资源与更新范围不一致')
             scope=r['scope']
-            if 'full' in r and (scope not in ('quotes','fx') or type(r['full']) is not bool):raise DomainError('全量补齐参数无效')
+            if 'full' in r and type(r['full']) is not bool:raise DomainError('全量补齐参数无效')
             if scope=='fx':
                 if set(r)-{'full'}!={'scope','currency'} or r['currency'] not in ('HKD','USD'):raise DomainError('汇率资源无效')
             elif scope=='quotes':
@@ -90,19 +97,47 @@ class UpdateJobs:
                 if r['instrument_id'] is not None and not any(i['id']==r['instrument_id'] for i in self.store.state()['instruments']):raise DomainError('行情标的不存在')
             elif scope == 'market':
                 from ..waterlevel.catalog import GROUPS
-                if set(r) != {'scope', 'group'} or r['group'] not in GROUPS:
+                if set(r) - {'full'} != {'scope', 'group'} or r['group'] not in GROUPS:
                     raise DomainError('市场来源组无效')
             else:
-                if set(r)!={'scope','target','module'} or r['module'] not in MODULES[scope]:raise DomainError('指数模块资源无效')
+                if set(r)-{'full'}!={'scope','target','module'} or r['module'] not in MODULES[scope]:raise DomainError('指数模块资源无效')
                 self.research.profile(r['target'])
                 self.research.collection.active(r['target'],r['module'])
-        return sorted({key(r):r for r in resources}.values(),key=lambda r:(UPDATE_SCOPES.index(r['scope']),r.get('target',''),MODULES.get(r['scope'],('',)).index(r.get('module','')) if r['scope'] in MODULES else r.get('currency',r.get('group',''))))
+        normalized = {}
+        requested_info = {r['target'] for r in resources if r.get('module') == 'index_info'}
+        for resource in resources:
+            r = {k:v for k,v in resource.items() if k!='full' or v}
+            # A subscribed A-share all index uses the same fundamental snapshot as the index library.
+            if r.get('group') == 'full_market':
+                from ..waterlevel.catalog import FULL_MARKET_ID
+                profile = profiles.get(FULL_MARKET_ID)
+                if profile:
+                    if not subscription(profile)['enabled'] or 'valuations' not in subscription(profile)['modules']:
+                        raise DomainError('指数资料库的A股全指估值已暂停，请启用后更新')
+                    r = dict(r, scope='valuations', target=FULL_MARKET_ID, module='valuations')
+                    del r['group']
+            target = r.get('target')
+            if r.get('module') == 'valuations' and target not in requested_info and not self.research.module(target, 'index_info'):
+                if 'index_info' in subscription(profiles[target])['modules']:
+                    prereq = dict(scope='index_prices', target=target, module='index_info')
+                    normalized[key(prereq)] = prereq
+                    requested_info.add(target)
+            identity = key({k: v for k, v in r.items() if k != 'full'})
+            if identity not in normalized or r.get('full'):
+                normalized[identity] = r
+        if len(normalized) > 200:
+            raise DomainError('任务超过200项')
+        return sorted(normalized.values(),key=lambda r:(UPDATE_SCOPES.index(r['scope']),r.get('target',''),MODULES.get(r['scope'],('',)).index(r.get('module','')) if r['scope'] in MODULES else r.get('currency',r.get('group',''))))
 
     def run(self,body,trigger='manual'):
         resources=self.plan(body);request_id=body.get('request_id')
+        if trigger != 'manual' and any(r['scope'] not in AUTOMATIC_SCOPES for r in resources):
+            raise DomainError('指数资料库和市场水位仅支持手动更新')
         if not isinstance(request_id,str) or not request_id or len(request_id)>160:raise DomainError('更新必须携带1至160字符的request_id')
         receipt=hashlib.sha256(request_id.encode()).hexdigest()
-        request_digest=key(dict(scopes=sorted(set(body.get('scopes',SCOPES))),targets=sorted(body['targets']) if body.get('targets') else None,resources=sorted(body['resources'],key=key) if body.get('resources') else None))
+        signature=dict(scopes=sorted(set(body.get('scopes',SCOPES))),targets=sorted(body['targets']) if body.get('targets') else None,resources=sorted(body['resources'],key=key) if body.get('resources') else None)
+        if body.get('full'):signature['full']=True
+        request_digest=key(signature)
         generation=providers.cutoff();digest=key(dict(resources=resources,generation=generation))
         with self.worker_lock,self.research.transaction() as db:
             old=db.execute('SELECT digest,job_id FROM data_update_receipts WHERE id=?',(receipt,)).fetchone()
@@ -156,19 +191,20 @@ class UpdateJobs:
         return items or [dict(scope=r['scope'],resource=r,status='complete',name='没有待更新行情标的')]
 
     def execute(self,r):
-        if r['scope'] in ('quotes','fx'):return self._legacy(r)
+        if r['scope'] in AUTOMATIC_SCOPES:return self._legacy(r)
+        if self.current_trigger != 'manual':
+            raise DomainError('指数资料库和市场水位仅支持手动更新')
         if r['scope'] == 'market':
-            if self.current_trigger in ('schedule', 'startup'):
-                raise DomainError('市场水位仅支持手动更新')
             asof = (self.current_job or {}).get('information_cutoff') or str(today())
             if r['group'] == 'full_market':
                 asof = min(asof, (self.current_job or {}).get('market_cutoff') or providers.cutoff())
-            return self.research.waterlevel.collect(r['group'], asof)
+            items = self.research.waterlevel.collect(r['group'], asof, full=True) if r.get('full') else self.research.waterlevel.collect(r['group'], asof)
+            return [dict(item, resource=r) for item in items]
         iid,module=r['target'],r['module']
         cutoffs=self.current_job or {}
         asof=(cutoffs.get('market_cutoff') or providers.cutoff()) if module in ('price','total_return','stock_valuations','valuations','market_activity') else (cutoffs.get('information_cutoff') or str(today()))
-        value=self.research.collection.collect(iid,module,asof,automatic=self.current_trigger in ('schedule','startup'))
-        return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='complete',snapshot_id=value.get('snapshot_id'),date=value.get('effective_date'))]
+        value=self.research.collection.collect(iid,module,asof,full=True) if r.get('full') else self.research.collection.collect(iid,module,asof)
+        return [dict(scope=r['scope'],target=iid,module=module,resource=r,status='complete',snapshot_id=value.get('snapshot_id'),date=value.get('effective_date'),difference=value.get('update_difference'))]
 
     def _work(self):
         try:
@@ -210,16 +246,11 @@ class UpdateJobs:
         from ..family_domain import TABLES
         with self.store.connection() as db:populated=any(db.execute('SELECT 1 FROM '+t+' LIMIT 1').fetchone() for t in ('portfolios','instruments',*TABLES))
         for p in self.research.settings()['policies']:
-            if not p['enabled'] or p['cadence']=='manual':continue
+            if p['scope'] not in AUTOMATIC_SCOPES or not p['enabled'] or p['cadence']=='manual' or not populated:continue
             slot=d if clock>=p['time'] else d-timedelta(days=1)
             if p['cadence']=='trade_day':
                 while slot.weekday()>4:slot-=timedelta(days=1)
             elif p['cadence']=='weekly':slot-=timedelta(days=slot.weekday())
-            if p['scope'] in ('quotes','fx') and not populated:continue
-            if p['scope'] not in ('quotes','fx') and not self.research.profiles():continue
-            if p['scope'] not in ('quotes','fx'):
-                access=self.research.access.status()
-                if not access['enabled'] or not access['automatic'] or not any(subscription(v)['enabled'] for v in self.research.profiles()):continue
             request_id='schedule:'+slot.isoformat()+':'+p['scope']+':'+str(self.research.revision('settings_revision'))
             with self.store.connection() as db:
                 if db.execute('SELECT 1 FROM data_update_receipts WHERE id=?',(hashlib.sha256(request_id.encode()).hexdigest(),)).fetchone():continue
@@ -235,11 +266,11 @@ class UpdateJobs:
         with self.research.transaction() as db:
             for r in rows:
                 job=json.loads(r[1]);job['lease_owner']=None;job['lease_expires']=None;job['resume_on_start']=True
-                manual_market = any(resource['scope']=='market' for resource in job['resources'])
-                if manual_market:
+                manual_research = any(resource['scope'] not in AUTOMATIC_SCOPES for resource in job['resources'])
+                if manual_research:
                     job['resume_on_start']=False
                 db.execute('UPDATE data_update_tasks SET state=?,data=? WHERE id=?',
-                           ('pending' if resume and not manual_market else 'interrupted',json_dumps(job),r[0]))
+                           ('pending' if resume and not manual_research else 'interrupted',json_dumps(job),r[0]))
         if resume:self.start()
 
     def shutdown(self):

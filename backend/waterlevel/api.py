@@ -17,7 +17,9 @@ class MarketSettingsRequest(BaseModel):
 
 class MarketUpdateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    groups: list[Group] = Field(min_length=1, max_length=11)
+    groups: list[Group] = Field(default_factory=list, max_length=11)
+    indices: list[str] = Field(default_factory=list, max_length=10)
+    full: StrictBool = False
     request_id: str = Field(min_length=1, max_length=160)
 
 
@@ -63,9 +65,9 @@ def router(service):
     def save_settings(body: MarketSettingsRequest):
         return service.save_settings(body.model_dump())
 
-    @api.post('/updates', status_code=202, summary='手动更新选定来源；全市场估值使用理杏仁额度')
+    @api.post('/updates', status_code=202, summary='手动增量或全量校对市场来源及共享指数估值')
     def updates(body: MarketUpdateRequest):
-        return service.update(body.groups, body.request_id)
+        return service.update(body.groups, body.request_id, full=body.full, indices=body.indices)
 
     @api.post('/snapshots', summary='核对分析摘要及研究版本后冻结，不重新抓取')
     def freeze(body: MarketFreezeRequest):

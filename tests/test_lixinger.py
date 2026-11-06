@@ -105,6 +105,26 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(d['top10_weight'],'100');self.assertFalse(d['mapping_available'])
         with self.store.connection() as db:validate_backup(db)
         self.assertNotIn(SYNTHETIC,json.dumps(d));self.assertTrue(d['curve']);self.assertTrue(d['drawdown']['3']['partial'])
+    def test_full_valuation_rechecks_old_dates_and_preserves_snapshot_on_truncation(self):
+        self.r.collection.save('000905', ['valuations'], '2026-09-01', True, self.r.revision())
+        iid = 'csi:000905'
+        self.r.collection.collect(iid, 'index_info', '2026-11-04')
+        self.r.collection.collect(iid, 'valuations', '2026-11-04')
+        self.r.collection.collect(iid, 'valuations', '2026-11-05')
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-10-20')
+        old = self.r.module(iid, 'valuations')['snapshot_id']
+
+        def truncated(endpoint, params, **kwargs):
+            self.assertEqual(params['startDate'], '2026-09-01')
+            return transport(endpoint, dict(params, startDate='2026-10-20'))[1]['data']
+
+        with patch.object(self.r.access, 'request', side_effect=truncated), self.assertRaisesRegex(DomainError, '历史缩水'):
+            self.r.collection.collect(iid, 'valuations', '2026-11-05', full=True)
+        self.assertEqual(self.r.module(iid, 'valuations')['snapshot_id'], old)
+        result = self.r.collection.collect(iid, 'valuations', '2026-11-05', full=True)
+        self.assertEqual(self.calls[-1][1]['startDate'], '2026-09-01')
+        self.assertIn('revised', result['update_difference'])
+
     def test_condition_scenario_requires_explicit_uniform_change_and_same_day(self):
         iid=self.add()
         for module in lixinger.DEFAULT_MODULES:self.r.collection.collect(iid,module,'2026-11-04')

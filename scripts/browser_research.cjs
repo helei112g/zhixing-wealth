@@ -242,6 +242,20 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByLabel('历史来源版本',{exact:true}).selectOption({index:1});
   await page.getByText('查看冻结数据（每组最多显示最后100条）',{exact:true}).waitFor();
   check(true,'immutable older snapshot remains readable');
+  check(await page.getByRole('button',{name:'更新指数估值',exact:true}).isVisible(),'index library can refresh the shared valuation independently');
+  await page.getByRole('button',{name:'全量校对',exact:true}).click();
+  let full;
+  for(let attempt=0;attempt<180;attempt++){
+   full=(await api('/data-updates/jobs')).jobs[0];
+   if(full?.id!==job.id&&full?.state==='complete')break;
+   await page.waitForTimeout(500);
+  }
+  check(full?.state==='complete' && full.resources.every(resource=>resource.target==='csi:000905'&&resource.full),
+   'index full reconciliation rereads the selected subscription only');
+  const shared=(await api('/market-waterlevel')).sources.find(source=>source.index_id==='csi:000905');
+  check(shared.snapshot_id===full.items.find(item=>item.module==='valuations').snapshot_id,
+   'market reads the exact snapshot published from the index library');
+  await shot('index-manual-updates');
   await page.getByRole('button',{name:'管理采集',exact:true}).click();
   const manage=page.getByRole('dialog',{name:'管理指数采集'});
   await manage.getByRole('checkbox',{name:'启用此指数；关闭即暂停并保留历史',exact:true}).uncheck();

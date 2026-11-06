@@ -2,6 +2,7 @@
 from ..research.lixinger import METHODS
 
 FULL_MARKET_CODE = '1000002'
+FULL_MARKET_ID = 'lxri:' + FULL_MARKET_CODE
 FULL_MARKET_START = '1994-01-01'
 FULL_MARKET_FIELDS = {f'full_market_{metric}_{method}': f'{field}.{method}'
                       for metric, field in (('pe', 'pe_ttm'), ('pb', 'pb'))

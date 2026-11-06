@@ -144,7 +144,7 @@ function BroadCard({data, window, setWindow, setMethod, loading, selectedMethod,
     {methodStatus&&<p role="status" className="muted small waterlevel-method-status">{methodStatus}</p>}
     <div className="studio-valuation-chart" aria-busy={loading}>{lines.some(line=>line.key!=='bond')
       ? <ValuationTrend rows={rows} label="境内宽基指数 PE 对照" lines={lines} preserveBounds/>
-      : <Notice>尚无所选口径的估值历史，可在指数库更新相关指数的估值模块。</Notice>}
+      : <Notice>尚无所选口径的估值历史，可在指数资料库更新相关指数的估值模块。</Notice>}
     </div>
     <p className="muted small">单位为倍。各估值线独立按月末取样，缺失历史留空。国债收益率倒数仅作参照，可用图例隐藏。</p>
     {series.some(line=>!lines.includes(line))&&<p className="muted small">所选窗口无可绘制观测 · {series.filter(line=>!lines.includes(line)).map(line=>line.label).join('、')}</p>}
@@ -175,22 +175,33 @@ function ScoreOverview({data}: Obj) {
 }
 
 function MarketSources({data, run, busy, onIndices}: Obj) {
+  const groups = data.groups.filter((g:Obj)=>g.updatable).map((g:Obj)=>g.group);
+  const indices = data.indices.filter((i:Obj)=>i.updatable).map((i:Obj)=>i.id);
   return <>
-    <Panel title="市场数据更新" right={<Button primary disabled={busy} onClick={()=>run(data.groups.map((g:Obj)=>g.group))}><RefreshCw size={14}/>更新全部来源</Button>}>
-      <p className="muted small">市场数据只在这里手动更新。全市场估值使用本机理杏仁额度，其余来源按实际发布日期取数。</p>
+    <Panel title="市场数据更新" right={<div className="inline-actions">
+      <Button disabled={busy||!(groups.length||indices.length)} onClick={()=>run(groups,indices,true)}>全量校对</Button>
+      <Button primary disabled={busy||!(groups.length||indices.length)} onClick={()=>run(groups,indices)}><RefreshCw size={14}/>更新全部来源</Button>
+    </div>}>
+      <p className="muted small">仅手动更新。全量校对重新拉取当前来源和已启用的共享估值，校对失败时保留上次有效快照。</p>
       <div className="table-wrap"><table><thead><tr><th>数据组 / 来源</th><th>最近检查</th><th>状态</th><th>操作</th></tr></thead><tbody>
         {data.groups.map((group:Obj)=><tr key={group.group}><td>{group.label}<small>{group.publisher}</small></td>
           <td>{group.checked_at?.slice(0,19).replace('T',' ')||'尚未检查'}</td><td>{states[group.status]}<small>{group.error}</small>{group.notes.map((note:string)=><small key={note}>{note}</small>)}</td>
-          <td><Button small disabled={busy} onClick={()=>run([group.group])}>更新</Button></td></tr>)}
+          <td>{group.updatable?<Button small disabled={busy} onClick={()=>run([group.group])}>更新</Button>:<span className="muted small">指数资料库已暂停</span>}</td></tr>)}
       </tbody></table></div>
     </Panel>
-    <Panel title="指数估值来源"><p>复用指数资料库中的理杏仁估值快照。请添加需要观察的指数并启用估值模块；来源和方法未取得时保持缺失。</p><Button onClick={onIndices}>打开指数资料库</Button></Panel>
+    <Panel title="指数估值来源" right={<Button onClick={onIndices}>打开指数资料库</Button>}>
+      <p className="muted small">两页共用同一份理杏仁估值快照。更新成功后，两页都会读取新版本。</p>
+      <div className="table-wrap"><table><thead><tr><th>指数</th><th>来源</th><th>操作</th></tr></thead><tbody>
+        {data.indices.map((index:Obj)=><tr key={index.id}><td>{index.label}</td><td>{index.source||'待采集'}</td>
+          <td>{index.updatable?<Button small disabled={busy} onClick={()=>run([],[index.id])}>更新估值</Button>:<span className="muted small">{index.subscribed?'估值采集未启用':'请先在指数资料库添加'}</span>}</td></tr>)}
+      </tbody></table></div>
+    </Panel>
     <UpdateHistory/>
     <Panel title="来源版本与方法边界">
       {data.sources.map((source:Obj)=><details className="research-source" key={source.snapshot_id}><summary>{source.index_id||source.group} · {source.publisher}</summary>
         <p className="muted small">检查 {source.checked_at} · 快照 {source.snapshot_id}<br/>SHA-256 {source.sha256}</p>
         {source.error&&<p className="muted small">更新失败：{source.error}</p>}
-        {source.evidence.map((item:Obj,index:number)=><p key={index}><a href={item.url} target="_blank" rel="noopener noreferrer">来源 {index+1} ↗</a><small className="research-source-digest">抓取 {item.fetched_at} · {item.sha256}</small></p>)}
+        {source.evidence.map((item:Obj,index:number)=><p key={index}><a href={item.url} target="_blank" rel="noopener noreferrer">来源 {index+1} ↗</a><small className="research-source-digest">抓取 {item.fetched_at||source.checked_at} · {item.sha256}</small></p>)}
       </details>)}
       <details><summary>完整计算说明和当前缺口</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details>
     </Panel>
@@ -252,7 +263,13 @@ export function WaterlevelPage({today,onIndices}: Obj) {
     } catch(error:any){setError(error.message);}
     finally{setSaving(false);}
   }
-  function update(groups:string[]) {return submission.submit({scopes:['market'],resources:groups.map(group=>({scope:'market',group}))});}
+  function update(groups:string[],indices:string[]=[],full=false) {
+    const resources = [
+      ...groups.map(group=>({scope:'market',group,full})),
+      ...indices.map(target=>({scope:'valuations',target,module:'valuations',full})),
+    ];
+    return submission.submit({scopes:[...new Set(resources.map(r=>r.scope))],resources});
+  }
   function selectMethod(next: string) {
     if (next === method && !error) return;
     if (next === method) {

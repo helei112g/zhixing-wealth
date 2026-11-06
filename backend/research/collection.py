@@ -2,7 +2,7 @@
 import hashlib
 from copy import deepcopy
 from datetime import timedelta
-from ..common import ConflictError, DomainError, day, json_dumps, now, today
+from ..common import ConflictError, DomainError, day, json_dumps, now
 from . import lixinger, providers
 from .metrics import years_before
 
@@ -67,43 +67,44 @@ class Collection:
         for m in subscription(p)['modules']:
             stage = self.research.module(iid, 'stage.'+m)
             if stage:
-                states[m] = {k: stage.get(k) for k in ('phase', 'last_incremental', 'last_reconciled', 'next_reconciliation', 'range_start', 'range_end', 'mode', 'difference')}
+                states[m] = {k: stage.get(k) for k in ('phase', 'last_incremental', 'last_reconciled', 'range_start', 'range_end', 'mode', 'difference')}
                 states[m].update(completed=len(stage.get('parts', [])), planned=len(stage.get('calls', [])))
         return dict(subscription=subscription(p), modules=states)
 
-    def collect(self, iid, module, end, automatic=False):
-        p = self.active(iid, module); sub = subscription(p)
+    def collect(self, iid, module, end, automatic=False, *, full=False):
+        if automatic:
+            raise DomainError('指数资料库仅支持手动更新')
+        p = self.active(iid, module)
+        sub = subscription(p)
         if module in ('stock_valuations', 'financials', 'historical_financials'):
-            return self.company_data(iid, module, end)
-        if p.get('exposure')=='overseas':
-            if module not in ('price','total_return','memberships'): raise DomainError('该跨市场模块尚未核验')
-            value=providers.constituents(p,end) if module=='memberships' else providers.prices(p,module,end)
-            self.active(iid,module)
-            return dict(value,snapshot_id=self.research.publish(iid,module,value))
+            return self.company_data(iid, module, end, full=full)
+
         old = self.research.module(iid, module)
-        state = self.research.module(iid, 'stage.'+module) or {}
-        if automatic and state.get('phase')=='validation_failed': raise DomainError('上次完整性校验失败；保留旧数据，需手动核对后重试')
         start = sub.get('history_start') or p['launch']
+        if p.get('exposure') == 'overseas':
+            return self.collect_official(p, module, start, end, old, full)
+
+        state = self.research.module(iid, 'stage.'+module) or {}
         if module == 'historical_memberships':
             start = max(start, str(years_before(end, 10)))
-        full = (not old or old.get('provider_id') != 'lixinger' or not state.get('last_reconciled') or
-                (today()-day(state['last_reconciled'][:10])).days >= 15 or state.get('generation') != p.get('collection_generation', 0))
         needs_valuation_backfill = (module == 'valuations' and old
                                     and 'ewpvo' not in old.get('series', {}).get('pe', {}))
-        full = full or bool(needs_valuation_backfill)
-        if not full and old.get('effective_date'): start = max(start, str(day(old['effective_date'])-timedelta(days=15)))
-        # Resume the interrupted cycle with its original fixed cutoff and exact shards.
-        if (state.get('phase') == 'collecting' and state.get('generation') == p.get('collection_generation',0)
-                and (not needs_valuation_backfill or (state['mode'] == 'reconcile' and
-                     'pe_ttm.ewpvo' in state['calls'][0]['params']['metricsList']))):
+        full = (full or not old or old.get('provider_id') != 'lixinger' or not state.get('last_reconciled')
+                or bool(needs_valuation_backfill) or state.get('generation') != p.get('collection_generation', 0))
+        if not full and old.get('effective_date'):
+            start = max(start, str(day(old['effective_date']) - timedelta(days=15)))
+        # Only resume checkpoints for the same mode and configured range.
+        if (state.get('phase') == 'collecting' and state.get('generation') == p.get('collection_generation', 0)
+                and state['mode'] == ('reconcile' if full else 'incremental')
+                and (not needs_valuation_backfill or
+                     'pe_ttm.ewpvo' in state['calls'][0]['params']['metricsList'])):
             start, end = state['range_start'], state['range_end']
-            full = state['mode'] == 'reconcile'
         info = (self.research.module(iid, 'index_info') or {}).get('info')
         if module != 'index_info' and not info:
             raise DomainError('请先更新指数基本信息并核验地区、币种及编制方，再采集其他理杏仁模块')
         calls = lixinger.request_plan(p, module, start, end, info)
         if not full and module == 'historical_memberships':
-            # Revisit old baskets only in the periodic reconciliation, not every trading day.
+            # Revisit old baskets only during explicit reconciliation.
             last_period=max((b['period'] for b in (old or {}).get('baskets',[])),default='')
             calls = [c for c in calls if c['period'] > last_period]
         identity = hashlib.sha256(json_dumps([module, sub, p.get('collection_generation', 0), start, end, full, calls]).encode()).hexdigest()
@@ -133,6 +134,12 @@ class Collection:
             value['coverage'] = dict(configured_start=sub.get('history_start'), requested_start=state['range_start'],
                                      requested_end=end, range_limited=bool(sub.get('history_start')), status='collected',
                                      supplier_full_history_verified=False)
+            if module == 'memberships':
+                check_current_membership(old, value)
+            if module == 'valuations':
+                from ..waterlevel.catalog import FULL_MARKET_ID
+                if iid == FULL_MARKET_ID:
+                    validate_full_market_valuation(value, self.research.waterlevel.source('full_market') if not old else None, start)
             value, difference = merge(old, value, full, (start, end))
         except DomainError:
             state['phase']='validation_failed'
@@ -155,11 +162,38 @@ class Collection:
                 raise DomainError('采集范围已变化，本次响应未发布')
             sid = self.research.publish(iid, module, value)
         state.update(phase='complete', difference=difference, last_incremental=now())
-        if full: state.update(last_reconciled=now(), next_reconciliation=str(today()+timedelta(days=15)))
+        if full:
+            state['last_reconciled'] = now()
         self.research.publish(iid, 'stage.'+module, state)
-        return dict(value, snapshot_id=sid)
+        return dict(value, snapshot_id=sid, update_difference=difference)
 
-    def company_data(self, iid, module, end):
+    def collect_official(self, profile, module, start, end, old, full):
+        iid = profile['id']
+        if module == 'memberships':
+            value = providers.constituents(profile, end)
+            check_current_membership(old, value)
+            difference = None
+        elif module in ('price', 'total_return'):
+            if not full and old and old.get('effective_date'):
+                start = max(start, str(day(old['effective_date']) - timedelta(days=15)))
+            # The CSI endpoint includes an artificial start row, so request one extra day.
+            request_start = str(day(start) - timedelta(days=1)) if profile['provider'] == 'csi' else start
+            value = providers.prices(profile, module, end, start_date=request_start)
+            value['rows'] = [row for row in value['rows'] if row['date'] >= start]
+            if not value['rows']:
+                raise DomainError('官方来源未返回请求范围内的有效日线，保留旧数据')
+            value['effective_date'] = value['rows'][-1]['date']
+            if old and old['effective_date'] > value['effective_date']:
+                raise DomainError('官方来源返回旧日期，保留有效历史')
+            previous = old if (old or {}).get('source') == value.get('source') else None
+            value, difference = merge(previous, value, full, (start, end))
+        else:
+            raise DomainError('该跨市场模块尚未核验')
+
+        self.active(iid, module)
+        return dict(value, snapshot_id=self.research.publish(iid, module, value), update_difference=difference)
+
+    def company_data(self, iid, module, end, *, full=False):
         """Retain the company-level exception; never substitute index totals for companies."""
         from . import history
 
@@ -175,8 +209,8 @@ class Collection:
             if not baskets:
                 raise DomainError('请先采集历史成分名单')
             unique = {m['code']: m for b in baskets['baskets'] for m in b['members']}
-            rows = self.shared_companies('financials', list(unique.values()), end)
-            annual, observations, evidence = self.historical_industry_baskets(baskets['baskets'], end)
+            rows = self.shared_companies('financials', list(unique.values()), end, full=full)
+            annual, observations, evidence = self.historical_industry_baskets(baskets['baskets'], end, full=full)
             value = dict(
                 rows,
                 years=history.totals(rows['rows'], annual),
@@ -186,7 +220,17 @@ class Collection:
                 industry_basis='对应期末前最近7天内的历史估值记录行业；当前可得版本，不声称严格PIT',
             )
         else:
-            value = self.shared_companies(module, members['rows'], end)
+            value = self.shared_companies(module, members['rows'], end, full=full)
+
+        old = self.research.module(iid, module)
+        if old and old.get('rows') and not value['rows']:
+            raise DomainError('公司来源返回空数据，保留有效历史')
+        if old and old.get('collection_cutoff') == end:
+            row_key = lambda row: (row['code'], row.get('period', row.get('date')))
+            known = {row_key(row) for row in old['rows']}
+            fresh = {row_key(row) for row in value['rows']}
+            if known - fresh and old.get('collected_codes') == value['collected_codes']:
+                raise DomainError('同一截止日的公司数据缺失记录，保留旧快照')
 
         with self.research.store.lock:
             latest = self.active(iid, module)
@@ -195,13 +239,13 @@ class Collection:
             sid = self.research.publish(iid, module, value)
         return dict(value, snapshot_id=sid)
 
-    def historical_industry_baskets(self, baskets, end):
+    def historical_industry_baskets(self, baskets, end, *, full=False):
         """Enrich annual basket copies with dated observations, preserving source lists."""
         annual = [deepcopy(b) for b in baskets if b['period'].endswith('12-31')]
         known = {}
         observations = []
         evidence = []
-        for profile in self.research.profiles():
+        for profile in (() if full else self.research.profiles()):
             cached = self.research.module(profile['id'], 'historical_financials') or {}
             if cached.get('collection_cutoff') == end:
                 known.update({(r['period'], r['code']): r for r in cached.get('industry_observations', [])})
@@ -226,11 +270,11 @@ class Collection:
 
         return annual, observations, evidence
 
-    def shared_companies(self, module, members, end):
+    def shared_companies(self, module, members, end, *, full=False):
         """Reuse immutable company observations for the same query cutoff across indices."""
         wanted={m['code'] for m in members}; known=set(); rows={}; evidence=[]; periods=set(); refs=[]
         names=('financials','historical_financials') if module=='financials' else ('stock_valuations',)
-        for p in self.research.profiles():
+        for p in (() if full else self.research.profiles()):
             for name in names:
                 cached=self.research.module(p['id'],name)
                 if not cached or cached.get('collection_cutoff')!=end: continue
@@ -248,16 +292,44 @@ class Collection:
                     effective_date=max(dates,default=None),collection_cutoff=end,collected_codes=sorted({r['code'] for r in rows.values()} if module=='stock_valuations' else wanted),source_snapshot_ids=refs)
 
 
+def check_current_membership(old, new):
+    if not old or not old.get('rows'):
+        return
+    if not new.get('rows') or (old.get('effective_date') and
+                               (new.get('effective_date') or '') < old['effective_date']):
+        raise DomainError('成分来源返回空数据或旧日期，保留旧快照')
+    if old.get('weights_complete') and not new.get('weights_complete'):
+        raise DomainError('成分来源缺少已核验的完整权重，保留旧快照')
+
+
+def validate_full_market_valuation(value, previous, start):
+    for metric in ('pe', 'pb'):
+        for method in lixinger.METHODS:
+            series = value['series'][metric][method]
+            rows = series['rows']
+            if not rows:
+                raise DomainError('A股全指PE/PB口径未完整取得，保留旧快照')
+            known = (previous or {}).get('series', {}).get(f'full_market_{metric}_{method}', [])
+            missing = {row['date'] for row in known if row['date'] >= start} - {row['date'] for row in rows}
+            if missing:
+                raise DomainError('A股全指历史较已发布快照缩水，保留旧数据')
+            series['rows'] = [dict(date=row['date'], value=row['value']) for row in known if row['date'] < start] + rows
+
+
 def merge(old, new, full, requested_range=None):
     """Merge revisions only within one provider/metric identity; missing rows never delete history."""
     stats = dict(added=0, revised=0, missing=0)
-    if not old or old.get('provider_id') != new.get('provider_id'): return new, stats
+    old = old or {}
+    if old.get('provider_id') != new.get('provider_id'):
+        old = {}
     out = deepcopy(new)
     def combine(a, b, key='date'):
         prev = {r[key]: r for r in a}; fresh = {r[key]: r for r in b}
         if len(fresh) != len(b): raise DomainError('分片之间出现重复业务键，未发布')
         if prev and fresh:
             lo, hi = min(fresh), max(fresh)
+            if max(prev) > hi and key == 'date':
+                raise DomainError('来源返回旧日期，保留有效历史')
             if full and requested_range: lo, hi = requested_range
             missing = (set(prev) if full and not requested_range else {k for k in prev if lo <= k <= hi})-set(fresh)
             stats['missing'] += len(missing)
@@ -265,7 +337,8 @@ def merge(old, new, full, requested_range=None):
         elif prev and not fresh: raise DomainError('来源返回空数据，保留有效历史')
         stats['added'] += len(set(fresh)-set(prev))
         stats['revised'] += sum(prev[k] != v for k, v in fresh.items() if k in prev)
-        return [dict(prev, **fresh)[k] for k in sorted(set(prev)|set(fresh))]
+        prev.update(fresh)
+        return [prev[k] for k in sorted(prev)]
     dated_rows=next(iter(new.get('rows',[]) or old.get('rows',[])),{})
     if 'rows' in new and 'date' in dated_rows: out['rows'] = combine(old.get('rows', []), new['rows'])
     if 'activity_rows' in new: out['activity_rows'] = combine(old.get('activity_rows', []), new['activity_rows'])

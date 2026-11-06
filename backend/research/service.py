@@ -11,7 +11,7 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from . import providers,price_chunks
 from .snapshots import encode,decode
 from .validation import validate as validate_snapshot,public_url
-from .updates import UpdateJobs,SCOPES,MODULES
+from .updates import AUTOMATIC_SCOPES, UpdateJobs,SCOPES,MODULES
 from .metrics import WINDOWS, METHOD_VERSION, clean_prices, drawdown, valuation, financial_totals,price_changes,moving_averages
 from .lixinger_access import LocalAccess
 from .collection import Collection, subscription
@@ -266,7 +266,8 @@ class ResearchService:
             saved={r[0]:json.loads(r[1]) for r in db.execute('SELECT id,data FROM data_update_policies')}
             row=db.execute("SELECT value FROM research_meta WHERE key='settings_revision'").fetchone();revision=int(row[0]) if row else 0
         defaults=[dict(scope=scope,enabled=True,cadence='daily',time='23:30',timezone='Asia/Shanghai') for scope in SCOPES]
-        return dict(policies=[saved.get(p['scope'],p) for p in defaults],settings_revision=revision)
+        policies = [saved.get(p['scope'], p) for p in defaults]
+        return dict(policies=[manual_policy(p) for p in policies], settings_revision=revision)
 
     def save_settings(self, body):
         rows=body.get('policies');revision=body.get('expected_settings_revision')
@@ -278,7 +279,7 @@ class ResearchService:
             try:datetime.strptime(r['time'],'%H:%M')
             except (ValueError,KeyError,TypeError):raise DomainError('更新时刻应为HH:MM') from None
         with self.transaction('settings_revision',revision,bump=True) as db:
-            for r in rows:db.execute('INSERT INTO data_update_policies VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',(r['scope'],json_dumps(r)))
+            for r in rows:db.execute('INSERT INTO data_update_policies VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',(r['scope'],json_dumps(manual_policy(r))))
         return self.settings()
 
     def updating(self):return self.updates.active()
@@ -287,6 +288,12 @@ class ResearchService:
     def tick(self,stamp=None,trigger='schedule'):return self.updates.tick(stamp,trigger)
     def recover(self,resume=True):return self.updates.recover(resume)
     def shutdown(self):return self.updates.shutdown()
+
+
+def manual_policy(policy):
+    if policy['scope'] in AUTOMATIC_SCOPES:
+        return policy
+    return dict(policy, enabled=False, cadence='manual')
 
 
 def validate_structure(db):

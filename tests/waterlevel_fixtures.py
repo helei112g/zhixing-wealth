@@ -20,7 +20,7 @@ def history(value='10', monthly=False, start=date(2014, 1, 1)):
     return result
 
 
-def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=None):
+def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=None, full=False):
     values = {'cn_2y':'1', 'cn_10y':'2', 'aaa_3y':'3', 'gov_3y':'2', 'fr007':'2.2', 'fdr007':'1.8',
               'm1_yoy':'4', 'm2_yoy':'7', 'pmi':'51', 'nonmanufacturing_pmi':'52', 'sf_stock_yoy':'8'}
     series = {key: history(values.get(key, '1'), frequency == 'monthly')
@@ -57,7 +57,7 @@ def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=
 
 
 def seed_indices(research):
-    for code in ('000300', '000905', '000852', '930050'):
+    for code in ('000300', '000905', '000852', '930050', '000510'):
         profile = providers.identity(code)
         iid = profile['provider'] + ':' + code
         with research.transaction(bump=True) as db:
@@ -71,6 +71,7 @@ def seed_indices(research):
                 rows = [row for row in history(value) if row['date'] >= profile['launch']]
                 series[metric][method] = dict(rows=rows, source='理杏仁', field={'pe':'pe_ttm','pb':'pb','dividend_yield':'dyr'}[metric]+'.'+method,
                                                frequency='daily')
+        research.publish(iid, 'index_info', dict(info={'stockCode': code}, evidence=[]))
         research.publish(iid, 'valuations', dict(provider_id='lixinger', series=series, effective_date=ASOF,
                                                 source='理杏仁', evidence=[]))
 
@@ -96,7 +97,21 @@ def install_providers():
         if kwargs.get('environment') != 'test' and not kwargs.get('testing'):
             raise RuntimeError('Synthetic waterlevel fixtures require the explicit test environment')
         application = original(*args, **kwargs)
-        seed_indices(application.state.research)
+        research = application.state.research
+        seed_indices(research)
+
+        def synthetic_valuation(iid, module, end, *, full=False):
+            from copy import deepcopy
+            if module != 'valuations':
+                raise RuntimeError('Unexpected index module in synthetic market browser')
+            value = deepcopy(research.module(iid, module))
+            if iid == 'csi:000510':
+                for series in value['series']['pe'].values():
+                    series['rows'][-1]['value'] = '31' if full else '29'
+            sid = research.publish(iid, module, value)
+            return dict(value, snapshot_id=sid)
+
+        research.collection.collect = synthetic_valuation
         return application
 
     app_module.create_app = synthetic_app

@@ -254,6 +254,42 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(self.market.settings()['automatic'])
         fetch.assert_not_called()
 
+    def test_full_source_coverage_failure_preserves_market_head(self):
+        value = payload('pmi')
+        with patch.object(sources, 'collect', return_value=value):
+            self.market.collect('pmi', ASOF)
+        previous = self.market.source('pmi')
+        latest = {key: rows[-1:] for key, rows in value['series'].items()}
+        with patch.object(sources, 'em_series', return_value=latest) as fetch:
+            with self.assertRaisesRegex(DomainError, '全量校对缺少'):
+                self.market.collect('pmi', ASOF, full=True)
+            self.assertEqual(fetch.call_args.args[-2], '2014-01-01')
+        self.assertEqual(self.market.source('pmi')['snapshot_id'], previous['snapshot_id'])
+
+    def test_registered_all_market_index_routes_and_reads_one_head(self):
+        from backend.waterlevel.catalog import FULL_MARKET_FIELDS, FULL_MARKET_ID
+
+        # An existing subscription can come from the independent index-library change.
+        identity = dict(code='1000002', name='A股全指', provider='lxri', launch='1994-01-01')
+        with self.research.transaction(bump=True) as db:
+            db.execute('INSERT INTO research_indices VALUES (?,?)',
+                       (FULL_MARKET_ID, json_dumps(dict(identity, id=FULL_MARKET_ID))))
+        self.research.publish(FULL_MARKET_ID, 'index_info', dict(info={}, evidence=[]))
+        receipt = self.market.update(['full_market'], 'full-shared', full=True)
+        job = self.research.updates.get(receipt['job_id'])
+        self.assertEqual(job['resources'], [dict(scope='valuations', target=FULL_MARKET_ID, module='valuations', full=True)])
+
+        full_series = payload('full_market')['series']
+        series = {metric: {method: dict(field=FULL_MARKET_FIELDS[f'full_market_{metric}_{method}'],
+                                         rows=[dict(date=ASOF, value=full_series[f'full_market_{metric}_{method}'][-1]['value'])])
+                           for method in metrics.METHODS} for metric in ('pe', 'pb')}
+        sid = self.research.publish(FULL_MARKET_ID, 'valuations',
+                                    dict(provider_id='lixinger', source='理杏仁', series=series, effective_date=ASOF, evidence=[]))
+        dashboard = self.market.dashboard(asof=ASOF)
+        self.assertEqual(dashboard['sources'][0]['snapshot_id'], sid)
+        self.assertEqual(dashboard['sources'][0]['kind'], 'index')
+        self.assertEqual(dashboard['comparisons']['pe']['chart'][-1]['value'], series['pe']['mcw']['rows'][0]['value'])
+
     def test_methods_do_not_change_fixed_scores_and_short_indices_have_no_long_means(self):
         self.populate()
         one=self.market.dashboard('mcw',ASOF)

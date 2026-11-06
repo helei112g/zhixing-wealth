@@ -389,9 +389,9 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 | POST `/api/research/indices/{id}/source-check` | analysis_id绑定mcw价格快照；显式请求官方最近45天同日价格与可得PE参考，不消耗理杏仁额度，不合并历史。 |
 | GET `/api/settings/lixinger` | 已配置状态、本机文件路径、独立revision、每端点尝试次数与预算；不返回Token或片段。 |
 | PUT `/api/settings/lixinger/token` | 仅用户本机页面提交 token 与 expected_revision；0600原子文件，保存不采集且关闭自动采集；显式手动更新在既有预算内可用，计数不重置。AI客户端不提供密钥读写命令。 |
-| PUT `/api/settings/lixinger` | expected_revision、enabled、limit（1–1000）、automatic、可选clear_block；不会自动请求接口或重置计数。 |
-| GET/PUT `/api/settings/data-updates` | 六个全局策略与expected_settings_revision；本机理杏仁自动采集还须单独启用。 |
-| POST `/api/data-updates/run` | scopes、稳定request_id，可选targets/resources。只规划已启用订阅模块；失败精确重试沿用resource。结果未知先回读原job_id。 |
+| PUT `/api/settings/lixinger` | expected_revision、enabled、limit（1–1000）、automatic、可选clear_block；保留旧客户端的automatic字段，实际固定关闭。不会自动请求接口或重置计数。 |
+| GET/PUT `/api/settings/data-updates` | 六个全局策略与expected_settings_revision；指数四类策略读回固定为仅手动；持仓行情与汇率可配置自动。 |
+| POST `/api/data-updates/run` | scopes、稳定request_id，可选targets/resources。只规划已启用订阅模块。指数和市场按默认增量更新，按范围提交时可传顶层full=true；精确资源在各项传full=true。失败精确重试沿用resource。结果未知先回读原job_id。 |
 | GET `/api/data-updates/jobs`、`.../{job_id}`、`/api/data-updates/history` | 任务与逐模块失败，history合并去重保留最近5条展示。 |
 
 旧 `POST /api/research/indices`、`POST .../valuation-preview` 返回410；旧后缀选择和乐咕联网抓取已退役，旧数据仍可读取。更新任务的 request_id 保持幂等；订阅变更用研究版本防并发覆盖，重复保存不产生采集调用。
@@ -428,7 +428,7 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 | GET `/api/market-waterlevel/facts` | 同参数和分析版本；省略统计项及comparisons的chart，其他事实与页面一致，不请求模型。 |
 | GET `/api/market-waterlevel/revision` | 轻量research_revision、updating和errors_version；失败不发布数据也会改变错误版本，页面据此刷新覆盖与状态。 |
 | GET/PUT `/api/market-waterlevel/settings` | 兼容旧客户端。GET报告automatic=false。PUT仅接受automatic=false及原设置版本。 |
-| POST `/api/market-waterlevel/updates` | `{groups:["credit"],request_id:"client-generated-id"}`；202返回统一任务收据。等价于data-updates/run的`scopes:["market"],resources:[{scope:"market",group:"credit"}]`。 |
+| POST `/api/market-waterlevel/updates` | `{groups:["credit"],request_id:"client-generated-id"}`；可提供indices指定已启用估值的观察指数，可选full=true执行校对。至少指定一个来源组或指数。202返回统一任务收据。 |
 | POST `/api/market-waterlevel/snapshots` | 原analysis_id、method、asof、expected_research_revision；冻结当前查看结果，返回snapshot_id、created_at、sha256、data。输入已变化返回409。相同分析ID幂等回读原报告，不重新抓取。 |
 | GET `/api/market-waterlevel/snapshots` | 最近50条不可变报告元数据items；不删除更早报告。 |
 | GET `/api/market-waterlevel/snapshots/{id}` | 精确回读冻结结果及摘要。 |
@@ -436,7 +436,7 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 
 市场来源支持11组，包括`full_market`（理杏仁 A股全指1000002 PE/PB，按 method 读取对应估值）和`composites`（新浪两综指）。`comparisons.pe/pb`含月度`chart`、共同基准`base_month`及对齐说明；`value/mean5/mean10`为估值，`sh/sz`为基准100的价格指数，`bond_inverse`为10Y收益率倒数（PE图展示），各参照保留实际日期。`chart_windows=[5,10,"all"]`只控制页面裁剪；分位窗口仍为5/10年。已冻结v1/v2报告保持原样兼容。
 
-市场更新仅手动提交 market 来源组。full_market 使用理杏仁额度。全局六类自动策略与市场任务独立。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
+指数库和市场水位均手动更新。市场来源任务和共享指数估值走统一队列。full_market 和共享指数估值使用理杏仁额度。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
 
 数值为Decimal字符串或null。利率、CPI/PPI及货币/社融同比为百分数；期限利差、ERP和M2−M1为百分点；信用/回购利差为BP。股息率、percentile_ratio、deviation_ratio为比例。分位严格小于当前值且包含当前样本作分母；均值使用60/120个完整月末值，不能套用指数观察台的日频计算。statistics保留current、date、frequency、observations、status、windows、means、chart；窗口同时提供样本数与完整性状态。
 
@@ -460,7 +460,7 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 
 - `GET /api/family/bounds` 返回 `{bounds, revision}`，bounds 与 catalog.bounds 相同；不返回资产、笔记或行情明细。仍使用账本 revision 和日期失效规则。
 - `GET /api/data-updates/history` 返回 `{jobs, limit:5}`，按开始时间与创建顺序倒序。每条 kind 为 public 或 legacy，state 为任务状态；关联的行情子任务折叠到公共数据父任务。这里只限定展示数量，旧接口及按 job_id 查询保持可用。失败项保留原始 resource 和错误，重试只提交该项。
-- 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即覆盖八个指数模块。明确的手动更新不受自动更新策略开关限制；不更新其他指数、组合行情或汇率。
+- 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即更新当前指数的已启用模块。full=true按配置范围全量校对。
 - 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格、指数/公司估值及资金数据的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
 - Yahoo 参考每股值仅在相对差≤0.01%且绝对差≤0.005币种单位时视为微调；始终与最后一次明确确认的固定依据比较。此规则不舍入或改写实际金额、税费、份额及汇率，也不豁免权益、日期、币种与拆分变化。
 

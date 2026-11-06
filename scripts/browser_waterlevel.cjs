@@ -56,7 +56,9 @@ const asof = '2026-10-30';
       await page.waitForTimeout(500);
     }
     check(job?.state === 'complete', 'all synthetic source groups complete in the common queue');
-    check(job.resources.every(resource => resource.scope === 'market'), 'market refresh does not consume index or ledger scopes');
+    check(job.resources.some(resource => resource.scope === 'valuations' && resource.target === 'csi:000510') &&
+      job.resources.every(resource => ['market', 'valuations'].includes(resource.scope) && !resource.full),
+      'market refresh includes shared A500 valuation and excludes ledger scopes');
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     await page.getByText('有效大类 3/3', {exact: true}).waitFor({timeout: 30000});
     const first = await api('/market-waterlevel?asof=' + asof);
@@ -201,6 +203,21 @@ const asof = '2026-10-30';
     await offline.close();
 
     await page.getByLabel('研究快照', {exact: true}).selectOption('');
+    await page.getByRole('button', {name:'全量校对', exact:true}).click();
+    let full;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      full = (await api('/data-updates/jobs')).jobs[0];
+      if (full?.id !== retried.id && full?.state === 'complete') break;
+      await page.waitForTimeout(500);
+    }
+    check(full?.state === 'complete' && full.resources.every(resource => resource.full) &&
+      full.resources.some(resource => resource.target === 'csi:000510'), 'one click fully reconciles market sources and shared valuations');
+    const marketA500 = (await api('/market-waterlevel?asof=' + asof)).sources.find(source => source.index_id === 'csi:000510');
+    const libraryA500 = (await api('/research/indices/csi%3A000510')).sources.find(source => source.module === 'valuations');
+    check(marketA500.snapshot_id === libraryA500.snapshot_id &&
+      marketA500.snapshot_id === full.items.find(item => item.target === 'csi:000510').snapshot_id,
+      'market update publishes the exact valuation snapshot read by both pages');
+    await shot('waterlevel-manual-updates');
     await page.setViewportSize({width: 390, height: 844});
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'mobile layout has no page overflow');

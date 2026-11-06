@@ -115,7 +115,7 @@ class ResearchTests(unittest.TestCase):
             with self.r.transaction(bump=True) as db:
                 db.execute('INSERT INTO research_indices VALUES (?,?)',(iid,json_dumps(dict(p,id=iid,subscription=dict(enabled=True,modules=list(MODULES),history_start=None)))))
         body=dict(scopes=['index_prices','memberships','valuations','financials'],targets=[iid],request_id=request)
-        job=self.r.updates.run(body,trigger='index_create')
+        job=self.r.run(body)
         return dict(id=iid,basis=p['input_basis'],existing=existing,research_revision=self.r.revision(),job_id=job['job_id']),body
     def test_old_new_year_gap_flags_are_corrected_without_rewriting_snapshot(self):
         from backend.trading_calendar import no_expected_session
@@ -166,7 +166,7 @@ class ResearchTests(unittest.TestCase):
         rows=self.r.updates.history()['jobs']
         self.assertEqual(len(rows),5)
         self.assertEqual(rows[0]['id'],job['id'])
-        self.assertEqual(rows[0]['trigger_label'],'指数建档')
+        self.assertEqual(rows[0]['trigger_label'],'手动更新')
         self.assertNotIn('synthetic-child',[x['id'] for x in rows])
         self.assertEqual([r['id'] for r in rows[1:]],['standalone-'+str(n) for n in (5,4,3,2)])
         self.r.updates.save(dict(job,finished_at='2026-01-03T10:00:00+08:00'),'complete')
@@ -299,19 +299,19 @@ class ResearchTests(unittest.TestCase):
             job=self.r.run(dict(scopes=['index_prices'],resources=[dict(scope='index_prices',target=p['id'],module='total_return')],request_id='exact'))
             self.r.updates._work();prices.assert_called_once();self.assertEqual(prices.call_args.args[1],'total_return')
         self.assertEqual(next(j for j in self.r.jobs() if j['id']==job['job_id'])['state'],'complete')
-    def test_manual_scheduled_coalescing_keeps_both_request_receipts(self):
+    def test_duplicate_manual_requests_coalesce(self):
         self.add();self.r.updates.recover(False)
-        b=dict(scopes=['index_prices']);one=self.r.run(dict(b,request_id='manual'));two=self.r.run(dict(b,request_id='schedule:slot'))
+        b=dict(scopes=['index_prices']);one=self.r.run(dict(b,request_id='manual'));two=self.r.run(dict(b,request_id='second-manual'))
         self.assertEqual(one['job_id'],two['job_id'])
         with patch.object(self.r.collection,'collect',return_value={}) as f:
-            self.r.updates._work();again=self.r.run(dict(b,request_id='schedule:slot'));self.r.updates._work();self.assertEqual(f.call_count,3)
+            self.r.updates._work();again=self.r.run(dict(b,request_id='second-manual'));self.r.updates._work();self.assertEqual(f.call_count,3)
         self.assertEqual(again['job_id'],one['job_id'])
-    def test_restart_resume_retains_successful_resources(self):
+    def test_restart_leaves_research_interrupted_and_retains_successful_resources(self):
         a,_=self.add();job=self.r.jobs()[0]
         resource=job['resources'][0];sid=self.r.publish(a['id'],'price',price_payload(self.r.profile(a['id']),'price'))
         from backend.research.updates import key
         job['completed_resources']=[key(resource)];job['items']=[dict(scope=resource['scope'],resource=resource,status='complete',snapshot_id=sid)]
-        self.r.updates.save(job,'running');self.r.recover(True);self.assertEqual(self.r.jobs()[0]['state'],'pending')
+        self.r.updates.save(job,'running');self.r.recover(True);self.assertEqual(self.r.jobs()[0]['state'],'interrupted')
         self.assertEqual(self.r.jobs()[0]['completed_resources'],[key(resource)])
     def test_no_sync_recovery_does_not_launch_updates_and_guard_blocks_write(self):
         self.add();self.r.recover(False);self.assertEqual(self.r.jobs()[0]['state'],'interrupted')
@@ -320,7 +320,8 @@ class ResearchTests(unittest.TestCase):
     def test_scheduler_slot_idempotence_and_weekend_policy(self):
         self.add();self.r.updates.recover(False)
         policies=self.r.settings()['policies']
-        for p in policies:p['enabled']=p['scope']=='index_prices';p['cadence']='trade_day'
+        for p in policies:p['enabled']=p['scope']=='fx';p['cadence']='trade_day'
+        self.legacy.save_portfolio(dict(name='测试调度', planned_amount='1000', start_date='2026-01-01'))
         self.r.save_settings(dict(policies=policies,expected_settings_revision=0))
         self.r.tick('2026-10-30T23:59:00+08:00');count=len(self.r.jobs());self.r.tick('2026-10-31T23:59:00+08:00');self.r.tick('2026-10-30T23:59:45+08:00');self.assertEqual(len(self.r.jobs()),count)
     def test_only_requested_fx_currency(self):
@@ -437,22 +438,25 @@ class ReviewRegressions(unittest.TestCase):
             d=original(*a,**kw);value=finance_payload(member_payload(p)['rows']);value['rows'][0]['profit']='999';self.r.publish(p['id'],'financials',value);return d
         with patch.object(self.r,'detail',side_effect=swap):page=self.r.projection(p['id'],'financials',analysis_id=old['analysis_id'])
         self.assertEqual(page['analysis_id'],old['analysis_id']);self.assertNotEqual(page['items'][0]['profit'],'999')
-    def test_slot_resource_change_does_not_break_future_schedule(self):
-        self.add();access=self.r.access.save_token('synthetic-token-local-only',0);self.r.access.configure(access['revision'],True,20,True);policies=self.r.settings()['policies']
-        for p in policies:p['enabled']=p['scope']=='index_prices'
-        self.r.save_settings(dict(policies=policies,expected_settings_revision=0));self.r.tick('2026-10-30T23:59:00+08:00');self.add('399006','second');self.r.tick('2026-10-30T23:59:30+08:00');self.r.tick('2026-10-31T23:59:00+08:00')
-        schedules=[j for j in self.r.jobs() if j['trigger']=='schedule'];self.assertEqual(len(schedules),2);self.assertEqual(sorted(len(j['resources']) for j in schedules),[3,6])
-    def test_normal_shutdown_interrupted_resources_resume(self):
-        self.add();calls=[]
-        def one(resource):
-            calls.append(resource);self.r.updates.stopping.set();return [dict(scope=resource['scope'],resource=resource,status='complete')]
-        with patch.object(self.r.updates,'execute',side_effect=one):self.r.updates._work()
-        self.assertEqual(self.r.jobs()[0]['state'],'interrupted');new=ResearchService(self.store,self.legacy)
-        with patch.object(new.updates,'start'):new.recover(True)
-        self.assertEqual(new.jobs()[0]['state'],'pending');self.assertEqual(len(new.jobs()[0]['completed_resources']),1)
-        remaining=[]
-        with patch.object(new.updates,'execute',side_effect=lambda r:remaining.append(r) or [dict(scope=r['scope'],resource=r,status='complete')]):new.updates._work()
-        self.assertEqual(len(remaining),11);self.assertNotIn(calls[0],remaining);self.assertEqual(new.jobs()[0]['state'],'complete')
+    def test_legacy_research_policies_and_nonmanual_triggers_are_ignored(self):
+        saved, _ = self.add()
+        self.r.recover(False)
+        self.legacy.save_portfolio(dict(name='测试调度', planned_amount='1000', start_date='2026-01-01'))
+        with self.store.connection() as db:
+            for policy in self.r.settings()['policies']:
+                enabled = policy['scope'] not in ('quotes', 'fx')
+                value = dict(policy, enabled=enabled, cadence='daily')
+                db.execute('INSERT INTO data_update_policies VALUES (?,?)', (value['scope'], json_dumps(value)))
+            db.commit()
+        for trigger in ('schedule', 'startup', 'index_create'):
+            with self.assertRaisesRegex(DomainError, '仅支持手动更新'):
+                self.r.run(dict(scopes=['valuations'], targets=[saved['id']], request_id=trigger), trigger=trigger)
+        self.r.tick('2026-10-30T23:59:00+08:00')
+        self.assertFalse(any(job['trigger'] == 'schedule' for job in self.r.jobs()))
+        for policy in self.r.settings()['policies']:
+            if policy['scope'] not in ('quotes', 'fx'):
+                self.assertEqual((policy['enabled'], policy['cadence']), (False, 'manual'))
+
     def test_replayed_global_body_keeps_original_targets_and_new_day_is_distinct(self):
         self.add();body=dict(scopes=['index_prices'],request_id='stable-global')
         with patch.object(providers,'cutoff',return_value='2026-10-29'):one=self.r.run(body)

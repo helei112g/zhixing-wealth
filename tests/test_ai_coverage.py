@@ -83,14 +83,15 @@ class AICoverageTests(unittest.TestCase):
                      dict(scope='memberships', target='synthetic', module='historical_memberships'),
                      dict(scope='valuations', target='synthetic', module='stock_valuations'),
                      dict(scope='financials', target='synthetic', module='historical_financials'),
-                     dict(scope='market', group='credit')]
+                     dict(scope='market', group='credit'), dict(scope='market', group='credit', full=True),
+                     dict(scope='financials', target='synthetic', module='financials', full=True)]
         for resource in resources:
             body = dict(scopes=[resource['scope']], resources=[resource], request_id='synthetic-scope')
             self.assertEqual(UpdateRequest.model_validate(body).model_dump(exclude_unset=True), body)
         for resource in [dict(scope='quotes'), dict(scope='fx', currency='CNY'),
                          dict(scope='fx', currency='HKD', full='true'),
                          dict(scope='index_prices', target='synthetic', module='financials'),
-                         dict(scope='financials', target='synthetic', module='financials', full=True),
+                         dict(scope='financials', target='synthetic', module='financials', full='true'),
                          dict(scope='market', group='unknown'), dict(scope='market'),
                          dict(scope='market', group='credit', target='synthetic')]:
             with self.subTest(resource=resource), self.assertRaises(ValidationError):

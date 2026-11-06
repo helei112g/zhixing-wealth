@@ -114,7 +114,7 @@ class Reader:
 
 
 def full_market(reader, asof, previous, access):
-    """Read all six independently supplied A-share market valuation series."""
+    """Read all eight independently supplied A-share market valuation series."""
     if access is None:
         raise DomainError('全市场估值需要本机理杏仁访问配置')
     endpoint = 'cn/index/fundamental'
@@ -310,21 +310,26 @@ def calendar(reader, year):
     return dict(year=year, events=events)
 
 
-def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None):
+def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None, full=False):
     if group not in GROUPS:
         raise DomainError('市场数据组无效')
     reader = Reader(cancelled)
     earliest = f'{int(asof[:4]) - 11}-01-01'
     if group in ('full_market', 'composites', 'china_rates'):
         earliest = '1990-01-01'
-    # Reconcile complete recent years; old observations retain their original source and dates.
-    start = earliest if previous is None else f'{int(asof[:4]) - 1}-01-01'
+    old_series = (previous or {}).get('series', {})
+    earliest = min([earliest, *(rows[0]['date'] for rows in old_series.values() if rows)])
+    latest = min((rows[-1]['date'] for rows in old_series.values() if rows), default=None)
+    start = earliest
+    if latest and not full:
+        days = 90 if group in ('pmi', 'prices', 'money', 'social_financing') else 30
+        start = max(earliest, str(day(latest) - timedelta(days=days)))
     common = dict(group=group, publisher=GROUPS[group]['publisher'], evidence=reader.evidence,
                   checked_at=now(), requested_asof=asof, published_at=None, series={})
     if group == 'calendar':
         return dict(common, calendar=calendar(reader, int(asof[:4])))
     if group == 'full_market':
-        result = full_market(reader, asof, previous, access)
+        result = full_market(reader, asof, None if full else previous, access)
     elif group == 'composites':
         result = composites(reader)
     elif group == 'china_rates':
@@ -346,7 +351,8 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None)
         }
         result = {}
         for report, fields in definitions[group]:
-            result.update(em_series(reader, report, fields, 'REPORT_DATE', earliest, asof))
+            result.update(em_series(reader, report, fields, 'REPORT_DATE', start, asof))
+    difference = dict(added=0, revised=0, missing=0)
     for key, rows in result.items():
         label = FULL_MARKET_FIELDS[key] if group == 'full_market' else SERIES[key][1]
         rows = [row for row in rows if earliest <= row['date'] <= asof]
@@ -356,14 +362,24 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None)
         if old and max(row['date'] for row in rows) < old[-1]['date']:
             raise DomainError(f'{label}返回旧日期，保留当前有效历史')
         combined = {row['date']: row for row in old}
-        seen = set()
-        for row in rows:
-            if row['date'] in seen:
-                raise DomainError('来源存在重复日期，未覆盖历史')
-            seen.add(row['date'])
-            combined[row['date']] = row
+        fresh = {row['date']: row for row in rows}
+        if len(fresh) != len(rows):
+            raise DomainError('来源存在重复日期，未覆盖历史')
+        # A missing upstream value must not erase an already verified observation.
+        lost = {date for date, row in combined.items() if date <= asof and row['value'] is not None
+                and (date not in fresh or fresh[date]['value'] is None)}
+        if full and lost:
+            raise DomainError(f'{label}全量校对缺少{len(lost)}个已有观测，保留旧快照')
+        for stamp, row in fresh.items():
+            if stamp not in combined:
+                difference['added'] += row['value'] is not None
+            elif row['value'] is None and combined[stamp]['value'] is not None:
+                continue
+            elif row['value'] != combined[stamp]['value']:
+                difference['revised'] += 1
+            combined[stamp] = row
         result[key] = sorted(combined.values(), key=lambda row: row['date'])
     prior = (previous or {}).get('evidence', [])
     evidence = {(item['url'], item.get('start'), item.get('end'), item['sha256']): item for item in [*prior, *reader.evidence]}
     notes = list(dict.fromkeys([*(previous or {}).get('notes', []), *reader.notes]))
-    return dict(common, series=result, evidence=list(evidence.values()), notes=notes)
+    return dict(common, series=result, evidence=list(evidence.values()), notes=notes, difference=difference)

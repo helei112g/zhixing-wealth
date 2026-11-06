@@ -148,13 +148,14 @@ export function WaterlevelPage({today,onIndices}: Obj) {
   const [data, setData] = useState<Obj|null>(null);
   const [revision, setRevision] = useState(0);
   const [errorsVersion, setErrorsVersion] = useState('');
+  const [refreshRequest, setRefreshRequest] = useState(0);
   const [running, setRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reports, setReports] = useState<Obj[]>([]);
   const [selectedReport, setSelectedReport] = useState('');
   const [saving, setSaving] = useState(false);
-  const submission = useSubmission(()=>setRevision(value=>value+1));
+  const submission = useSubmission(()=>setRefreshRequest(value=>value+1));
 
   useEffect(()=>{
     let active=true;
@@ -163,7 +164,7 @@ export function WaterlevelPage({today,onIndices}: Obj) {
     request.then(value=>{if(active){setData(value);setError('');}}).catch(error=>{if(active)setError(error.message);})
       .finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;};
-  },[method,asof,revision,errorsVersion]);
+  },[method,asof,revision,errorsVersion,refreshRequest]);
 
   useEffect(()=>{
     let active=true, busy=false;

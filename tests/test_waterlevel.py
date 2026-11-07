@@ -259,6 +259,31 @@ class ServiceTests(unittest.TestCase):
         previous = self.research.run(body)
         self.assertEqual(self.market.update(['pmi'], 'legacy'), previous)
 
+    def test_cpi_only_update_preserves_ppi_and_is_visible_after_restore_validation(self):
+        resource = dict(scope='market', group='prices', series='cpi_yoy')
+        plan = dict(scopes=['market'], resources=[resource])
+        self.assertEqual(self.research.updates.plan(plan), [resource])
+        with self.assertRaisesRegex(DomainError, '指标与来源组不匹配'):
+            self.research.updates.plan(dict(scopes=['market'], resources=[dict(resource, group='pmi')]))
+
+        def series(reader, report, fields, date_field, start, end):
+            reader.evidence.append(dict(url='https://datacenter-web.eastmoney.com/api/data/v1/get', sha256='c'*64))
+            return {key: [dict(date='2026-10-01', value='1')] for key in fields}
+
+        with patch.object(sources, 'em_series', side_effect=series) as fetch:
+            self.market.collect('prices', ASOF, series='ppi_yoy')
+            ppi = self.market.source('prices')['series']['ppi_yoy']
+            with self.store.connection() as db:
+                validate_backup(db)
+            self.market.collect('prices', ASOF, series='cpi_yoy', full=True)
+            self.assertEqual([call.args[1] for call in fetch.call_args_list], ['RPT_ECONOMY_PPI', 'RPT_ECONOMY_CPI'])
+        self.assertEqual(self.market.source('prices')['series']['ppi_yoy'], ppi)
+        observed = {item['id']: item for item in self.market.data_sources()['items']}
+        self.assertEqual(observed['cpi_yoy']['resource'], resource)
+        self.assertEqual(observed['cpi_yoy']['dates'][0]['date'], '2026-10-01')
+        with self.store.connection() as db:
+            validate_backup(db)
+
     def test_full_source_coverage_failure_preserves_market_head(self):
         value = payload('pmi')
         with patch.object(sources, 'collect', return_value=value):

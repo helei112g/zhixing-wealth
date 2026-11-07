@@ -46,6 +46,14 @@ SERIES = {
     'sf_stock_yoy': ('social_financing', '社融存量同比', '%', 'monthly'),
 }
 
+# These series have independent upstream requests. Keep the original group
+# identities for existing snapshots, reports and callers that update the group.
+SPLIT_GROUPS = {
+    'composites': ('sh_composite', 'sz_composite'),
+    'prices': ('cpi_yoy', 'ppi_yoy'),
+    'repo': ('fr007', 'fdr007'),
+}
+
 INDICES = (
     ('csi:000300', '沪深300'), ('csi:000905', '中证500'), ('csi:000852', '中证1000'),
     ('csi:000688', '科创50'), ('cni:399006', '创业板指'), ('csi:930050', '中证A50'),

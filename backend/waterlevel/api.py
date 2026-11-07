@@ -61,6 +61,10 @@ def router(service):
     def settings():
         return service.settings()
 
+    @api.get('/sources', summary='读取可独立更新的市场数据项、来源与最新观测日期')
+    def data_sources():
+        return service.data_sources()
+
     @api.put('/settings')
     def save_settings(body: MarketSettingsRequest):
         return service.save_settings(body.model_dump())

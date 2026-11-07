@@ -61,7 +61,7 @@ export function LinkedHistory({d,window}:Obj){
    {hover&&<ReferenceLine x={hover} stroke="var(--muted)" strokeDasharray="3 3"/>}
    <Line dataKey="volatility" name="250日年化波动率" stroke={colors[3]} dot={false} connectNulls={false} isAnimationActive={false}/>
   </LineChart></ResponsiveContainer>
- </div>:<p className="muted small">{volatilityStatus?.reason||'当前窗口暂无理杏仁波动率数据，可在「数据来源」手动更新。'}</p>}
+ </div>:<p className="muted small">{volatilityStatus?.reason||'当前窗口暂无理杏仁波动率数据，可在「研究工具 → 数据管理」手动更新。'}</p>}
  {latestVolatility&&<p className="muted small">理杏仁 · {latestVolatility.date} · {num(latestVolatility.volatility)}%{volatilityStatus?.status==='error'?' · 更新失败，显示上次有效数据':''}。波动率使用供应商的指数序列，切换价格 / 全收益只改变点位与回撤。</p>}
  <p className="muted small">{window?window+'年':'全历史'}窗口 · 高点 {num(d.drawdown[window]?.high_close)} 点（{d.drawdown[window]?.high_date||'-'}） · 距高点 {pct(d.drawdown[window]?.drawdown_ratio)} · 最大回撤 {pct(d.drawdown[window]?.max_drawdown_ratio)}。均线使用完整日线计算后截取窗口，不足期数留空；回撤从窗口起点累计最高收盘计算。</p></div>;
 }

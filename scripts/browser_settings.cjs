@@ -17,7 +17,17 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
   const boot=await api('/bootstrap'),expected=boot.instruments.map(i=>i.id);
   await page.route('**/api/sync',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({json:{queued:false}});});
   await page.route('**/api/jobs',route=>route.fulfill({json:{jobs:[],syncing:false}}));
-  await page.goto(new URL('/?page=overview',base).href);await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'全局设置',exact:true}).click();await rows().first().waitFor();
+  boot.price_status[0].latest={date:'2026-01-06',source:'合成净值源',price:'1.25'};
+  const bootstrap='**/api/bootstrap';
+  await page.route(bootstrap,route=>route.fulfill({json:boot}));
+  await page.goto(new URL('/?page=overview',base).href);
+  await page.getByRole('navigation',{name:'全局页面'}).getByRole('button',{name:'全局设置',exact:true}).click();
+  await page.getByRole('heading',{name:'每日估值汇率',exact:true}).waitFor();
+  check(await page.getByRole('heading',{name:'行情与净值缓存',exact:true}).count()===0,'global settings no longer embeds the quote cache');
+  await page.getByRole('navigation',{name:'主要页面'}).getByRole('button',{name:'数据管理',exact:true}).click();
+  await rows().first().waitFor();
+  check(await page.getByRole('columnheader',{name:'最新数据日期',exact:true}).isVisible()&&
+   await rows().first().locator('time').getAttribute('datetime')==='2026-01-06','cache shows the observation date in its own column');
   check(await rows().count()===10&&await pager.getByRole('button',{name:'上一页'}).isDisabled(),'first page has ten rows and no previous page');
   const seen=await ids();
   await pager.getByRole('button',{name:'下一页'}).click();check(await rows().count()===10,'second page has ten rows');seen.push(...await ids());
@@ -31,7 +41,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
   const allRefreshed=page.waitForResponse(r=>r.url()===base+'/api/bootstrap'&&r.ok());await page.getByRole('button',{name:'同步全部历史',exact:true}).click();await allRefreshed;await page.waitForFunction(()=>!document.querySelector('[data-cache-instrument] button').disabled);
   check(requests[1].full&&!requests[1].instrument_id,'sync all remains independent of visible page');
   check(await page.getByRole('heading',{name:'macOS 系统通知',exact:true}).count()===0,'native notifications moved out of settings');
-  await page.route('**/api/data-updates/history',route=>route.fulfill({json:{limit:5,jobs:Array.from({length:5},(_,n)=>({id:'synthetic-history-'+n,kind:n%2?'legacy':'public',state:'complete',started_at:'2026-01-01T10:00:0'+n+'+08:00',scopes:['index_prices'],items:[],trigger:'manual'}))}}));
+  await page.route('**/api/data-updates/history?area=portfolio',route=>route.fulfill({json:{limit:5,jobs:Array.from({length:5},(_,n)=>({id:'synthetic-history-'+n,kind:n%2?'legacy':'public',state:'complete',started_at:'2026-01-01T10:00:0'+n+'+08:00',scopes:['quotes'],items:[],trigger:'manual'}))}}));
   await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.locator('[data-update-job]').nth(4).waitFor();
   check(await page.getByRole('heading',{name:'更新记录',exact:true}).count()===1&&await page.locator('[data-update-job]').count()===5,'single combined history shows five total records');
   check(await page.getByRole('heading',{name:'公共数据更新任务',exact:true}).count()===0,'no second task panel');

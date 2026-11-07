@@ -8,7 +8,7 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from ..research.collection import subscription
 from ..research.snapshots import encode, decode
 from . import sources, validation
-from .catalog import FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, SERIES
+from .catalog import FULL_MARKET_FIELDS, FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, SERIES, SPLIT_GROUPS
 from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, score
 
 
@@ -29,11 +29,13 @@ class WaterlevelService:
             return None
         return dict(value, snapshot_id=row[0], sha256=row[1])
 
-    def collect(self, group, asof, *, full=False):
+    def collect(self, group, asof, *, full=False, series=None):
         previous = self.source(group)
         options = {'access': self.research.access} if group == 'full_market' else {}
         if full:
             options['full'] = True
+        if series:
+            options['series'] = series
         value = sources.collect(group, asof, previous, self.research.updates.stopping.is_set, **options)
         validation.source(value)
         if self.research.updates.stopping.is_set():
@@ -51,8 +53,9 @@ class WaterlevelService:
             db.execute('INSERT INTO market_snapshots VALUES (?,?,?,?,?)', (sid, group, now(), sha, raw))
             db.execute('''INSERT INTO market_heads VALUES (?,?) ON CONFLICT(group_id)
                           DO UPDATE SET snapshot_id=excluded.snapshot_id''', (group, sid))
-        latest = max((rows[-1]['date'] for rows in value['series'].values()), default=None)
-        return [dict(scope='market', resource=dict(scope='market', group=group), name=GROUPS[group]['label'],
+        updated = [value['series'][series]] if series else value['series'].values()
+        latest = max((row['date'] for rows in updated for row in rows if row['value'] is not None), default=None)
+        return [dict(scope='market', resource=dict(scope='market', group=group), name=SERIES[series][1] if series else GROUPS[group]['label'],
                      status='complete', snapshot_id=sid, date=latest, difference=value.get('difference'))]
 
     def settings(self):
@@ -91,9 +94,30 @@ class WaterlevelService:
                 key = resource.get('group')
                 if resource.get('module', item.get('module')) == 'valuations':
                     key = resource.get('target', item.get('target'))
-                if key and key not in failures:
-                    failures[key] = item.get('error') if item.get('status') == 'error' else None
+                keys = (resource['series'],) if resource.get('series') else SPLIT_GROUPS.get(key, (key,))
+                for entry in keys:
+                    if entry and entry not in failures:
+                        failures[entry] = item.get('error') if item.get('status') == 'error' else None
         return failures
+
+    def data_sources(self):
+        """Read update targets and observed dates without computing charts."""
+        with self.store.lock:
+            failures = self._failures(self.research.updates.jobs())
+            profile = next((p for p in self.research.profiles() if p['id'] == FULL_MARKET_ID), None)
+            shared = self.research.module(FULL_MARKET_ID, 'valuations') if profile else None
+            items = []
+            for group, info in GROUPS.items():
+                saved = self.source(group) or {}
+                if group == 'full_market' and (shared or {}).get('provider_id') == 'lixinger':
+                    rows = full_market_series(shared)
+                    if all(rows.values()):
+                        saved = dict(shared, series=rows)
+                for key in SPLIT_GROUPS.get(group, (None,)):
+                    error_key = FULL_MARKET_ID if group == 'full_market' and profile else key or group
+                    updatable = group != 'full_market' or not profile or valuation_enabled(profile)
+                    items.append(source_entry(group, key, info, saved, failures.get(error_key), updatable))
+            return dict(items=items, research_revision=self.research.revision())
 
     def status(self):
         with self.store.lock:
@@ -129,8 +153,7 @@ class WaterlevelService:
     def _assemble(self, method, asof, revision, source_data, index_data, profiles, failures):
         sources_list, groups, items, raw_series, scoring = [], [], [], {}, []
         all_index = index_data.get(FULL_MARKET_ID) or {}
-        all_series = {f'full_market_{metric}_{method}': all_index.get('series', {}).get(metric, {}).get(method, {}).get('rows', [])
-                      for metric in ('pe', 'pb') for method in METHODS}
+        all_series = full_market_series(all_index)
         shared = all_index.get('provider_id') == 'lixinger' and all(all_series.values())
         if FULL_MARKET_ID in failures:
             failures = dict(failures, full_market=failures[FULL_MARKET_ID])
@@ -138,10 +161,11 @@ class WaterlevelService:
         for group, definition in GROUPS.items():
             use_shared = group == 'full_market' and shared
             source = all_index if use_shared else source_data[group]
-            status = 'error' if failures.get(group) else 'available' if source else 'missing'
+            error = next((failures[key] for key in SPLIT_GROUPS.get(group, (group,)) if failures.get(key)), None)
+            status = 'error' if error else 'available' if source else 'missing'
             checked_at = source.get('fetched_at' if use_shared else 'checked_at') if source else None
             updatable = group != 'full_market' or FULL_MARKET_ID not in profiles or valuation_enabled(profiles[FULL_MARKET_ID])
-            groups.append(dict(group=group, **definition, status=status, error=failures.get(group), updatable=updatable,
+            groups.append(dict(group=group, **definition, status=status, error=error, updatable=updatable,
                                notes=(source or {}).get('notes', []), checked_at=checked_at))
             if source:
                 identity = dict(kind='index', index_id=FULL_MARKET_ID) if use_shared else dict(kind='market', group=group)
@@ -152,7 +176,7 @@ class WaterlevelService:
             rows = raw_series.get(f'{key}_{method}' if group == 'full_market' else key, [])
             stats = analyze(rows, asof, positive=group in ('full_market', 'composites'),
                             stale_days=80 if frequency == 'monthly' else 14, frequency=frequency)
-            if failures.get(group) and stats['status'] == 'available':
+            if failures.get(key if group in SPLIT_GROUPS else group) and stats['status'] == 'available':
                 stats['status'] = 'source_error'
             latest = next((row for row in reversed(rows) if row['date'] <= asof), {})
             items.append(dict(id=key, label=label, group=group, unit=unit, statistics=stats,
@@ -171,7 +195,7 @@ class WaterlevelService:
             rows = difference(raw_series.get(left, []), raw_series.get(right, []), factor=factor)
             stats = analyze(rows, asof, stale_days=80 if key == 'money_gap' else 14,
                             frequency='monthly' if key == 'money_gap' else 'daily')
-            if failures.get(SERIES[left][0]) or failures.get(SERIES[right][0]):
+            if any(failures.get(name if SERIES[name][0] in SPLIT_GROUPS else SERIES[name][0]) for name in (left, right)):
                 stats['status'] = 'source_error' if rows else 'missing'
             items.append(dict(id=key, label=label, group=group, unit=unit, statistics=stats,
                               formula=f'({left} - {right}) × {factor}', same_date_only=True))
@@ -267,6 +291,36 @@ class WaterlevelService:
         if not row:
             raise DomainError('市场研究快照不存在')
         return dict(snapshot_id=sid, created_at=row[0], sha256=row[1], data=decode(row[2], row[1]))
+
+
+def source_entry(group, key, info, saved, error, updatable):
+    resource = dict(scope='market', group=group)
+    if key:
+        resource['series'] = key
+    dates = []
+    for name, rows in saved.get('series', {}).items():
+        if key and name != key:
+            continue
+        date = next((r['date'] for r in reversed(rows) if r['value'] is not None), None)
+        if date:
+            if name in SERIES:
+                _, label, _, frequency = SERIES[name]
+            else:
+                field, method = FULL_MARKET_FIELDS[name].split('.')
+                label = f'{"PE TTM" if field == "pe_ttm" else "PB"} · {method}'
+                frequency = 'daily'
+            dates.append(dict(label=label, date=date, frequency=frequency))
+    if saved.get('calendar'):
+        dates = [dict(label='日历年度', date=str(saved['calendar']['year']), frequency='annual')]
+    return dict(id=key or group, label=SERIES[key][1] if key else info['label'],
+                publisher=info['publisher'], resource=resource, dates=dates, error=error, updatable=updatable,
+                snapshot_id=saved.get('snapshot_id') if dates else None,
+                evidence=saved.get('evidence', [])[-5:] if dates else [])
+
+
+def full_market_series(snapshot):
+    return {f'full_market_{metric}_{method}': snapshot.get('series', {}).get(metric, {}).get(method, {}).get('rows', [])
+            for metric in ('pe', 'pb') for method in METHODS}
 
 
 def valuation_enabled(profile):

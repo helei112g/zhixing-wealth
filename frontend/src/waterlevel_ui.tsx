@@ -1,9 +1,8 @@
 import React, {useEffect, useState} from 'react';
-import {Download, RefreshCw} from 'lucide-react';
+import {Download} from 'lucide-react';
 import {CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis} from 'recharts';
 import {api, money, Obj, percent, query} from './api';
 import {Button, Empty, ErrorBox, Field, Notice, Panel} from './components';
-import {UpdateHistory, useSubmission} from './sync_ui';
 import {HistoryWindow, ValuationMethods} from './research_studio';
 import {ValuationTrend, ValuationLine} from './research_charts';
 import './waterlevel.css';
@@ -103,7 +102,7 @@ function ComparisonCard({data, metric, setMetric, setMethod, window, setWindow, 
     <div className="studio-valuation-chart waterlevel-comparison-chart" aria-busy={loading}>
       {rows.some((row:Obj)=>row.value!=null)
         ? <ValuationTrend rows={rows} label="全市场估值与历史均值" lines={definitions} preserveBounds/>
-        : <Notice>尚无所选口径的估值序列，可在数据来源手动更新理杏仁 A股全指。</Notice>}
+        : <Notice>尚无所选口径的估值序列，可在研究工具的数据管理手动更新理杏仁 A股全指。</Notice>}
     </div>
     <p className="muted small">估值来源为理杏仁 A股全指（1000002）。左轴为估值倍数。两综指使用独立右轴，以 {comparison.base_month||'首个共同有效月份'} 为基准100。
       历史平均从该口径首个有效月起累计，只纳入已完成月份的有效月末观测，切换窗口沿用原起点。{metric==='pe'?'国债收益率倒数仅作参考。':''}</p>
@@ -144,7 +143,7 @@ function BroadCard({data, window, setWindow, setMethod, loading, selectedMethod,
     {methodStatus&&<p role="status" className="muted small waterlevel-method-status">{methodStatus}</p>}
     <div className="studio-valuation-chart" aria-busy={loading}>{lines.some(line=>line.key!=='bond')
       ? <ValuationTrend rows={rows} label="境内宽基指数 PE 对照" lines={lines} preserveBounds/>
-      : <Notice>尚无所选口径的估值历史，可在指数资料库更新相关指数的估值模块。</Notice>}
+      : <Notice>尚无所选口径的估值历史，可在研究工具的数据管理更新相关指数的估值模块。</Notice>}
     </div>
     <p className="muted small">单位为倍。各估值线独立按月末取样，缺失历史留空。国债收益率倒数仅作参照，可用图例隐藏。</p>
     {series.some(line=>!lines.includes(line))&&<p className="muted small">所选窗口无可绘制观测 · {series.filter(line=>!lines.includes(line)).map(line=>line.label).join('、')}</p>}
@@ -174,41 +173,7 @@ function ScoreOverview({data}: Obj) {
   </>;
 }
 
-function MarketSources({data, run, busy, onIndices}: Obj) {
-  const groups = data.groups.filter((g:Obj)=>g.updatable).map((g:Obj)=>g.group);
-  const indices = data.indices.filter((i:Obj)=>i.updatable).map((i:Obj)=>i.id);
-  return <>
-    <Panel title="市场数据更新" right={<div className="inline-actions">
-      <Button disabled={busy||!(groups.length||indices.length)} onClick={()=>run(groups,indices,true)}>全量校对</Button>
-      <Button primary disabled={busy||!(groups.length||indices.length)} onClick={()=>run(groups,indices)}><RefreshCw size={14}/>更新全部来源</Button>
-    </div>}>
-      <p className="muted small">仅手动更新。全量校对重新拉取当前来源和已启用的共享估值，校对失败时保留上次有效快照。</p>
-      <div className="table-wrap"><table><thead><tr><th>数据组 / 来源</th><th>最近检查</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        {data.groups.map((group:Obj)=><tr key={group.group}><td>{group.label}<small>{group.publisher}</small></td>
-          <td>{group.checked_at?.slice(0,19).replace('T',' ')||'尚未检查'}</td><td>{states[group.status]}<small>{group.error}</small>{group.notes.map((note:string)=><small key={note}>{note}</small>)}</td>
-          <td>{group.updatable?<Button small disabled={busy} onClick={()=>run([group.group])}>更新</Button>:<span className="muted small">指数资料库已暂停</span>}</td></tr>)}
-      </tbody></table></div>
-    </Panel>
-    <Panel title="指数估值来源" right={<Button onClick={onIndices}>打开指数资料库</Button>}>
-      <p className="muted small">两页共用同一份理杏仁估值快照。更新成功后，两页都会读取新版本。</p>
-      <div className="table-wrap"><table><thead><tr><th>指数</th><th>来源</th><th>操作</th></tr></thead><tbody>
-        {data.indices.map((index:Obj)=><tr key={index.id}><td>{index.label}</td><td>{index.source||'待采集'}</td>
-          <td>{index.updatable?<Button small disabled={busy} onClick={()=>run([],[index.id])}>更新估值</Button>:<span className="muted small">{index.subscribed?'估值采集未启用':'请先在指数资料库添加'}</span>}</td></tr>)}
-      </tbody></table></div>
-    </Panel>
-    <UpdateHistory/>
-    <Panel title="来源版本与方法边界">
-      {data.sources.map((source:Obj)=><details className="research-source" key={source.snapshot_id}><summary>{source.index_id||source.group} · {source.publisher}</summary>
-        <p className="muted small">检查 {source.checked_at} · 快照 {source.snapshot_id}<br/>SHA-256 {source.sha256}</p>
-        {source.error&&<p className="muted small">更新失败：{source.error}</p>}
-        {source.evidence.map((item:Obj,index:number)=><p key={index}><a href={item.url} target="_blank" rel="noopener noreferrer">来源 {index+1} ↗</a><small className="research-source-digest">抓取 {item.fetched_at||source.checked_at} · {item.sha256}</small></p>)}
-      </details>)}
-      <details><summary>完整计算说明和当前缺口</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details>
-    </Panel>
-  </>;
-}
-
-export function WaterlevelPage({today,onIndices}: Obj) {
+export function WaterlevelPage({today,onData}: Obj) {
   const [method, setMethod] = useState('ewpvo');
   const [metric, setMetric] = useState('pe');
   const [fullMetric, setFullMetric] = useState('pe');
@@ -226,7 +191,6 @@ export function WaterlevelPage({today,onIndices}: Obj) {
   const [reports, setReports] = useState<Obj[]>([]);
   const [selectedReport, setSelectedReport] = useState('');
   const [saving, setSaving] = useState(false);
-  const submission = useSubmission(()=>setRefreshRequest(value=>value+1));
 
   useEffect(()=>{
     let active=true;
@@ -263,13 +227,6 @@ export function WaterlevelPage({today,onIndices}: Obj) {
     } catch(error:any){setError(error.message);}
     finally{setSaving(false);}
   }
-  function update(groups:string[],indices:string[]=[],full=false) {
-    const resources = [
-      ...groups.map(group=>({scope:'market',group,full})),
-      ...indices.map(target=>({scope:'valuations',target,module:'valuations',full})),
-    ];
-    return submission.submit({scopes:[...new Set(resources.map(r=>r.scope))],resources});
-  }
   function selectMethod(next: string) {
     if (next === method && !error) return;
     if (next === method) {
@@ -283,15 +240,16 @@ export function WaterlevelPage({today,onIndices}: Obj) {
   const methodStatus = data && method!==data.method
     ? `${loading ? '正在读取' : '读取失败，未切换到'}${methods[method]}，当前显示${methods[data.method]}。`
     : '';
-  const blocked=loading||saving||submission.busy||running;
+  const blocked=loading||saving||running;
   const lines=(keys:string[],window=0,zoom=false)=>data?.series.filter((item:Obj)=>keys.includes(item.id)).map((item:Obj)=><StatisticCard key={item.id} label={item.label} statistics={item.statistics} unit={item.unit} window={window} zoom={zoom} asof={asof} zero={['money_gap','repo_spread','cn_term','us_term','erp'].includes(item.id)}/>);
   return <div className="waterlevel-page">
-    <ErrorBox error={error||submission.error}/>
-    {running&&<p className="muted small" role="status">更新正在执行，已有有效数据保留；结果与失败项可在数据来源中核对。</p>}
+    <ErrorBox error={error}/>
+    <div className="inline-actions"><Button onClick={onData}>数据管理</Button></div>
+    {running&&<p className="muted small" role="status">更新正在执行，已有有效数据保留；结果与失败项可在研究工具的数据管理中核对。</p>}
     {loading&&!data&&<p role="status" className="muted small">正在读取本地市场数据…</p>}
     {!data?<Empty title="市场水位尚未就绪">{error?'读取失败，请核对错误信息。':'正在读取本地资料。'}</Empty>:<>
-      <div className="instrument-tabs" role="tablist" aria-label="市场水位栏目">{[['overview','水位总览'],['equity','股票估值'],['bonds','债券与资金'],['macro','宏观背景'],['sources','数据来源']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} onClick={()=>setTab(key)}>{label}</button>)}</div>
-      {tab!=='sources'&&<p className="muted small waterlevel-view-options">截至 {data.asof} · 各指标实际日期独立显示 · 月末采样，当月显示最新观测</p>}
+      <div className="instrument-tabs" role="tablist" aria-label="市场水位栏目">{[['overview','水位总览'],['equity','股票估值'],['bonds','债券与资金'],['macro','宏观背景'],['reports','报告存档']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} onClick={()=>setTab(key)}>{label}</button>)}</div>
+      {tab!=='reports'&&<p className="muted small waterlevel-view-options">截至 {data.asof} · 各指标实际日期独立显示 · 月末采样，当月显示最新观测</p>}
       {tab==='overview'&&<><ScoreOverview data={data}/><ComparisonCard data={data} metric={fullMetric} setMetric={setFullMetric} setMethod={selectMethod} window={overviewWindow} setWindow={setOverviewWindow} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/><div className="waterlevel-grid">{lines(['erp','bond_inverse'],overviewWindow)}</div><details className="waterlevel-boundaries"><summary>当前覆盖与计算边界</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details></>}
       {tab==='equity'&&<>
         <BroadCard data={data} window={equityWindow} setWindow={setEquityWindow} setMethod={selectMethod} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/>
@@ -308,11 +266,11 @@ export function WaterlevelPage({today,onIndices}: Obj) {
           <p className="waterlevel-legend"><span>蓝线：月末观测</span><span>棕线：5年均值</span><span>绿线：10年均值</span></p>
           <div className="waterlevel-grid" aria-busy={loading}>{data.indices.map((index:Obj)=><StatisticCard key={index.id} label={index.label+' · '+metricNames[metric]} statistics={index.metrics[metric]} unit={metric==='dividend_yield'?'%':'倍'} multiplier={metric==='dividend_yield'?100:1} window={equityWindow} asof={asof} means/>)}</div>
         </section>
-        <Button onClick={onIndices}>在指数资料库管理采集</Button>
+        <Button onClick={onData}>打开数据管理</Button>
       </>}
       {tab==='bonds'&&<><p className="muted small">信用利差按同日AAA 3Y中票减3Y国债；FR007/FDR007是定盘利率，不是R007/DR007。1个百分点=100 BP。</p><div className="waterlevel-grid">{lines(['cn_10y','cn_2y','cn_30y','us_10y','us_2y','us_30y','cn_term','us_term','credit_spread','aaa_3y','gov_3y','fr007','fdr007','repo_spread'],0,true)}</div></>}
       {tab==='macro'&&<><Notice>日期为统计月份，不能当作发布日期。社融使用人民银行直接公布的存量同比；M2−M1为同月同比之差，跨M1统计口径的历史仅供参考。</Notice><div className="waterlevel-grid">{lines(['pmi','nonmanufacturing_pmi','cpi_yoy','ppi_yoy','m1_yoy','m2_yoy','money_gap','sf_stock_yoy'],0,true)}</div><p className="muted small">本批来源未统一提供原始发布日期；未知日期保留为空，抓取时间见来源记录。</p></>}
-      {tab==='sources'&&<><MarketSources data={data} run={update} busy={blocked} onIndices={onIndices}/>
+      {tab==='reports'&&<>
         <details className="waterlevel-archive"><summary>研究报告存档与下载</summary>
           <p className="muted small">保存当前口径与来源版本以便复核。页面始终展示当前数据，历史报告可下载离线查看。</p>
           <div className="waterlevel-settings"><Button disabled={blocked} onClick={freeze}>冻结研究快照</Button>

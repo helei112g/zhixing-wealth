@@ -459,8 +459,9 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 ### 轻量导航、统一更新记录与当前指数更新
 
 - `GET /api/family/bounds` 返回 `{bounds, revision}`，bounds 与 catalog.bounds 相同；不返回资产、笔记或行情明细。仍使用账本 revision 和日期失效规则。
-- `GET /api/data-updates/history` 返回 `{jobs, limit:5}`，按开始时间与创建顺序倒序。每条 kind 为 public 或 legacy，state 为任务状态；关联的行情子任务折叠到公共数据父任务。这里只限定展示数量，旧接口及按 job_id 查询保持可用。失败项保留原始 resource 和错误，重试只提交该项。
-- 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即更新当前指数的已启用模块。full=true按配置范围全量校对。
+- `GET /api/data-updates/history` 可传 `area=portfolio` 或 `area=research` 筛选模块。返回 `{jobs, limit:5}`，按开始时间与创建顺序倒序。每条 kind 为 public 或 legacy，state 为任务状态；关联的行情子任务折叠到公共数据父任务。这里只限定展示数量，旧接口及按 job_id 查询保持可用。失败项保留原始 resource 和错误，重试只提交该项。
+- 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即更新当前指数的已启用模块。full=true按配置范围全量校准。指数详情 `collection.resources` 提供已订阅的精确资源，可选其中一个来源对应的模块提交。
+- `GET /api/market-waterlevel/sources` 只读返回 `items` 和 `research_revision`。每项含 `id`、`label`、`publisher`、实际观测 `dates`、`resource`、`updatable`、`error` 及最新快照引用。向统一任务提交该 `resource`，每项 `full:true` 表示全量校准。带 `series` 的市场资源仅更新对应指标，例如 `{"scope":"market","group":"prices","series":"cpi_yoy"}`。旧的来源组请求保持兼容。
 - 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格、指数/公司估值及资金数据的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
 - Yahoo 参考每股值仅在相对差≤0.01%且绝对差≤0.005币种单位时视为微调；始终与最后一次明确确认的固定依据比较。此规则不舍入或改写实际金额、税费、份额及汇率，也不豁免权益、日期、币种与拆分变化。
 

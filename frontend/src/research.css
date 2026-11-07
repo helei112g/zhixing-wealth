@@ -81,3 +81,10 @@ html.nav-collapsed .app-shell{grid-template-columns:76px minmax(0,1fr)}.compact-
 .studio-heading>div:first-child>select{width:100%;min-width:0}
 .index-info-button{white-space:nowrap}
 @media(max-width:600px){.studio-heading>div:first-child{width:100%;grid-template-columns:minmax(0,1fr) auto}}
+
+.data-target-select{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.data-target-select select{width:min(100%,340px)}
+.data-target-details{display:grid;gap:14px;margin-top:16px}
+.data-target-evidence{margin-top:4px}
+.data-sources-table td,.data-sources-table th[scope=rowgroup]{vertical-align:top;text-align:left}
+.data-sources-table thead th:last-child{text-align:left}

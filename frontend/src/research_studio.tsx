@@ -204,7 +204,7 @@ export function StudioOverview({d,method,setMethod,window,setWindow}:Obj){
    {curve.length?<ValuationTrend rows={curve} label="估值与三五十年滚动均值" lines={[
     ...['value','mean3','mean5','mean10'].map((key,i)=>({key,label:i?`${[3,5,10][i-1]}年日频平均`:metricNames[metric],color:colors[i]})),
     {key:'close',label:'同日指数点位 · 右轴',color:colors[4],axis:'price',dash:'4 3'},
-   ]}/>:pending?null:<Notice>{error?'估值分析读取失败。':'尚无所选方法的估值序列；可在数据来源页查看采集状态。'}</Notice>}
+   ]}/>:pending?null:<Notice>{error?'估值分析读取失败。':'尚无所选方法的估值序列；可在研究工具的数据管理查看采集状态。'}</Notice>}
    </div>
    <p className="muted small">分位不含当日观测；估值每日等权滚动平均包含当日，不足整窗留空。点位使用独立右轴。</p>
    <ValuationRanks analysis={currentAnalysis}/>

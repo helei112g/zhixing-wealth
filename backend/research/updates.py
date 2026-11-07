@@ -45,7 +45,7 @@ class UpdateJobs:
     def jobs(self):
         with self.store.connection() as db:return [dict(load_job(r[1]),state=r[0]) for r in db.execute('SELECT state,data FROM data_update_tasks ORDER BY rowid DESC LIMIT 20')]
 
-    def history(self):
+    def history(self, area=None):
         """One display row per user task, including standalone legacy syncs."""
         from ..sync_meta import TRIGGERS
         public=self.jobs()
@@ -53,6 +53,11 @@ class UpdateJobs:
         children.update(i['legacy_job_id'] for j in public for i in j.get('items',[]) if i.get('legacy_job_id'))
         rows=[dict(j,kind='public',trigger_label=j.get('trigger_label') or TRIGGERS.get(j.get('trigger'),{'manual':'手动更新','index_create':'指数建档'}.get(j.get('trigger'),'历史记录未记录'))) for j in public]
         rows.extend(dict(j,kind='legacy',state=j.get('status','error'),scopes=j.get('scopes',[])) for j in self.store.jobs() if j['id'] not in children)
+        if area:
+            scopes = set(AUTOMATIC_SCOPES) if area == 'portfolio' else set(UPDATE_SCOPES) - set(AUTOMATIC_SCOPES)
+            rows = [dict(j, items=[i for i in j['items'] if i.get('scope') in scopes])
+                    if j['kind']=='public' else j for j in rows
+                    if scopes.intersection(j['scopes']) or (area=='portfolio' and j['kind']=='legacy' and not j['scopes'])]
         # Stable start order; changing status or finishing an old task cannot move it up.
         rows.sort(key=lambda j:(j.get('started_at',''),j.get('created_order',0)),reverse=True)
         return dict(jobs=rows[:5],limit=5)
@@ -101,9 +106,11 @@ class UpdateJobs:
                 if set(r)-{'full'}!={'scope','instrument_id'}:raise DomainError('行情资源无效')
                 if r['instrument_id'] is not None and not any(i['id']==r['instrument_id'] for i in self.store.state()['instruments']):raise DomainError('行情标的不存在')
             elif scope == 'market':
-                from ..waterlevel.catalog import GROUPS
-                if set(r) - {'full'} != {'scope', 'group'} or r['group'] not in GROUPS:
+                from ..waterlevel.catalog import GROUPS, SPLIT_GROUPS
+                if set(r) - {'full', 'series'} != {'scope', 'group'} or r['group'] not in GROUPS:
                     raise DomainError('市场来源组无效')
+                if 'series' in r and r['series'] not in SPLIT_GROUPS.get(r['group'], ()):
+                    raise DomainError('市场指标与来源组不匹配')
             else:
                 if set(r)-{'full'}!={'scope','target','module'} or r['module'] not in MODULES[scope]:raise DomainError('指数模块资源无效')
                 self.research.profile(r['target'])
@@ -203,7 +210,8 @@ class UpdateJobs:
             asof = (self.current_job or {}).get('information_cutoff') or str(today())
             if r['group'] == 'full_market':
                 asof = min(asof, (self.current_job or {}).get('market_cutoff') or providers.cutoff())
-            items = self.research.waterlevel.collect(r['group'], asof, full=True) if r.get('full') else self.research.waterlevel.collect(r['group'], asof)
+            options = {k: r[k] for k in ('full', 'series') if k in r}
+            items = self.research.waterlevel.collect(r['group'], asof, **options)
             return [dict(item, resource=r) for item in items]
         iid,module=r['target'],r['module']
         cutoffs=self.current_job or {}

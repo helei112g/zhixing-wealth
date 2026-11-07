@@ -29,7 +29,12 @@ class SyncMetadataTests(unittest.TestCase):
         def fetch(inst,start,end,**kw):
             calls.append((start,kw['adjusted_start']))
             return {'rows':[{'date':d,'price':'1','source':'synthetic','kind':'raw'} for d in ('2026-03-02','2026-11-04')],'source':'synthetic','notes':[]}
-        with patch('backend.service.today',return_value=date(2026,11,5)),patch('backend.market.quotes',side_effect=fetch),patch('backend.dividends.fetch_notices',return_value=None):
+        with (
+            patch('backend.service.today', return_value=date(2026, 11, 5)),
+            patch('backend.market.quotes', side_effect=fetch),
+            patch('backend.dividends.fetch_stock_splits', return_value=[]),
+            patch('backend.dividends.fetch_notices', return_value=None),
+        ):
             self.s.start_sync(iid,scopes={'quotes'});self.wait_for_jobs(1)
             self.assertEqual(calls[0],('2026-02-28','2026-02-28'))
             self.assertEqual(self.s.instrument_detail(p['id'],iid)['price_history_start'],'2026-02-28')
@@ -43,9 +48,14 @@ class SyncMetadataTests(unittest.TestCase):
         p=self.s.save_portfolio({'name':'合成失败回填','planned_amount':'1000','start_date':'2026-01-01'})
         event=self.s.save_event({'portfolio_id':p['id'],'kind':'BUY','date':'2026-08-31','instrument':{'market':'CN','code':'000001','name':'合成基金'},'quantity':'10','gross_amount':'10','fee':'0','fx_rate':'1'})
         iid=event['instrument_id']
-        with patch('backend.market.quotes',return_value={'rows':[],'source':'synthetic','notes':[]}),patch('backend.dividends.fetch_notices',return_value=None):
+        with (
+            patch('backend.market.quotes', return_value={'rows': [], 'source': 'synthetic', 'notes': []}),
+            patch('backend.dividends.fetch_stock_splits', return_value=[]),
+            patch('backend.dividends.fetch_notices', return_value=None),
+        ):
             self.s.start_sync(iid,scopes={'quotes'});jobs=self.wait_for_jobs(1)
         self.assertEqual(jobs[0]['status'],'partial')
+        self.assertEqual([item['source_kind'] for item in jobs[0]['items'] if item['status']=='error'], ['prices'])
         inst=next(i for i in self.store.state()['instruments'] if i['id']==iid)
         self.assertNotIn('quote_history_requested_start',inst)
 

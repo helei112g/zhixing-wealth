@@ -59,6 +59,7 @@ class MarketResource(BaseModel):
     scope: Literal['market']
     full: StrictBool = False
     group: Literal['full_market','composites','calendar','china_rates','us_rates','credit','repo','pmi','prices','money','social_financing']
+    series: Literal['sh_composite','sz_composite','cpi_yoy','ppi_yoy','fr007','fdr007'] | None = None
 
 
 UpdateResource=Annotated[FxResource|QuoteResource|IndexPriceResource|MembershipResource|ValuationResource|FinancialResource|MarketResource,Field(discriminator='scope')]
@@ -220,5 +221,5 @@ def router(service):
     @api.get('/api/data-updates/jobs')
     def jobs():return {'jobs':service.jobs()}
     @api.get('/api/data-updates/history', summary='合并公共数据与行情更新，父子任务去重，按开始时间倒序返回最近5条')
-    def history():return service.updates.history()
+    def history(area: Literal['portfolio', 'research'] | None = None):return service.updates.history(area)
     return api

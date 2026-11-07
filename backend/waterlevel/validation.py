@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from ..common import DomainError, day, dec
 from ..research.snapshots import decode
-from .catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, GROUPS, SERIES
+from .catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, GROUPS, SERIES, SPLIT_GROUPS
 from .metrics import METHODS, METHOD_VERSION
 from .sources import HOSTS
 
@@ -36,6 +36,7 @@ def source(value, *, archival=False):
         expected = set(FULL_MARKET_FIELDS)
     old_fields = {key for key in expected if not key.endswith('_ewpvo')}
     valid_fields = isinstance(series, dict) and (set(series) == expected or
+                   (group in SPLIT_GROUPS and bool(series) and set(series) <= expected) or
                    (archival and group == 'full_market' and not legacy and set(series) == old_fields))
     if not valid_fields:
         raise DomainError('市场指标集合与来源组不符')

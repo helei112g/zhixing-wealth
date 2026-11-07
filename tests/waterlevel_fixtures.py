@@ -20,7 +20,8 @@ def history(value='10', monthly=False, start=date(2014, 1, 1)):
     return result
 
 
-def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=None, full=False):
+def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=None, full=False, series=None):
+    target = series
     values = {'cn_2y':'1', 'cn_10y':'2', 'aaa_3y':'3', 'gov_3y':'2', 'fr007':'2.2', 'fdr007':'1.8',
               'm1_yoy':'4', 'm2_yoy':'7', 'pmi':'51', 'nonmanufacturing_pmi':'52', 'sf_stock_yoy':'8'}
     series = {key: history(values.get(key, '1'), frequency == 'monthly')
@@ -45,6 +46,8 @@ def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=
         for row in rows:
             if group == 'social_financing':
                 row['source_url'] = 'https://www.pbc.gov.cn/synthetic-test.html'
+    if target:
+        series = {**(previous or {}).get('series', {}), target: series[target]}
     value = dict(group=group, publisher=GROUPS[group]['publisher'], series=series, checked_at=ASOF+'T19:00:00+08:00',
                  requested_asof=asof, published_at=None, evidence=[dict(url='https://www.pbc.gov.cn/synthetic-test.html',
                  fetched_at=ASOF+'T19:00:00+08:00', sha256='a'*64)])
@@ -56,10 +59,12 @@ def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=
     return value
 
 
-def seed_indices(research):
+def seed_indices(research, *, valuation_only=False):
     for code in ('000300', '000905', '000852', '930050', '000510'):
         profile = providers.identity(code)
         iid = profile['provider'] + ':' + code
+        if valuation_only:
+            profile['subscription'] = dict(enabled=True, modules=['valuations'], history_start=None)
         with research.transaction(bump=True) as db:
             db.execute('INSERT INTO research_indices VALUES (?,?)', (iid, json_dumps(dict(profile, id=iid))))
         series = {}
@@ -98,7 +103,7 @@ def install_providers():
             raise RuntimeError('Synthetic waterlevel fixtures require the explicit test environment')
         application = original(*args, **kwargs)
         research = application.state.research
-        seed_indices(research)
+        seed_indices(research, valuation_only=True)
 
         def synthetic_valuation(iid, module, end, *, full=False):
             from copy import deepcopy

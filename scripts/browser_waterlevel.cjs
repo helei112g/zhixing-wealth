@@ -46,19 +46,55 @@ const asof = '2026-10-30';
     check(await page.locator('.waterlevel-score').count() === 4, 'four waterlevel cards render');
     await shot('waterlevel-initial');
 
-    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
+    const openManagement = () => page.locator('main').getByRole('button', {name: '数据管理', exact: true}).click();
+    const openWaterlevel = () => page.getByRole('navigation', {name:'研究工具'}).getByRole('button', {name:'市场水位', exact:true}).click();
+    const marketSelector = page.getByLabel('数据管理市场指标', {exact:true});
+    const target = label => page.getByRole('region', {name:label+'数据来源', exact:true});
+    const recentJob = async id => {
+      for(let attempt=0;attempt<120;attempt++){
+        const job = (await api('/data-updates/jobs')).jobs[0];
+        if(job && job.id!==id && ['complete','partial','error'].includes(job.state)) return job;
+        await page.waitForTimeout(500);
+      }
+      throw new Error('synthetic update timed out');
+    };
+    await openManagement();
     check(await page.getByLabel('启用市场数据自动更新').count() === 0, 'market updates expose only manual controls');
-    await page.getByRole('button', {name: '更新全部来源', exact: true}).click();
-    let job;
-    for (let attempt = 0; attempt < 120; attempt++) {
-      job = (await api('/data-updates/jobs')).jobs[0];
-      if (job && ['complete', 'partial', 'error'].includes(job.state)) break;
-      await page.waitForTimeout(500);
-    }
-    check(job?.state === 'complete', 'all synthetic source groups complete in the common queue');
-    check(job.resources.some(resource => resource.scope === 'valuations' && resource.target === 'csi:000510') &&
-      job.resources.every(resource => ['market', 'valuations'].includes(resource.scope) && !resource.full),
-      'market refresh includes shared A500 valuation and excludes ledger scopes');
+    check(await page.getByRole('button', {name:'增量更新',exact:true}).count() === 0, 'per-item controls appear after selecting an item');
+    await marketSelector.selectOption('cpi_yoy');
+    await target('CPI同比').getByRole('group', {name:'CPI同比全部来源'}).getByRole('button', {name:'增量更新'}).click();
+    const cpi = await recentJob();
+    check(cpi.state==='complete' && cpi.resources.length===1 && cpi.resources[0].series==='cpi_yoy',
+      'CPI update requests only CPI');
+    await target('CPI同比').getByText('2026-10', {exact:true}).waitFor();
+    const sourceTable=target('CPI同比').getByRole('table');
+    check(await sourceTable.getByRole('button').count()===0 && await sourceTable.getByRole('columnheader',{name:'操作'}).count()===0,
+      'market source table only displays data and status');
+    await shot('market-cpi-management');
+    await marketSelector.selectOption('ppi_yoy');
+    await target('PPI同比').getByText('待采集', {exact:true}).waitFor();
+    await marketSelector.selectOption('');
+    const marketSources=(await api('/market-waterlevel/sources')).items.filter(item=>item.updatable);
+    await page.getByRole('button',{name:'更新全部市场指标',exact:true}).click();
+    const marketBatch=await recentJob(cpi.id);
+    check(marketBatch.state==='complete' && marketBatch.resources.length===marketSources.length &&
+      marketBatch.resources.every(resource=>resource.scope==='market' && !resource.full) &&
+      marketBatch.resources.some(resource=>resource.series==='ppi_yoy'),
+      'market batch updates every available indicator without requiring a selection');
+
+    const pause=await api('/research/collection/preview',{code:'930050',modules:['valuations'],history_start:null});
+    await api('/research/collection',{code:'930050',modules:pause.modules,history_start:null,enabled:false,
+      expected_research_revision:pause.research_revision},'PUT');
+    await page.getByRole('tab',{name:'指数资料',exact:true}).click();
+    check(await page.getByLabel('数据管理指数',{exact:true}).inputValue()==='', 'bulk index action needs no selection');
+    await page.getByRole('button',{name:'更新全部指数',exact:true}).click();
+    const indexBatch=await recentJob(marketBatch.id);
+    const enabled=(await api('/research/catalog')).subscriptions.filter(profile=>profile.subscription.enabled).map(profile=>profile.id).sort();
+    const targets=[...new Set(indexBatch.resources.map(resource=>resource.target))].sort();
+    check(indexBatch.state==='complete' && targets.length>1 && JSON.stringify(targets)===JSON.stringify(enabled) &&
+      indexBatch.resources.every(resource=>resource.scope==='valuations' && !resource.full),
+      'index batch updates every enabled subscription and skips paused indices');
+    await openWaterlevel();
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     await page.getByText('有效大类 3/3', {exact: true}).waitFor({timeout: 30000});
     const first = await api('/market-waterlevel?asof=' + asof);
@@ -124,24 +160,27 @@ const asof = '2026-10-30';
     await comparison.getByRole('button', {name:'PE TTM', exact:true}).click();
     await shot('waterlevel-overview');
 
-    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
-    await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByRole('button', {name: '更新', exact: true}).click();
-    await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByText('合成信用来源失败，用于验收保留旧值与重试', {exact: true}).waitFor();
+    await openManagement();
+    await marketSelector.selectOption('credit');
+    await target('AAA 3Y中票与3Y国债').getByRole('group',{name:'AAA 3Y中票与3Y国债全部来源'}).getByRole('button', {name:'全量校准',exact:true}).click();
+    await target('AAA 3Y中票与3Y国债').getByText('合成信用来源失败，用于验收保留旧值与重试', {exact: true}).waitFor();
     const failed = await api('/market-waterlevel?asof=' + asof);
     check(failed.research_revision === first.research_revision, 'failed collection preserves data revision');
     check(failed.scores.categories.credit.included === 0, 'failed source is excluded from score while old observations remain');
-    await page.getByRole('tab', {name: '水位总览', exact: true}).click();
+    await openWaterlevel();
     await page.getByText('有效大类 2/3', {exact: true}).waitFor();
     check(true, 'fast failure refreshes the rendered score without a data revision change');
     await shot('waterlevel-source-failure');
-    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
+    await openManagement();
+    await marketSelector.selectOption('credit');
     const failedRecord = page.locator('.job-record').filter({hasText: '合成信用来源失败'}).first();
     if (await failedRecord.getAttribute('open') === null) await failedRecord.locator('summary').click();
     await failedRecord.getByRole('button', {name: '重试此项', exact: true}).click();
-    await page.getByRole('row').filter({hasText: 'AAA 3Y中票与3Y国债'}).getByText('已取得', {exact: true}).waitFor();
+    await target('AAA 3Y中票与3Y国债').getByText('已取得', {exact: true}).waitFor();
     const retried = (await api('/data-updates/jobs')).jobs[0];
-    check(retried.resources.length === 1 && retried.resources[0].group === 'credit', 'retry retains the exact failed source group');
+    check(retried.resources.length === 1 && retried.resources[0].group === 'credit' && retried.resources[0].full, 'retry retains the exact failed source group');
 
+    await openWaterlevel();
     await page.getByRole('tab', {name: '股票估值', exact: true}).click();
     check(await page.locator('.waterlevel-comparison-chart').count() === 0, 'stock tab has no duplicate full-market chart');
     await page.getByRole('img', {name:'境内宽基指数 PE 对照',exact:true}).waitFor();
@@ -183,7 +222,7 @@ const asof = '2026-10-30';
     const gap = first.series.find(item => item.id === 'money_gap');
     check(gap.statistics.current === '3' && gap.unit === '百分点', 'money gap uses M2 minus M1 percentage points');
     await shot('waterlevel-macro');
-    await page.getByRole('tab', {name: '数据来源', exact: true}).click();
+    await page.getByRole('tab', {name: '报告存档', exact: true}).click();
     await page.getByText('研究报告存档与下载', {exact: true}).click();
     await page.getByRole('button', {name: '冻结研究快照', exact: true}).click();
     await page.getByRole('link', {name: '下载离线报告', exact: true}).waitFor();
@@ -205,21 +244,22 @@ const asof = '2026-10-30';
     await offline.close();
 
     await page.getByLabel('研究快照', {exact: true}).selectOption('');
-    await page.getByRole('button', {name:'全量校对', exact:true}).click();
-    let full;
-    for (let attempt = 0; attempt < 120; attempt++) {
-      full = (await api('/data-updates/jobs')).jobs[0];
-      if (full?.id !== retried.id && full?.state === 'complete') break;
-      await page.waitForTimeout(500);
-    }
-    check(full?.state === 'complete' && full.resources.every(resource => resource.full) &&
-      full.resources.some(resource => resource.target === 'csi:000510'), 'one click fully reconciles market sources and shared valuations');
+    await openManagement();
+    await page.getByRole('tab', {name:'指数资料', exact:true}).click();
+    await page.getByLabel('数据管理指数', {exact:true}).selectOption('csi:000510');
+    await page.getByRole('group',{name:'中证A500全部已订阅数据',exact:true})
+      .getByRole('button', {name:'全量校准', exact:true}).click();
+    const full = await recentJob(retried.id);
+    check(full.state === 'complete' && full.resources.length === 1 && full.resources[0].full &&
+      full.resources[0].target === 'csi:000510' && full.resources[0].module === 'valuations',
+      'full reconciliation stays within A500 and its subscribed data');
     const marketA500 = (await api('/market-waterlevel?asof=' + asof)).sources.find(source => source.index_id === 'csi:000510');
     const libraryA500 = (await api('/research/indices/csi%3A000510')).sources.find(source => source.module === 'valuations');
     check(marketA500.snapshot_id === libraryA500.snapshot_id &&
       marketA500.snapshot_id === full.items.find(item => item.target === 'csi:000510').snapshot_id,
       'market update publishes the exact valuation snapshot read by both pages');
     await shot('waterlevel-manual-updates');
+    await openWaterlevel();
     await page.setViewportSize({width: 390, height: 844});
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'mobile layout has no page overflow');

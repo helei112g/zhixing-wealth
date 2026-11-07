@@ -698,7 +698,7 @@ class Service:
             return result
         quote = Market(state).price(instrument_id, selected_date, 'raw')
         if not quote or quote['date'] != str(selected_date):
-            return dict(result, status='missing_nav', note='缺少所选日单位净值，请在全局设置同步该基金历史行情后重新读取，或填写实际确认份额。')
+            return dict(result, status='missing_nav', note='缺少所选日单位净值，请在投资组合的数据管理中同步该基金历史行情后重新读取，或填写实际确认份额。')
         nav = dec(quote['price'], '单位净值', positive=True)
         quantity = dec(gross / nav, '估算份额').quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
         result['reference'] = {'date': quote['date'], 'nav': ds(nav), 'source': quote['source']}

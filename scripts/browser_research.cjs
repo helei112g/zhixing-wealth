@@ -20,9 +20,10 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
  };
  const ready = () => page.locator('[data-studio-ready=true]').waitFor({timeout:45000});
  const shot = name => page.screenshot({path:path.join(out,name+'.png'),fullPage:true,animations:'disabled'});
- const navigate = async name => {
+ const navigate = async (name, area) => {
   if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();
-  await page.getByRole('button',{name,exact:true}).click();
+  const root=area?page.getByRole('navigation',{name:area,exact:true}):page;
+  await root.getByRole('button',{name,exact:true}).click();
  };
 
  try {
@@ -34,9 +35,12 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await navigate('指数资料库');
   await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
   check((await api('/research/catalog')).subscriptions.length===0,'catalog does not subscribe automatically');
+  check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===1,'index library has one add entry');
   check(await page.getByRole('button',{name:'本机Token与预算',exact:true}).count()===0,'credential controls removed from index page');
 
-  await navigate('全局设置');
+  await navigate('数据管理','研究工具');
+  check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===0,'research data management has no add entry');
+  check(await page.getByRole('button',{name:'更新全部指数',exact:true}).isDisabled(),'batch update is disabled with no enabled indices');
   await page.getByLabel('理杏仁Token',{exact:true}).fill('synthetic-local-browser-credential');
   await page.getByRole('button',{name:'保存到本机文件',exact:true}).click();
   await page.getByText('Token已保存到本机文件；尚未发起采集。',{exact:true}).waitFor();
@@ -67,8 +71,11 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
   await dialog.waitFor({state:'hidden'});
   check(!(await api('/research/catalog')).modules.includes('tracking_funds'),'catalog omits fund-code collection');
-  await page.getByRole('tab',{name:'数据来源',exact:true}).click();
-  await page.getByRole('button',{name:'更新当前指数已订阅数据',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#research-index')?.value==='csi:000905');
+  check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===1,'saving the subscription stays in the index library');
+  await page.locator('main').getByRole('button',{name:'数据管理',exact:true}).click();
+  const allIndex=page.getByRole('group',{name:'中证500全部已订阅数据',exact:true});
+  await allIndex.getByRole('button',{name:'增量更新',exact:true}).click();
   await page.getByText('更新任务已受理，完成状态及实际数据日期见下方。',{exact:true}).waitFor();
   let job;
   for(let attempt=0;attempt<180;attempt++){
@@ -83,7 +90,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   const counts=(await api('/settings/lixinger')).counts;
   check(Object.values(counts).some(value=>value>20),'full history collection continues past the former default cap');
 
-  await page.getByRole('tab',{name:'观察台',exact:true}).click();
+  await navigate('指数资料库');
   await ready();
   check(await page.getByRole('heading',{name:'点位走势',exact:true}).count()===1&&await page.getByRole('heading',{name:'估值走势',exact:true}).count()===1,'price and valuation use separate cards');
   check(await page.locator('.studio-valuation-panel').evaluate(node=>Boolean(node.compareDocumentPosition(document.querySelector('.studio-price-panel'))&Node.DOCUMENT_POSITION_FOLLOWING)),'valuation card appears before price card');
@@ -264,7 +271,8 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   assert.deepEqual((await api('/settings/lixinger')).counts,counts);
   check(true,'all reading and display switches consume no supplier quota');
 
-  await page.getByRole('tab',{name:'数据来源',exact:true}).click();
+  await page.locator('main').getByRole('button',{name:'数据管理',exact:true}).click();
+  await page.getByText('来源证据、采集进度与历史版本',{exact:true}).click();
   await page.getByRole('button',{name:'联网核验官方收盘',exact:true}).click();
   await page.getByText('收盘仅核对同日价格身份，容差0.01点。官方PE与理杏仁mcw口径尚未证实可比，仅并列，不据此开启条件试算；PB参考缺项。',{exact:true}).waitFor();
   assert.deepEqual((await api('/settings/lixinger')).counts,counts);
@@ -272,8 +280,14 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByLabel('历史来源版本',{exact:true}).selectOption({index:1});
   await page.getByText('查看冻结数据（每组最多显示最后100条）',{exact:true}).waitFor();
   check(true,'immutable older snapshot remains readable');
-  check(await page.getByRole('button',{name:'更新指数估值',exact:true}).count()===0,'index library has one routine update button');
-  await page.getByRole('button',{name:'全量校对',exact:true}).click();
+  check(await page.getByRole('columnheader',{name:'最新数据日期',exact:true}).isVisible(),'index source table names observation dates');
+  check(await page.getByRole('row').filter({hasText:'指数基本信息'}).getByText(/^核对日 /).isVisible(),
+   'basic index profile displays the verification date explicitly');
+  const sourceTable=page.locator('.data-sources-table');
+  check(await sourceTable.getByRole('button').count()===0 && await sourceTable.getByRole('columnheader',{name:'操作'}).count()===0,
+   'index source table only displays data and leaves update controls above it');
+  await page.getByText('来源证据、采集进度与历史版本',{exact:true}).click();
+  await allIndex.getByRole('button',{name:'全量校准',exact:true}).click();
   let full;
   for(let attempt=0;attempt<180;attempt++){
    full=(await api('/data-updates/jobs')).jobs[0];
@@ -294,7 +308,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await manage.waitFor({state:'hidden'});
   check(!(await api('/research/catalog')).subscriptions[0].subscription.enabled,'pause retains history');
   await page.setViewportSize({width:390,height:844});
-  await page.getByRole('tab',{name:'观察台',exact:true}).click();
+  await navigate('指数资料库');
   await ready();
   await shot('studio-mobile');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile overview has no horizontal overflow');
@@ -311,7 +325,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
   await shot('studio-finance-mobile');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile financial layout fits viewport');
-  await navigate('全局设置');
+  await navigate('数据管理','研究工具');
   await shot('studio-token-mobile');
   check(await page.getByLabel('理杏仁Token',{exact:true}).inputValue()==='','token is never refilled');
   check(errors.length===0,'no browser exceptions');

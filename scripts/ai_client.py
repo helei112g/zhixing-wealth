@@ -154,6 +154,9 @@ class Client:
             params['asof'] = asof
         return self.request('/api/market-waterlevel' + ('/facts' if facts else '') + '?' + urllib.parse.urlencode(params))
 
+    def market_data_sources(self):
+        return self.request('/api/market-waterlevel/sources')
+
     def research_index(self,index_id,basis='price',window=3,method='mcw'):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))
 

@@ -13,7 +13,7 @@ import requests
 
 from ..common import DomainError, day, dec, ds, json_dumps, now
 from ..research import lixinger
-from .catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, FULL_MARKET_START, GROUPS, SERIES
+from .catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, FULL_MARKET_START, GROUPS, SERIES, SPLIT_GROUPS
 
 HOSTS = {'datacenter-web.eastmoney.com', 'www.chinamoney.com.cn', 'yield.chinabond.com.cn',
          'home.treasury.gov', 'www.pbc.gov.cn', 'www.stats.gov.cn', 'money.finance.sina.com.cn'}
@@ -139,9 +139,11 @@ def full_market(reader, asof, previous, access):
     return result
 
 
-def composites(reader):
+def composites(reader, series=None):
     result = {}
     for key, symbol in (('sh_composite', 'sh000001'), ('sz_composite', 'sz399106')):
+        if series and key != series:
+            continue
         params = dict(symbol=symbol, scale=240, ma='no', datalen=20000)
         url = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?'
         rows = json.loads(reader.get(url + urlencode(params)))
@@ -232,9 +234,11 @@ def credit(reader, start, end):
     return result
 
 
-def repo(reader):
+def repo(reader, series=None):
     result = {}
     for key, name in (('fr007', 'frr'), ('fdr007', 'fdr')):
+        if series and key != series:
+            continue
         url = f'https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/{name}-chrt.csv'
         rows = []
         for row in csv.reader(io.StringIO(text_body(reader.get(url)))):
@@ -310,16 +314,19 @@ def calendar(reader, year):
     return dict(year=year, events=events)
 
 
-def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None, full=False):
-    if group not in GROUPS:
+def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None, full=False, series=None):
+    if group not in GROUPS or (series is not None and series not in SPLIT_GROUPS.get(group, ())):
         raise DomainError('市场数据组无效')
     reader = Reader(cancelled)
     earliest = f'{int(asof[:4]) - 11}-01-01'
     if group in ('full_market', 'composites', 'china_rates'):
         earliest = '1990-01-01'
     old_series = (previous or {}).get('series', {})
-    earliest = min([earliest, *(rows[0]['date'] for rows in old_series.values() if rows)])
-    latest = min((rows[-1]['date'] for rows in old_series.values() if rows), default=None)
+    required = SPLIT_GROUPS.get(group, ())
+    selected = {series: old_series.get(series, [])} if series else old_series
+    earliest = min([earliest, *(rows[0]['date'] for rows in selected.values() if rows)])
+    complete = not required or series or all(old_series.get(key) for key in required)
+    latest = min((rows[-1]['date'] for rows in selected.values() if rows), default=None) if complete else None
     start = earliest
     if latest and not full:
         days = 90 if group in ('pmi', 'prices', 'money', 'social_financing') else 30
@@ -331,7 +338,7 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None,
     if group == 'full_market':
         result = full_market(reader, asof, None if full else previous, access)
     elif group == 'composites':
-        result = composites(reader)
+        result = composites(reader, series) if series else composites(reader)
     elif group == 'china_rates':
         result = em_series(reader, 'RPTA_WEB_TREASURYYIELD',
                            {'cn_2y': 'EMM00588704', 'cn_10y': 'EMM00166466', 'cn_30y': 'EMM00166469'}, 'SOLAR_DATE', start, asof)
@@ -340,7 +347,7 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None,
     elif group == 'credit':
         result = credit(reader, start, asof)
     elif group == 'repo':
-        result = repo(reader)
+        result = repo(reader, series) if series else repo(reader)
     elif group == 'social_financing':
         result = social_financing(reader, start, asof)
     else:
@@ -351,7 +358,10 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None,
         }
         result = {}
         for report, fields in definitions[group]:
-            result.update(em_series(reader, report, fields, 'REPORT_DATE', start, asof))
+            if not series or series in fields:
+                result.update(em_series(reader, report, fields, 'REPORT_DATE', start, asof))
+    if series and set(result) != {series}:
+        raise DomainError('返回的市场指标与请求不符')
     difference = dict(added=0, revised=0, missing=0)
     for key, rows in result.items():
         label = FULL_MARKET_FIELDS[key] if group == 'full_market' else SERIES[key][1]
@@ -382,4 +392,5 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None,
     prior = (previous or {}).get('evidence', [])
     evidence = {(item['url'], item.get('start'), item.get('end'), item['sha256']): item for item in [*prior, *reader.evidence]}
     notes = list(dict.fromkeys([*(previous or {}).get('notes', []), *reader.notes]))
-    return dict(common, series=result, evidence=list(evidence.values()), notes=notes, difference=difference)
+    return dict(common, series={**old_series, **result} if series else result,
+                evidence=list(evidence.values()), notes=notes, difference=difference)

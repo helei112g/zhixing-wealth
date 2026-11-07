@@ -16,10 +16,12 @@ def subscription(profile):
 
 
 def collection_modules(profile, modules=None):
-    modules = list(subscription(profile)['modules'] if modules is None else modules)
-    if 'price' in modules and providers.module_capabilities(profile)['volatility']['supported']:
-        modules.append('volatility')
-    return modules
+    selected = subscription(profile)['modules'] if modules is None else modules
+    supported = providers.module_capabilities(profile)
+    enabled = [module for module in selected if supported.get(module, {}).get('supported')]
+    if 'price' in enabled and supported['volatility']['supported']:
+        enabled.append('volatility')
+    return enabled
 
 
 class Collection:
@@ -73,13 +75,19 @@ class Collection:
         return p
 
     def status(self, iid):
-        p = self.research.profile(iid); states = {}
-        for m in collection_modules(p):
+        from .updates import MODULES
+
+        p = self.research.profile(iid)
+        enabled = collection_modules(p)
+        resources = [dict(scope=scope, target=iid, module=module) for scope, modules in MODULES.items()
+                     for module in modules if module in enabled]
+        states = {}
+        for m in enabled:
             stage = self.research.module(iid, 'stage.'+m)
             if stage:
                 states[m] = {k: stage.get(k) for k in ('phase', 'last_incremental', 'last_reconciled', 'range_start', 'range_end', 'mode', 'difference')}
                 states[m].update(completed=len(stage.get('parts', [])), planned=len(stage.get('calls', [])))
-        return dict(subscription=subscription(p), modules=states)
+        return dict(subscription=subscription(p), modules=states, resources=resources)
 
     def collect(self, iid, module, end, automatic=False, *, full=False):
         if automatic:

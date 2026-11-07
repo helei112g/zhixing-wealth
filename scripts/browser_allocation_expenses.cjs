@@ -83,7 +83,9 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'allocation-expenses-resul
   await dialog.getByRole('button',{name:'预览月度收支',exact:true}).click();await shot('monthly-expense-preview');await dialog.getByRole('button',{name:'确认保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
   await page.locator('.cashflow-months').getByRole('button',{name:year+'-02',exact:true}).click();await field('实际开支总额').fill('2000');await dialog.getByRole('checkbox',{name:/本月收入与实际开支已完整核对/}).check();await dialog.getByRole('button',{name:'预览月度收支',exact:true}).click();await dialog.getByRole('button',{name:'确认保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
   const cf=await api('/family/cashflow?year='+year);check(cf.rows[0].surplus==='8000'&&cf.summary.expense==='6000'&&cf.summary.savings_rate==='0.8125','actual replaces monthly budget; annual rate includes fund income and uses matched aggregate totals');
-  check((await page.locator('.cashflow-summary').innerText()).includes('81.25%'),'rendered annual savings rate matches API including fund income');
+  const savingsRate=page.locator('[data-cashflow-metric="savings_rate"] strong').getByText('81.25%',{exact:true});
+  await savingsRate.waitFor();
+  check(await savingsRate.isVisible(),'rendered annual savings rate matches API including fund income');
   await shot('cashflow-desktop');for(const width of [390,768]){await page.setViewportSize({width,height:950});await shot('cashflow-'+width);check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'cashflow layout fits viewport '+width);}
   check((await api('/portfolios/'+p.id+'/dashboard?view=summary')).cash_total===before.cash_total,'income and expense records never alter portfolio cash');
   for(const [code,paired] of [['000688','000688CNY01'],['H11136','H01136']]){const r=await api('/research/indices/resolve',{code});check(JSON.stringify(r).includes(paired),'official price/return pair resolves '+code);}

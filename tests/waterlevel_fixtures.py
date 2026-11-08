@@ -82,6 +82,8 @@ def seed_indices(research, *, valuation_only=False):
 
 
 def install_providers():
+    import os
+    from pathlib import Path
     from backend import app as app_module
     from backend.common import DomainError
     from backend.waterlevel import sources
@@ -98,10 +100,12 @@ def install_providers():
     sources.collect = browser_payload
     original = app_module.create_app
 
-    def synthetic_app(*args, **kwargs):
-        if kwargs.get('environment') != 'test' and not kwargs.get('testing'):
-            raise RuntimeError('Synthetic waterlevel fixtures require the explicit test environment')
-        application = original(*args, **kwargs)
+    def synthetic_app(directory, **kwargs):
+        expected = Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve()
+        if (kwargs.get('environment') != 'dev' or Path(directory).resolve() != expected
+                or not (expected / '.synthetic-fixture').is_file()):
+            raise RuntimeError('Synthetic waterlevel fixtures require the exact synthetic development ledger')
+        application = original(directory, **kwargs)
         research = application.state.research
         seed_indices(research, valuation_only=True)
 

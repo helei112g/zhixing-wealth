@@ -19,7 +19,7 @@ from backend.store import Store
 class DividendReviewTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.directory = claim_environment(Path(self.temp.name) / 'synthetic', 'test')
+        self.directory = claim_environment(Path(self.temp.name) / 'synthetic', 'dev')
         self.store = Store(self.directory)
         self.service = Service(self.store)
         self.portfolio = self.service.save_portfolio(dict(name='合成分红核对', start_date='2024-01-01', planned_amount='100000'))
@@ -29,7 +29,7 @@ class DividendReviewTests(unittest.TestCase):
         self.iid = self.buy['instrument_id']
         self.source = dict(code='00700', source_ref='synthetic-yahoo', ex_date='2024-01-11', record_date=None,
                            pay_date=None, per_share='1', currency='HKD', source='Yahoo现金分派参考', split_restore_factor='1')
-        self.notifications = FamilyNotifications(self.store, FamilyService(self.store), 'test')
+        self.notifications = FamilyNotifications(self.store, FamilyService(self.store), 'dev')
         self.center = ReminderService(self.store, self.notifications)
 
     def tearDown(self):

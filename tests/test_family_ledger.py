@@ -14,7 +14,7 @@ from backend.store import Store
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.store = Store(claim_environment(Path(self.temp.name)/'synthetic', 'test'))
+        self.store = Store(claim_environment(Path(self.temp.name)/'synthetic', 'dev'))
         self.service = FamilyService(self.store)
         self.clocks = [patch(m+'.today', return_value=date(2026,10,28)) for m in ('backend.family_domain','backend.family_service')]
         for c in self.clocks: c.start()

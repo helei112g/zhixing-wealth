@@ -283,11 +283,11 @@ PUT计划响应和 dashboard.plan_funding 提供相同结构：
 
 ## 环境和汇率缓存（0.7.0）
 
-`GET /api/health` 增加 `environment`（dev/production/test）、`schema`。`GET /api/bootstrap` 同时返回 `environment_label`。会话 Cookie 名称由环境与数据目录身份共同决定；通过 `GET /api/capabilities` 的 authentication.cookie 获取名称，客户端应使用 Cookie jar，不能硬编码旧的 portfolio_session。
+`GET /api/health` 增加 `environment`（dev/production）、`schema`。`GET /api/bootstrap` 同时返回 `environment_label`。会话 Cookie 名称由环境与数据目录身份共同决定；通过 `GET /api/capabilities` 的 authentication.cookie 获取名称，客户端应使用 Cookie jar，不能硬编码旧的 portfolio_session。
 
 health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/OPTIONS 的 `/api/` 请求返回503，行情、通知等后台任务暂停。此时不能提交记账或同步，也不能换地址绕过；等部署验证完成后再读health。首次安装不生成demo记录，空账本的启动／定时同步不自动下载行情；安装、升级与数据保护约定见 [安装指南](install.md)。
 
-开发源码内 AI 客户端默认dev／8877；已安装发布包默认production／8765，按脚本位置判断，不依赖cwd。测试显式 `--environment test` 使用8876。`target` 离线显示目标；`--base-url` 可显式选择回环地址，标准端口与环境冲突则拒绝，自定义端口必须指定环境。每次请求前校验health中的application与environment；可用 `--expected-data-dir PATH` 锁定账本目录。服务不符或离线不自动切换目标。Host/Origin/CSRF规则不变，环境不同也不能转用token。自动汇率同步按 currency + date 去重，更新记录的汇率子项增加 inserted/updated/unchanged 计数。手工日频及CSV覆盖不会被后续自动同步改掉；历史交易的锁定率保持原值。
+开发源码内 AI 客户端默认dev／8877；已安装发布包默认production／8765，按脚本位置判断，不依赖cwd。合成回归显式指定 `--environment dev`、临时回环地址和精确合成账本路径。`target` 离线显示目标；`--base-url` 可显式选择回环地址，标准端口与环境冲突则拒绝，自定义端口必须指定环境。每次请求前校验health中的application与environment；可用 `--expected-data-dir PATH` 锁定账本目录。服务不符或离线不自动切换目标。Host/Origin/CSRF规则不变，环境不同也不能转用token。自动汇率同步按 currency + date 去重，更新记录的汇率子项增加 inserted/updated/unchanged 计数。手工日频及CSV覆盖不会被后续自动同步改掉；历史交易的锁定率保持原值。
 
 ## 统一期间统计与提醒中心
 
@@ -376,10 +376,10 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 | 接口 | 请求与结果 |
 |---|---|
-| GET `/api/research/catalog` | 本地已核验目录、已添加订阅、模块、module_sources来源说明及研究版本；不采集目录中的全部指数。 |
-| POST `/api/research/indices/resolve` | `{code}`，只读返回精确配对 profile 和 research_revision。 |
-| POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。返回逐端点预计调用量（沿用endpoint_budget字段，remaining固定null，表示无本机上限）、依赖缺项和原 research_revision；无供应商请求。 |
-| PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。只保存，显式更新才入队。 |
+| GET `/api/research/catalog` | 本地已核验目录、已添加订阅、模块、默认全选的default_modules、module_sources来源说明及研究版本；不采集目录中的全部指数。 |
+| POST `/api/research/indices/resolve` | `{code}`，本地查询已保存档案或内置代码配对。目录外新指数通过采集预览在线核验。 |
+| POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。新指数联网验证理杏仁身份及所选范围内有效日线，返回 verified_price_date、预计调用量、依赖缺项和原 research_revision。已保存指数的预览只用本地数据。 |
+| PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。新指数重新核验后，在同一事务保存订阅并排队全量同步，返回 job_id。修改既有订阅返回 job_id=null。 |
 | GET `/api/research/indices` | 兼容每页20的本地摘要读取，kind/page可选；页面首页改用选择器。 |
 | GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/ewpvo/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
 | GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield。返回日频估值均值、分位、资金观察、波动率和集中度；收益回测、成分重叠、区间收益比较已退役，含同一analysis_id。 |

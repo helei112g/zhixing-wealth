@@ -67,7 +67,7 @@ exec "$release/.venv/bin/python" -B "$release/scripts/ai_client.py" \\
 ./zhixing read /api/capabilities
 ```
 
-`target` 只显示配置，不代表服务已运行；`read /api/health` 才验证连接。入口在每次 API 请求前校验应用、正式环境和精确数据目录，拒绝更改目标参数。服务离线时说明状态，不切换到 8877/8876，不自行安装、升级或恢复。macOS 用户需要启动时可使用 `{workspace/'runtime/启动知行财富.app'}`；macOS/Linux 通用启动与停止方法见安装包的 [安装与升级指南]({current/'docs/install.md'})。
+`target` 只显示配置，不代表服务已运行；`read /api/health` 才验证连接。入口在每次 API 请求前校验应用、正式环境和精确数据目录，拒绝更改目标参数。服务离线时说明状态，不切换到 8877，不自行安装、升级或恢复。macOS 用户需要启动时可使用 `{workspace/'runtime/启动知行财富.app'}`；macOS/Linux 通用启动与停止方法见安装包的 [安装与升级指南]({current/'docs/install.md'})。
 
 首次安装应为空账本，不为演示自动创建组合、资产、流水或笔记。用户要求升级时转到安装指南；升级不得清空、改写既有业务记录或笔记历史，不能用旧备份覆盖期间新增数据。
 

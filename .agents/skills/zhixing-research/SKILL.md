@@ -5,8 +5,8 @@ description: 在知行财富本机系统读取指数资料和市场水位事实�
 
 # 指数观察台
 
-1. 读取 `/api/capabilities` 和 `/api/research/catalog`，按本地已核验家族识别；未添加不采集。
-2. 用 `collection_preview(code, modules, history_start)` 展示范围、逐端点预计调用量和原研究revision。依据用户授权提交 `PUT /api/research/collection`，保留expected_research_revision，按id回读；409不自动重试。保存不采集。
+1. 读取 `/api/capabilities` 和 `/api/research/catalog`，内置目录提供常用代码。新指数用理杏仁代码走在线预览。
+2. 用 `collection_preview(code, modules, history_start)` 展示核验日线日期、范围、逐端点预计调用量和原研究revision。依据用户授权提交 `PUT /api/research/collection`，保留expected_research_revision，按id回读；409不自动重试。首次保存同时提交全量同步，回读返回的 job_id。后续编辑既有订阅没有首次同步任务。
 3. 明确更新时提交原有公共数据任务，稳定request_id，结果未知先查job_id。按来源更新使用指数详情返回的 `collection.resources`，精确重试只提交失败项原resource；暂停保留历史。本机不设调用次数上限，保留累计尝试计数，不自动解除供应商权限或额度阻断。
 4. Token由用户在本机「研究工具 → 数据管理」输入并保存本地文件。禁止读取Token文件或令牌内容，禁止发到聊天、请求文件、日志、云端或仓库。仅可读取配置状态和非敏感计数。
 5. `research_index`/`research_studio`/`research_part`只读本地；日期和分析ID一致，跨版本分页重读。mcw/ew/ewpvo/median不混；旧overall/arithmetic保留旧来源。全历史标实际覆盖，当前篮子回溯不等于历史当期篮子。指数财报不能填逐只公司表。

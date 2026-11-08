@@ -1,7 +1,7 @@
 /* Only explicitly marked synthetic test data; no requests may mutate a real ledger. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright'),root=path.resolve(__dirname,'..');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=path.join(process.env.PORTFOLIO_TEST_OUTPUT||path.join(root,'../local/work/browser'),'plan-forward-results');fs.mkdirSync(out,{recursive:true});
+const base=process.env.PORTFOLIO_TEST_URL,out=path.join(process.env.PORTFOLIO_TEST_OUTPUT||path.join(root,'../local/work/browser'),'plan-forward-results');fs.mkdirSync(out,{recursive:true});
 (async()=>{
  const browser=await pw.chromium.launch({executablePath:process.env.CHROME_PATH||undefined,headless:true});
  const page=await browser.newPage({viewport:{width:1600,height:1050}});page.setDefaultTimeout(20000);
@@ -13,7 +13,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=path.join
  const waitText=async(text)=>{await dialog().locator('.plan-funding>strong').filter({hasText:text}).waitFor();};
  const row=name=>page.locator('.holding-row').filter({hasText:name});
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(health.version,'0.9.0');
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));assert.equal(health.version,'0.9.0');
   const boot=await api('/bootstrap');csrf=boot.csrf_token;
   const p=await api('/portfolios',{name:'计划与行情专项组合',planned_amount:'500000',start_date:'2024-01-01'});
   const buy=(code,name,qty,total)=>api('/events',{portfolio_id:p.id,kind:'BUY',date:'2024-01-31',instrument:{market:'CN',code,name},quantity:qty,gross_amount:total,fx_rate:'1'});

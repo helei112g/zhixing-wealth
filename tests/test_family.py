@@ -23,7 +23,7 @@ from backend.store import Store
 class FamilyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        directory = claim_environment(Path(self.temp.name)/'synthetic', 'test')
+        directory = claim_environment(Path(self.temp.name)/'synthetic', 'dev')
         self.store = Store(directory); self.service = Service(self.store); self.family = FamilyService(self.store)
         self.patches = [patch(m+'.today', return_value=date(2026,10,27)) for m in ('backend.family_domain','backend.family_service','backend.service')]
         for p in self.patches: p.start()
@@ -179,10 +179,10 @@ class FamilyTests(unittest.TestCase):
         row=dict(id='abc',status='pending',kind='debt',due_date='2026-11-10',version=1,snooze_until='2026-11-11')
         a=notification_plan([row],datetime(2026,10,27,tzinfo=ZoneInfo('Asia/Shanghai')))
         self.assertEqual(len(a),1);self.assertIn('2026-11-11',a[0]['at'])
-        n=FamilyNotifications(self.store,self.family,'test');self.assertFalse(n.status()['enabled'])
+        n=FamilyNotifications(self.store,self.family,'dev');self.assertFalse(n.status()['enabled'])
         with patch.object(n,'_helper') as helper:n.reconcile();helper.assert_not_called()
     def test_notification_os_acceptance_verified_not_assumed(self):
-        n=FamilyNotifications(self.store,self.family,'test');n.prepared=True;n._save(n.preferences,{'enabled':True})
+        n=FamilyNotifications(self.store,self.family,'dev');n.prepared=True;n._save(n.preferences,{'enabled':True})
         self.item('insurance','0',policy_end='2026-11-10')
         with patch('backend.family_notifications.datetime',wraps=datetime) as clock, \
              patch('backend.family_notifications.now',return_value='2026-10-27T09:00:00+08:00'), \
@@ -253,7 +253,7 @@ class FamilyTests(unittest.TestCase):
         self.assertEqual(row['comparison_date'],'2025-12-31');self.assertEqual(D(row['changes']['net']['rate']),D('.5'))
 
     def test_every_notification_mutation_queues_even_during_old_worker_exit(self):
-        n=FamilyNotifications(self.store,self.family,'test');n._save(n.preferences,{'enabled':True})
+        n=FamilyNotifications(self.store,self.family,'dev');n._save(n.preferences,{'enabled':True})
         with patch('backend.family_notifications.threading.Thread') as thread:
             n.invalidate();n.invalidate()
             self.assertEqual(thread.call_count,2)
@@ -476,7 +476,7 @@ class FamilyTests(unittest.TestCase):
             self.assertEqual(response.status_code,200);self.assertFalse(response.json()['enabled'])
 
     def test_dividend_native_queue_is_deduplicated_and_removed_when_resolved(self):
-        n=FamilyNotifications(self.store,self.family,'test');n.prepared=True;n._save(n.preferences,{'enabled':True})
+        n=FamilyNotifications(self.store,self.family,'dev');n.prepared=True;n._save(n.preferences,{'enabled':True})
         current=datetime(2026,10,27,10,tzinfo=ZoneInfo('Asia/Shanghai'));requests=[]
         row=dict(id='a'*64,portfolio_id='b'*32,kind='dividend',version=1,status='pending')
         def helper(command, desired, active):
@@ -494,7 +494,7 @@ class FamilyTests(unittest.TestCase):
         p=self.portfolio();buy=self.buy(p)
         source=dict(code='510300',source_ref='synthetic-dividend-1',ex_date='2026-10-20',record_date='2026-10-19',pay_date='2026-10-21',per_share='0.1',currency='CNY',source='合成公告')
         self.service.cache_dividends(buy['instrument_id'],[source])
-        n=FamilyNotifications(self.store,self.family,'test')
+        n=FamilyNotifications(self.store,self.family,'dev')
         rows=n.dividend_rows(self.store.state());self.assertEqual(len(rows),1);self.assertEqual(rows[0]['portfolio_id'],p['id'])
         with patch('backend.service.now',return_value='2026-10-27T23:59:00+08:00'):self.service.cache_dividends(buy['instrument_id'],[source])
         self.assertEqual(rows,n.dividend_rows(self.store.state()))
@@ -506,7 +506,7 @@ class FamilyTests(unittest.TestCase):
         self.assertNotEqual(rows[0]['id'],n.dividend_rows(self.store.state())[0]['id'])
 
     def test_dividend_denied_submission_is_retried_after_permission_recovers(self):
-        n=FamilyNotifications(self.store,self.family,'test');n.prepared=True;n._save(n.preferences,{'enabled':True})
+        n=FamilyNotifications(self.store,self.family,'dev');n.prepared=True;n._save(n.preferences,{'enabled':True})
         current=datetime(2026,10,27,10,tzinfo=ZoneInfo('Asia/Shanghai'))
         row=dict(id='a'*64,portfolio_id='b'*32,kind='dividend',version=1,status='pending')
         with patch.object(n,'dividend_rows',return_value=[row]),patch.object(n,'_helper') as helper,patch('backend.family_notifications.datetime') as clock:

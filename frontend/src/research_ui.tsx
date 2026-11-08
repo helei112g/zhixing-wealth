@@ -9,6 +9,7 @@ const num=(v:any,d=2)=>v==null?'-':money(v,d);
 export function ResearchPage({onData}:Obj){
  const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(()=>{try{return new URLSearchParams(location.search).get('index')||localStorage.getItem('research-selected')||'';}catch{return '';}}),[revision,R]=useState(0),[running,Running]=useState(false),[detail,Detail]=useState<Obj|null>(null),[error,E]=useState('');
  const [adding, setAdding]=useState(false);
+ const [initialSync, setInitialSync]=useState('');
  useEffect(()=>{let active=true;api('/research/catalog').then(v=>{if(active){C(v);S(s=>v.subscriptions.some((p:Obj)=>p.id===s)?s:v.subscriptions[0]?.id||'');}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[revision]);
  useEffect(()=>{let active=true,busy=false;const refresh=async()=>{if(document.hidden||busy)return;busy=true;try{const v=await api('/research/revision');if(active){R(v.research_revision);Running(v.updating);}}catch(e:any){if(active)E(e.message);}finally{busy=false;}};refresh();const timer=setInterval(refresh,2500);return()=>{active=false;clearInterval(timer);};},[]);
  function select(id:string){S(id);try{localStorage.setItem('research-selected',id);const u=new URL(location.href);u.searchParams.set('index',id);history.replaceState(null,'',u);}catch{}}
@@ -33,10 +34,12 @@ export function ResearchPage({onData}:Obj){
   </div>
   {selected?<IndexDetail key={selected} id={selected} revision={revision} onLoaded={Detail}/>
    :<Empty title="还没有指数档案">选择要采集的指数和模块。内置目录不会自动采集，打开页面只读取本地数据。</Empty>}
+  {initialSync===selected&&initialSync&&<p role="status" className="muted small">首次全量任务已受理。<button className="text-button" onClick={()=>onData(selected)}>在数据管理查看进度和结果</button></p>}
   {running&&<p role="status" className="muted small"><LoaderCircle size={14} className="spin"/>采集正在执行，已有有效快照可继续查看。</p>}
   {adding&&catalog&&<CollectionDialog catalog={catalog} onClose={()=>setAdding(false)} onSaved={(value:Obj)=>{
    setAdding(false);
    select(value.id);
+   if(value.job_id){setInitialSync(value.id);Running(true);}
    R(value.research_revision);
   }}/>}
  </div>;
@@ -56,12 +59,12 @@ function IndexInformation({d}:Obj){
   <button className="index-info-button" aria-expanded={open} aria-haspopup="dialog" onFocus={()=>Open(true)} onClick={()=>Open(true)}>ⓘ 基本资料</button>
   {open&&<div className="index-info-popover" role="dialog" aria-label="指数基本资料">
    <h3>{p.name} · 基本资料</h3><dl className="key-values">
-    <dt>价格 / 全收益代码</dt><dd>{p.code} / {p.return_code}</dd>
+    <dt>价格 / 全收益代码</dt><dd>{p.code} / {p.return_code||'理杏仁同代码全收益序列'}</dd>
     <dt>编制机构 / 币种</dt><dd>{p.provider==='csi'?'中证指数':'国证指数'} / CNY</dd>
     <dt>成分数量</dt><dd>{d.companies?.length||'尚未采集'}</dd>
     <dt>价格指数发布日期</dt><dd>{p.launch}</dd>
     <dt>全收益独立发布日期</dt><dd>{p.return_launch||'待核验'}</dd>
-    <dt>编制方案与规则</dt><dd><a href={p.method_url} target="_blank" rel="noopener noreferrer">官方资料 ↗</a></dd>
+    <dt>编制方案与规则</dt><dd>{p.method_url?<a href={p.method_url} target="_blank" rel="noopener noreferrer">{p.lixinger_identity?'理杏仁身份来源 ↗':'官方资料 ↗'}</a>: '独立官方资料待核验'}</dd>
     <dt>加权 / 调样</dt><dd>{d.index_info?.calculationMethod||'以官方方案为准'} / {d.index_info?.rebalancingFrequency||'待核验'}</dd>
    </dl>
   </div>}

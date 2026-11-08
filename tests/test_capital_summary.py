@@ -9,7 +9,7 @@ from backend.service import Service
 
 class CapitalSummaryTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.s=Service(Store(claim_environment(Path(self.tmp.name),'test')));self.p=self.s.save_portfolio({'name':'共享摘要','planned_amount':'100000','start_date':'2023-01-01'})
+        self.tmp=tempfile.TemporaryDirectory();self.s=Service(Store(claim_environment(Path(self.tmp.name),'dev')));self.p=self.s.save_portfolio({'name':'共享摘要','planned_amount':'100000','start_date':'2023-01-01'})
     def tearDown(self):self.tmp.cleanup()
     def buy(self,market='CN',code='159307',qty='100',gross='1000',**kw):
         return self.s.save_event({'portfolio_id':self.p['id'],'kind':'BUY','date':'2023-01-01','instrument':{'market':market,'code':code},'quantity':qty,'gross_amount':gross,'fx_rate':'7' if market=='US' else '1',**kw})

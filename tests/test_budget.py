@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 class BudgetTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.store=Store(claim_environment(Path(self.tmp.name),'test'));self.s=Service(self.store)
+        self.tmp=tempfile.TemporaryDirectory();self.store=Store(claim_environment(Path(self.tmp.name),'dev'));self.s=Service(self.store)
         self.p=self.s.save_portfolio({'name':'预算测试','planned_amount':'100000','start_date':'2024-01-01'})
     def tearDown(self):self.tmp.cleanup()
     def payload(self,**extra):

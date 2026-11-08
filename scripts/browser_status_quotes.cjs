@@ -1,7 +1,7 @@
 /* Status, price-change and allocation UI: fresh synthetic test ledger only. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.env.PORTFOLIO_TEST_OUTPUT;
+const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
 (async()=>{
  const browser=await pw.chromium.launch({executablePath:process.env.CHROME_PATH||undefined,headless:true});
  const page=await browser.newPage({viewport:{width:1600,height:1000}});page.setDefaultTimeout(20000);
@@ -12,7 +12,7 @@ const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'ht
  const row=name=>page.locator('.holding-row').filter({hasText:name});
  const shot=async name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true});
  try{
-  const h=await api('/health');assert.equal(h.environment,'test');assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
+  const h=await api('/health');assert.equal(h.environment,'dev');assert.equal(h.synthetic_fixture,true);assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   const boot=await api('/bootstrap');csrf=boot.csrf_token;
   const p=await api('/portfolios',{name:'合成状态与行情验收',planned_amount:'10000',start_date:'2024-01-01'});
   const buy=(code,name)=>api('/events',{portfolio_id:p.id,kind:'BUY',date:'2024-01-02',instrument:{market:'FUND',code,name},quantity:'100',gross_amount:'1000',fx_rate:'1'});
@@ -26,7 +26,7 @@ const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'ht
   await api('/portfolios/'+p.id+'/instruments/'+a.instrument_id,{target_pct:'70'},'PUT');
   await api('/portfolios/'+p.id+'/instruments/'+b.instrument_id,{target_pct:'20'},'PUT');
   const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',
-   "import json,sys;from pathlib import Path;from datetime import date,timedelta;from backend.service import Service;from backend.store import Store;from backend.environment import claim_environment;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');s=Service(Store(d));at=date.fromisoformat(p['today']);monday=at-timedelta(days=at.weekday());latest=at-timedelta(days=max(0,at.weekday()-4));previous=latest-timedelta(days=3 if latest.weekday()==0 else 1);anchor=monday-timedelta(days=3);[(s.cache_prices(i,[{'date':str(anchor),'price':'10','source':'合成净值'},{'date':str(previous),'price':'10','source':'合成净值'},{'date':str(latest),'price':v,'source':'合成净值'}])) for i,v in p['instruments']]"],
+   "import json,sys;from pathlib import Path;from datetime import date,timedelta;from backend.service import Service;from backend.store import Store;from backend.environment import claim_environment;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');s=Service(Store(d));at=date.fromisoformat(p['today']);monday=at-timedelta(days=at.weekday());latest=at-timedelta(days=max(0,at.weekday()-4));previous=latest-timedelta(days=3 if latest.weekday()==0 else 1);anchor=monday-timedelta(days=3);[(s.cache_prices(i,[{'date':str(anchor),'price':'10','source':'合成净值'},{'date':str(previous),'price':'10','source':'合成净值'},{'date':str(latest),'price':v,'source':'合成净值'}])) for i,v in p['instruments']]"],
    {cwd:root,encoding:'utf8',input:JSON.stringify({directory:h.data_directory,today:boot.today,instruments:[[a.instrument_id,'12'],[b.instrument_id,'9'],[closed.instrument_id,'11']]})});assert.equal(fixture.status,0,fixture.stderr);
   await page.goto(base);await nav('组合收益');await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);
   for(const width of [1600,390,320]){

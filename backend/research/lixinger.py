@@ -4,6 +4,7 @@ import hashlib
 import re
 from datetime import timedelta
 from ..common import DomainError, day, dec, ds, json_dumps
+from . import providers
 from .metrics import years_before
 
 SOURCE = '理杏仁'
@@ -67,6 +68,29 @@ def ranges(start, end):
         finish = min(cursor + timedelta(days=3650), stop)
         yield str(cursor), str(finish)
         cursor = finish + timedelta(days=1)
+
+
+def verify_index(access, code, known, history_start, end):
+    rows = access.request('cn/index', {'stockCodes': [code]})
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        raise DomainError('理杏仁未返回该代码的唯一指数档案')
+    profile = providers.lixinger_identity(rows[0])
+    if profile['code'] != code:
+        raise DomainError('理杏仁返回的指数代码与请求不符')
+    if known and (known['provider'] != profile['provider'] or known.get('exposure') == 'overseas'):
+        raise DomainError('理杏仁指数身份与已核验的编制方或市场范围不符')
+    profile = known or profile
+    start = str(day(history_start)) if history_start else profile['launch']
+    if not profile['launch'] <= start <= end:
+        raise DomainError('历史起点须介于指数发布日期和已完成交易日之间')
+
+    for first, last in reversed(list(ranges(start, end))):
+        params = dict(stockCode=code, type='normal', startDate=first, endDate=last, limit=1)
+        rows = access.request('cn/index/candlestick', params)
+        prices = normalize(dict(params=params, kind='prices'), rows, profile)
+        if prices:
+            return profile, prices[-1]['date']
+    raise DomainError('理杏仁在所选历史范围内没有有效价格日线，无法录入')
 
 
 def request_plan(profile, module, start, end, info=None):
@@ -133,9 +157,12 @@ def normalize(call, rows, profile):
         elif kind == 'members':
             result = [security(v) for v in row.get('constituents', [])]
         else:
-            d = iso(row['date'])
+            d = iso(row.get('date'))
             if not args['startDate'] <= d <= args['endDate']: raise DomainError('理杏仁返回日期超出显式请求范围')
-            if kind == 'prices': result.append(dict(date=d, close=ds(dec(row['close'], positive=True))))
+            if kind == 'prices':
+                if row.get('stockCode', profile['code']) != profile['code']:
+                    raise DomainError('理杏仁日线的指数身份与请求不符')
+                result.append(dict(date=d, close=ds(dec(row.get('close'), '收盘点位', positive=True))))
             elif kind == 'volatility':
                 if row.get('stockCode', profile['code']) != profile['code']:
                     raise DomainError('理杏仁波动率的指数身份与请求不符')
@@ -177,7 +204,7 @@ def assemble(profile, module, parts, end):
         rows = [r for p in parts for r in p['rows'] if r['date'] >= profile['launch']]
         if not rows: raise DomainError('该范围内没有有效行情；不以另一口径替代')
         return dict(common, rows=rows, effective_date=max(r['date'] for r in rows), basis=module,
-                    series_code=profile['code'] if module == 'price' else profile['return_code'])
+                    series_code=providers.series_code(profile, module))
     if module == 'volatility':
         rows = [r for part in parts for r in part['rows'] if r['date'] >= profile['launch']]
         if not rows:

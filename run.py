@@ -55,7 +55,7 @@ def main():
         raise DomainError('配置文件不存在')
     else:
         base = workspace / ('runtime' if environment == 'production' else f'local/{environment}')
-        values = {'data_dir': base / ('browser-test' if environment == 'test' else 'data'),
+        values = {'data_dir': base / 'data',
                   'runtime_dir': base / '.runtime', 'port': PORTS[environment],
                   'auto_sync': environment == 'production'}
     directory = (args.data_dir or values['data_dir']).resolve()

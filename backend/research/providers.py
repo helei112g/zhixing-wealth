@@ -11,6 +11,9 @@ from ..common import ZONE, day, dec, ds, now, today
 
 CSI = 'https://www.csindex.com.cn'
 CNI = 'https://www.cnindex.com.cn'
+INDEX_CODE = re.compile(r'[A-Z0-9]{4,16}')
+LIXINGER_INDEX_INFO = 'https://www.lixinger.com/api/open-api/html-doc/cn/index'
+CUSTOM_KINDS = {'size': '宽基', 'composite': '宽基', 'sector': '行业', 'thematic': '主题', 'style': '风格', 'strategy': '策略'}
 # Explicitly paired official identities; unknown codes are never prefix-matched.
 CATALOG = [
     dict(code='000688', return_code='000688CNY01', name='科创50', provider='csi', kind='宽基', launch='2020-07-23', exposure='CN'),
@@ -29,15 +32,46 @@ CATALOG = [
     dict(code='399998', return_code='H20596', name='中证煤炭', provider='csi', kind='行业', launch='2015-02-13'),
     dict(code='000991', return_code='H00991', name='全指医药', provider='csi', kind='行业', launch='2011-08-02'),
 ]
-def identity(code):
+def catalog_identity(code):
     code = str(code).strip().upper()
     found = next((p for p in CATALOG if code in (p['code'], p['return_code'])), None)
-    if not found: raise market.ProviderError('当前尚未支持这个指数的官方代码配对；不按代码前缀猜测')
+    if not found: return None
     p = dict(found, currency='CNY', input_basis='total_return' if code == found['return_code'] else 'price')
     p['method_url'] = (CNI + '/docs/gz_399006.pdf' if p['provider'] == 'cni' else
         'https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/' + p['code'] + 'factsheet.pdf')
     p['return_launch_status'] = 'verified' if p.get('return_launch') else 'not_independently_verified'
     return p
+
+
+def identity(code):
+    p = catalog_identity(code)
+    if not p: raise market.ProviderError('当前尚未支持这个指数的官方代码配对；不按代码前缀猜测')
+    return p
+
+
+def lixinger_identity(row):
+    if not isinstance(row, dict):
+        raise market.ProviderError('理杏仁指数信息格式无效')
+    code, name, source = row.get('stockCode'), row.get('name'), row.get('source')
+    if (not isinstance(code, str) or not INDEX_CODE.fullmatch(code)
+            or not isinstance(name, str) or not name.strip() or len(name) > 120
+            or source not in ('csi', 'cni', 'lxri')
+            or (row.get('areaCode'), row.get('market'), row.get('currency')) != ('cn', 'a', 'CNY')):
+        raise market.ProviderError('理杏仁未确认该指数的大陆A股市场、币种或编制方')
+
+    launch = str(day(str(row.get('launchDate'))[:10]))
+    fields = ('stockCode', 'name', 'source', 'areaCode', 'market', 'currency', 'launchDate', 'series')
+    evidence = {key: row.get(key) for key in fields}
+    return dict(code=code, name=name.strip(), provider=source,
+                kind=CUSTOM_KINDS.get(str(row.get('series')), '指数'), launch=launch, currency='CNY',
+                exposure='CN', input_basis='price', return_code=None, return_launch_status='not_independently_verified',
+                method_url=LIXINGER_INDEX_INFO, identity_source=LIXINGER_INDEX_INFO, lixinger_identity=evidence)
+
+
+def series_code(profile, basis):
+    if basis == 'total_return' and profile.get('return_code'):
+        return profile['return_code']
+    return profile['code']
 
 
 def module_capabilities(profile):

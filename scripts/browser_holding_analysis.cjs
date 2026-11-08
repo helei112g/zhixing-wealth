@@ -1,7 +1,7 @@
 /* End-to-end acceptance. Every write is confined to a fresh synthetic test ledger. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876';
+const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL;
 const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT||path.join(root,'../local/work/browser'),'holding-analysis-results');
 fs.mkdirSync(out,{recursive:true});
 (async()=>{
@@ -15,7 +15,7 @@ fs.mkdirSync(out,{recursive:true});
  const nav=async name=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:'主要页面',exact:true}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});if(page.viewportSize().width<=760)await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().right<=0);};
  const shot=name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true});
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.ok(process.env.PORTFOLIO_TEST_DATA_DIR);
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.ok(process.env.PORTFOLIO_TEST_DATA_DIR);
   assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   const boot=await api('/bootstrap');csrf=boot.csrf_token;
   const p=await api('/portfolios',{name:'合成持仓分析',planned_amount:'100000',start_date:'2026-01-01'});
@@ -24,7 +24,7 @@ fs.mkdirSync(out,{recursive:true});
   check(preview.holding_labels.path.join('/')==='A股/红利/央企红利','first-buy labels participate in read-only preview');
   const events=[await api('/events',{...first,expected_revision:preview.revision})];
   for(const [code,name] of [['600502','合成价值标的'],['510901','合成海外债券基金']])events.push(await api('/events',{portfolio_id:p.id,kind:'BUY',date:'2026-01-02',instrument:{market:'CN',code,name},quantity:'100',gross_amount:'1000',fx_rate:'1'}));
-  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,os,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();assert d==Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Service(Store(d));p=json.load(sys.stdin);[s.cache_prices(e['instrument_id'],[{'date':'2026-01-02','price':str(v),'source':'synthetic'},{'date':p['today'],'price':str(v),'source':'synthetic'}]) for e,v in zip(p['events'],[12,8,11])]",health.data_directory],{cwd:root,encoding:'utf8',input:JSON.stringify({events,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
+  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,os,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();assert d==Path(sys.argv[1]).resolve();claim_environment(d,'dev');s=Service(Store(d));p=json.load(sys.stdin);[s.cache_prices(e['instrument_id'],[{'date':'2026-01-02','price':str(v),'source':'synthetic'},{'date':p['today'],'price':str(v),'source':'synthetic'}]) for e,v in zip(p['events'],[12,8,11])]",health.data_directory],{cwd:root,encoding:'utf8',input:JSON.stringify({events,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
   const finance=await api('/portfolios/'+p.id+'/dashboard?view=summary');
   await page.goto(new URL('/?page=overview',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await nav('持仓标的');await page.locator('.holding-row').first().waitFor();
   check((await page.locator('.holdings-table th').allTextContents()).filter(x=>x==='占比').length===1,'one combined weights column');

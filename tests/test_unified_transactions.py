@@ -12,7 +12,7 @@ from backend.trade_analytics import xirr
 
 class UnifiedTransactionsTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.s=Service(Store(claim_environment(Path(self.tmp.name),'test')))
+        self.tmp=tempfile.TemporaryDirectory();self.s=Service(Store(claim_environment(Path(self.tmp.name),'dev')))
         self.p=self.s.save_portfolio({'name':'统一口径','planned_amount':'100000','start_date':'2023-01-01'})
     def tearDown(self):self.tmp.cleanup()
     def buy(self,code='159307',date='2023-01-01',qty='100',gross='1000',**kw):

@@ -43,7 +43,7 @@ def build(root, output, data, environment, port, python):
             with tempfile.TemporaryDirectory(prefix='.swift-', dir=output) as scratch:
                 subprocess.run(['/usr/bin/xcrun', 'swiftc', '-O', '-module-cache-path', str(Path(scratch) / 'module-cache'),
                                 str(source), '-o', str(binaries / 'FamilyNotifications')], capture_output=True, check=True, timeout=120)
-        display_name = '知行财富通知' + {'dev': ' · 开发', 'test': ' · 测试', 'production': ''}[environment]
+        display_name = '知行财富通知' + {'dev': ' · 开发', 'production': ''}[environment]
         info = {'CFBundleIdentifier': identity, 'CFBundleName': display_name,
                 'CFBundleDisplayName': display_name, 'CFBundleExecutable': 'FamilyNotifications',
                 'CFBundleIconFile': 'AppIcon.icns', 'CFBundleShortVersionString': VERSION,

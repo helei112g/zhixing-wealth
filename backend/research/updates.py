@@ -17,6 +17,11 @@ MODULES={'index_prices':('index_info','price','total_return','volatility'),'memb
          'valuations':('valuations','market_activity','stock_valuations'),'financials':('index_financials','financials','historical_financials')}
 
 
+def index_resources(iid, modules, scopes=MODULES):
+    return [dict(scope=scope, target=iid, module=module)
+            for scope in MODULES if scope in scopes for module in MODULES[scope] if module in modules]
+
+
 def key(resource):return hashlib.sha256(json_dumps(resource).encode()).hexdigest()
 
 
@@ -90,9 +95,8 @@ class UpdateJobs:
                     from ..waterlevel.catalog import GROUPS
                     resources.extend(dict(scope=scope, group=group) for group in GROUPS)
                 else:
-                    resources.extend(dict(scope=scope, target=iid, module=module)
-                                     for iid, modules in enabled_modules.items()
-                                     for module in MODULES[scope] if module in modules)
+                    for iid, modules in enabled_modules.items():
+                        resources.extend(index_resources(iid, modules, (scope,)))
         if full:
             resources = [dict(r, full=True) for r in resources]
         if not isinstance(resources,list) or not resources or len(resources)>200:raise DomainError('没有可更新的对象，或任务超过200项')
@@ -150,22 +154,31 @@ class UpdateJobs:
         signature=dict(scopes=sorted(set(body.get('scopes',SCOPES))),targets=sorted(body['targets']) if body.get('targets') else None,resources=sorted(body['resources'],key=key) if body.get('resources') else None)
         if body.get('full'):signature['full']=True
         request_digest=key(signature)
-        generation=providers.cutoff();digest=key(dict(resources=resources,generation=generation))
         with self.worker_lock,self.research.transaction() as db:
             old=db.execute('SELECT digest,job_id FROM data_update_receipts WHERE id=?',(receipt,)).fetchone()
             if old:
                 if old[0]!=request_digest:raise ConflictError('request_id已用于另一更新范围')
                 jid=old[1]
             else:
-                pending=db.execute("SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running')").fetchall()
-                match=next((r for r in pending if json.loads(r[1])['digest']==digest),None)
-                jid=match[0] if match else secrets.token_hex(16)
-                if not match:
-                    job=dict(id=jid,created_order=time.time_ns(),digest=digest,generation=generation,resources=resources,scopes=list(dict.fromkeys(r['scope'] for r in resources)),trigger=trigger,slot_at=body.get('slot_at'),started_at=now(),items=[],completed_resources=[])
-                    db.execute('INSERT INTO data_update_tasks VALUES (?,?,?)',(jid,'pending',json_dumps(job)))
+                jid=self.enqueue(db, resources, trigger=trigger, slot_at=body.get('slot_at'))
                 db.execute('INSERT INTO data_update_receipts VALUES (?,?,?,?)',(receipt,request_digest,jid,json_dumps(dict(job_id=jid,status='accepted'))))
         self.start()
         return dict(job_id=jid,status='accepted')
+
+    def enqueue(self, db, resources, *, trigger='manual', slot_at=None):
+        generation = providers.cutoff()
+        digest = key(dict(resources=resources, generation=generation))
+        pending = db.execute("SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running')")
+        match = next((r for r in pending if json.loads(r[1])['digest'] == digest), None)
+        if match:
+            return match[0]
+
+        jid = secrets.token_hex(16)
+        job = dict(id=jid, created_order=time.time_ns(), digest=digest, generation=generation,
+                   resources=resources, scopes=list(dict.fromkeys(r['scope'] for r in resources)),
+                   trigger=trigger, slot_at=slot_at, started_at=now(), items=[], completed_resources=[])
+        db.execute('INSERT INTO data_update_tasks VALUES (?,?,?)', (jid, 'pending', json_dumps(job)))
+        return jid
 
     def start(self):
         with self.worker_lock:
@@ -204,7 +217,7 @@ class UpdateJobs:
 
     def execute(self,r):
         if r['scope'] in AUTOMATIC_SCOPES:return self._legacy(r)
-        if self.current_trigger != 'manual':
+        if self.current_trigger != 'manual' and not (self.current_trigger == 'index_create' and r.get('target') and r.get('full')):
             raise DomainError('指数资料库和市场水位仅支持手动更新')
         if r['scope'] == 'market':
             asof = (self.current_job or {}).get('information_cutoff') or str(today())
@@ -279,7 +292,8 @@ class UpdateJobs:
         with self.research.transaction() as db:
             for r in rows:
                 job=json.loads(r[1]);job['lease_owner']=None;job['lease_expires']=None;job['resume_on_start']=True
-                manual_research = any(resource['scope'] not in AUTOMATIC_SCOPES for resource in job['resources'])
+                manual_research = job.get('trigger') != 'index_create' and any(
+                    resource['scope'] not in AUTOMATIC_SCOPES for resource in job['resources'])
                 if manual_research:
                     job['resume_on_start']=False
                 db.execute('UPDATE data_update_tasks SET state=?,data=? WHERE id=?',

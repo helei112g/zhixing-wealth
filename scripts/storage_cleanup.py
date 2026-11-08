@@ -71,7 +71,7 @@ def retained_releases(root):
     if deploy.is_file():
         previous = json.loads(deploy.read_text()).get('previous')
         if previous: keep.add(previous)
-    for record in (root / 'runtime/.runtime/server.json', root / 'local/dev/.runtime/server.json', root / 'local/test/.runtime/server.json'):
+    for record in (root / 'runtime/.runtime/server.json', root / 'local/dev/.runtime/server.json'):
         if record.is_file():
             running = Path(json.loads(record.read_text()).get('root', ''))
             if running.parent == releases: keep.add(running.name)
@@ -142,9 +142,8 @@ def make_plan(workspace):
             item.update(witness=witness.relative_to(root).as_posix(), witness_sha256=file_hash(witness))
         candidates.append(item)
 
-    for pattern in ('local/test/*/.native-notifications/module-cache', 'local/work/*/native/module-cache'):
-        for path in sorted(root.glob(pattern)):
-            add(path, 'compiler_cache')
+    for path in sorted(root.glob('local/work/*/native/module-cache')):
+        add(path, 'compiler_cache')
     removed = known - keep
     for name in sorted(removed):
         add(root / 'runtime/releases' / name, 'inactive_release')

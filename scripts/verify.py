@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Reproducible regression: only synthetic, explicitly marked test ledgers."""
+"""Reproducible regression with temporary synthetic development ledgers."""
 from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from backend.environment import LedgerProcessLock, claim_environment, workspace_for
+from backend.environment import claim_environment, workspace_for
 from backend.deployment_guard import require_empty
 
 SCENARIOS = ('allocation_expenses','empty','waterlevel','research','acceptance','pagination','profit','holdings','holding_analysis','refinements','portfolio_layout','entry','reinvestment','dividend_review','notes','plan_forward','status_quotes','brand','family','settings','interface_refinements','cashflow_archive')
@@ -25,12 +25,18 @@ def run(command, **kwargs):
     subprocess.run(list(map(str,command)),cwd=ROOT,check=True,**kwargs)
 
 
+def available_port():
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        return sock.getsockname()[1]
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--browser',action='store_true')
     parser.add_argument('--scenario', choices=SCENARIOS, help='Run one browser scenario after unit/build/source verification')
     parser.add_argument('--output',type=Path,default=workspace_for(ROOT)/'local/work/verification')
-    parser.add_argument('--port',type=int,default=8876)
+    parser.add_argument('--port',type=int,help='Optional explicit port for the temporary development instance')
     args=parser.parse_args()
     output=args.output.resolve();output.mkdir(parents=True,exist_ok=True)
     run([sys.executable,'-m','unittest','discover','-s','tests'])
@@ -39,25 +45,29 @@ def main():
     run(['npm','--prefix','frontend','run','build'])
     with (output/'source-check.json').open('w') as handle:run([sys.executable,'scripts/source_check.py'],stdout=handle)
     if not args.browser:return
+    port = args.port or available_port()
     # Each scenario gets a fresh synthetic ledger so large pagination fixtures
     # cannot alter another scenario's FX choices, history or response time.
     for name in ((args.scenario,) if args.scenario else SCENARIOS):
         case_output=output/name;case_output.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='synthetic-',dir=case_output) as temp:
             base=Path(temp);data=base/'browser-test';runtime=base/'.runtime'
-            claim_environment(data,'test')
-            env={**os.environ,'PORTFOLIO_TEST_URL':f'http://127.0.0.1:{args.port}',
+            claim_environment(data,'dev')
+            (data/'.synthetic-fixture').touch(exist_ok=False)
+            env={**os.environ,'PORTFOLIO_TEST_URL':f'http://127.0.0.1:{port}',
                  'PORTFOLIO_TEST_DATA_DIR':str(data),'PORTFOLIO_TEST_OUTPUT':str(case_output),
                  'PLAYWRIGHT_MODULE_PATH':str(ROOT/'frontend/node_modules/playwright')}
-            command=[sys.executable,str(ROOT/'run.py'),'--environment','test','--data-dir',str(data),
-                     '--runtime-dir',str(runtime),'--port',str(args.port),'--no-open','--no-sync']
+            command=[sys.executable,str(ROOT/'run.py'),'--environment','dev','--data-dir',str(data),
+                     '--runtime-dir',str(runtime),'--port',str(port),'--no-open','--no-sync']
             if name == 'research':
                 command=[sys.executable,'-c',"import runpy,sys;from tests.research_fixtures import install_providers;install_providers();sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')",*command[1:]]
+            if name == 'cashflow_archive':
+                command=[sys.executable,'-c',"import runpy,sys;from tests.lixinger_fixtures import install;install();sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')",*command[1:]]
             if name == 'waterlevel':
                 command=[sys.executable,'-c',"import runpy,sys;from tests.waterlevel_fixtures import install_providers;install_providers();sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')",*command[1:]]
             if name == 'empty':
                 config=base/'config.toml'
-                config.write_text(f'environment = "test"\nport = {args.port}\ndata_dir = "browser-test"\nruntime_dir = ".runtime"\nauto_sync = true\n')
+                config.write_text(f'environment = "dev"\nport = {port}\ndata_dir = "browser-test"\nruntime_dir = ".runtime"\nauto_sync = true\n')
                 command=[sys.executable,str(ROOT/'run.py'),'--config',str(config),'--no-open']
             with (case_output/'server.log').open('w') as handle:
                 process=subprocess.Popen(command,cwd=ROOT,env=env,stdout=handle,stderr=subprocess.STDOUT)
@@ -67,7 +77,8 @@ def main():
                         if process.poll() is not None:raise RuntimeError('测试服务启动失败，查看 '+str(case_output/'server.log'))
                         try:
                             with urllib.request.urlopen(env['PORTFOLIO_TEST_URL']+'/api/health',timeout=1) as response:info=json.load(response)
-                            if info['data_directory']!=str(data) or info['environment']!='test':raise RuntimeError('测试端口属于其他实例')
+                            if info['data_directory']!=str(data) or info['environment']!='dev' or not info['synthetic_fixture']:
+                                raise RuntimeError('合成验收端口属于其他实例')
                             ready=True;break
                         except (urllib.error.URLError,ConnectionError):time.sleep(.1)
                     if not ready:raise RuntimeError('测试服务启动超时')

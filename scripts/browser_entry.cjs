@@ -1,7 +1,7 @@
 /* All writes target a separately launched synthetic ledger, never the user's data. */
 const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright'),root=path.resolve(__dirname,'..');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=path.join(process.env.PORTFOLIO_TEST_OUTPUT||path.join(root,'../local/work/browser'),'entry-results');fs.mkdirSync(out,{recursive:true});
+const base=process.env.PORTFOLIO_TEST_URL,out=path.join(process.env.PORTFOLIO_TEST_OUTPUT||path.join(root,'../local/work/browser'),'entry-results');fs.mkdirSync(out,{recursive:true});
 (async()=>{const browser=await pw.chromium.launch({executablePath:process.env.CHROME_PATH||undefined,headless:true});const page=await browser.newPage({viewport:{width:1600,height:1100}});page.setDefaultTimeout(20000);let csrf='',count=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));const check=(x,m)=>{assert.ok(x,m);console.log('PASS',++count,m);};
 const api=async(u,body,method=body===undefined?'GET':'POST')=>{const r=await page.request.fetch(base+'/api'+u,{method,data:body,headers:{'x-csrf-token':csrf,origin:base}});const v=await r.json();assert.ok(r.ok(),JSON.stringify(v));return v;};
 const dialog=()=>page.getByRole('dialog'),field=label=>dialog().getByLabel(new RegExp('^'+label));
@@ -9,7 +9,7 @@ const waitValue=async(label,value)=>{const loc=field(label);await page.waitForFu
 const nav=async(name)=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:name==='全局设置'?'全局页面':'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
 const edit=async(id)=>{await nav('交易记录');await page.locator('.transaction-viewport[aria-busy="false"]').waitFor();await page.locator('[data-ledger-event="'+id+'"]').getByRole('button',{name:'更正',exact:true}).click();};
 const close=async()=>{await dialog().getByRole('button',{name:'取消',exact:true}).click();};
-try{const h=await api('/health');assert.equal(h.environment,'test');assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(h.version,'0.9.0');csrf=(await api('/bootstrap')).csrf_token;
+try{const h=await api('/health');assert.equal(h.environment,'dev');assert.equal(h.synthetic_fixture,true);assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));assert.equal(h.version,'0.9.0');csrf=(await api('/bootstrap')).csrf_token;
 const p=await api('/portfolios',{name:'合成日期汇率专项','planned_amount':'1000000','start_date':'2023-01-01'});
 for(const [currency,rates] of [['USD',['6.8','6.9','7','7.1','7.2']],['HKD',['.8','.9','1','1.1','1.2']]])for(const [n,date] of ['2023-01-03','2023-01-04','2023-02-01','2023-02-03','2023-02-06'].entries())await api('/fx',{currency,date,rate:rates[n],mode:'daily'});
 const buy=await api('/events',{portfolio_id:p.id,kind:'BUY',date:'2023-01-03',instrument:{market:'US',code:'VTI',name:'合成汇率标的'},quantity:'3',gross_amount:'675',transaction_costs:'1.02',fx_rate:'7.77'});

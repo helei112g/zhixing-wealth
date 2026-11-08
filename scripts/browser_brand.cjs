@@ -1,10 +1,10 @@
 /* The approved logo and environment labels must render on desktop and mobile. */
 const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876';
+const base=process.env.PORTFOLIO_TEST_URL;
 (async()=>{const browser=await pw.chromium.launch({executablePath:process.env.CHROME_PATH||undefined,headless:true});
-try{for(const [environment,label] of [['test','测试环境'],['dev','开发环境'],['production','正式环境']]){
-const page=await browser.newPage();const health=await (await page.request.get(base+'/api/health')).json();assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
+try{for(const [environment,label] of [['dev','开发环境'],['production','正式环境']]){
+const page=await browser.newPage();const health=await (await page.request.get(base+'/api/health')).json();assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
 // Only display metadata is varied; every scenario still uses the guarded synthetic backend.
 await page.route('**/api/bootstrap',async route=>{const response=await route.fetch();const data=await response.json();await route.fulfill({response,json:{...data,environment,environment_label:label}});});
 await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).waitFor();

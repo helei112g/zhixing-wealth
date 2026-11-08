@@ -1,7 +1,7 @@
 /* Settings pagination uses a fresh synthetic test ledger; sync is intercepted. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=process.env.PORTFOLIO_TEST_OUTPUT;
+const base=process.env.PORTFOLIO_TEST_URL,output=process.env.PORTFOLIO_TEST_OUTPUT;
 (async()=>{
  const browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1480,height:1050}});
  let csrf='',checks=0;const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
@@ -11,7 +11,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=proces
  const ids=()=>rows().evaluateAll(es=>es.map(e=>e.dataset.cacheInstrument));
  const pager=page.getByRole('navigation',{name:'行情缓存分页'});
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);assert.equal(health.version,'0.9.0');
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);assert.equal(health.version,'0.9.0');
   csrf=(await api('/bootstrap')).csrf_token;
   for(let n=0;n<23;n++)await api('/instruments',{market:'SH',code:String(510000+n),name:'合成缓存标的'+n});
   const boot=await api('/bootstrap'),expected=boot.instruments.map(i=>i.id);

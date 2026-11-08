@@ -6,7 +6,9 @@ from ai_client import Client
 
 
 def main():
-    c=Client(os.environ['PORTFOLIO_TEST_URL'],environment='test',expected_data_dir=os.environ['PORTFOLIO_TEST_DATA_DIR'])
+    c=Client(os.environ['PORTFOLIO_TEST_URL'],environment='dev',expected_data_dir=os.environ['PORTFOLIO_TEST_DATA_DIR'])
+    if not c.request('/api/health').get('synthetic_fixture'):
+        raise RuntimeError('Research verification requires a synthetic development ledger')
     count=0
     def check(value,label):
         nonlocal count
@@ -16,10 +18,10 @@ def main():
     check(cap['research']['local_credentials']['local_request_limit'] is None,'discover no local request cap')
     before=c.connect()['revision'];counts=c.request('/api/settings/lixinger')['counts']
     p=c.collection_preview('000905',['index_info','price','total_return','valuations','memberships'],'2026-10-01')
-    check(c.request('/api/settings/lixinger')['counts']==counts,'preview uses no supplier calls')
+    check(c.request('/api/settings/lixinger')['counts']==counts,'saved subscription preview uses no supplier calls')
     check(p['endpoint_budget'] and all(row['remaining'] is None for row in p['endpoint_budget']),'call estimates have no local quota')
     body=dict(code='000905',modules=p['modules'],history_start=p['history_start'],enabled=True,expected_research_revision=p['research_revision'])
-    saved=c.write('/api/research/collection',body,'PUT');check(c.request('/api/research/catalog')['subscriptions'][0]['subscription']['enabled'],'subscription read back')
+    saved=c.write('/api/research/collection',body,'PUT');check(c.request('/api/research/catalog')['subscriptions'][0]['subscription']['enabled'] and saved['job_id'] is None,'subscription read back without a second initial sync')
     try:c.write('/api/research/collection',body,'PUT')
     except RuntimeError as e:check('409' in str(e),'stale subscription rejected')
     else:raise AssertionError('stale subscription accepted')

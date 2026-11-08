@@ -11,7 +11,7 @@ description: 查询或维护知行财富的资产更新、余额快照、负债�
 
 ## 查询
 
-- 先检查目标服务 `/api/health` 的 environment；开发源码默认8877，发布包默认8765，日常工作区固定正式账本。业务写入仍须有对应用户授权。测试显式选择test／8876；服务不在线时说明未连接，不自行安装、切换版本或环境。
+- 先检查目标服务 `/api/health` 的 environment；开发源码默认8877，发布包默认8765，日常工作区固定正式账本。业务写入仍须有对应用户授权。合成回归显式指定开发环境、临时端口和精确账本路径；服务不在线时说明未连接，不自行安装、切换版本或环境。
 - 读 `/api/capabilities` 与 `/api/family/catalog` 获得能力、revision、项目及关联ID；需要写入时读 `/api/family/command-schema` 获取当前 JSON Schema，勿根据名称猜ID。
 - 仅需要日期选项时用`family_bounds()`或`/api/family/bounds`；完整写入核对仍读取catalog及command-schema。
 - 总览：`/api/family/summary?grain=month&period=YYYY-MM`；按年用year。月度比较上月末，年度比较上年末；结束日余额不可累加。自定义必须提供start/end。

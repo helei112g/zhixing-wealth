@@ -1,7 +1,7 @@
 /* Introductions and dense lists. All writes require an isolated synthetic test ledger. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876';
+const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL;
 const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results');fs.mkdirSync(out,{recursive:true});
 (async()=>{
  const browser=await pw.chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1600,height:1000}});
@@ -14,7 +14,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
  const ready=()=>page.locator('.transaction-viewport[aria-busy="false"]').waitFor();
  const dialog=()=>page.getByRole('dialog');
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   const boot=await api('/bootstrap');csrf=boot.csrf_token;const start=boot.today.slice(0,4)+'-01-01',month=boot.today.slice(0,7);
   await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).click();
   const description='背景：为长期目标积累资金。\n\n策略：分批投入，定期检查计划。\n<b>这是纯文字示例</b>';
@@ -52,7 +52,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
   const otherBuy=await api('/events',{portfolio_id:other.id,kind:'BUY',date:start,instrument:{market:'CN',code:'512880',name:'合成切换标的'},quantity:'1',gross_amount:'10',fx_rate:'1'});
   const events=[];for(let n=0;n<26;n++)events.push(await api('/events',{portfolio_id:p.id,kind:'BUY',date:start,instrument:{market:'CN',code:'510300',name:'合成宽基标的'},quantity:'1',gross_amount:String(10+n),fx_rate:'1'}));
   const dividend=await api('/events',{portfolio_id:p.id,kind:'DIVIDEND',date:start,pay_date:start,instrument_id:events[0].instrument_id,net_amount:'10',fx_rate:'1',tax_known:true,ex_date_known:true});
-  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');Service(Store(d)).cache_prices(sys.argv[2],[{'date':sys.argv[3],'price':'40','source':'synthetic'},{'date':sys.argv[4],'price':'40','source':'synthetic'}])",process.env.PORTFOLIO_TEST_DATA_DIR,events[0].instrument_id,start,boot.today],{cwd:root,encoding:'utf8'});assert.equal(fixture.status,0,fixture.stderr);
+  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');Service(Store(d)).cache_prices(sys.argv[2],[{'date':sys.argv[3],'price':'40','source':'synthetic'},{'date':sys.argv[4],'price':'40','source':'synthetic'}])",process.env.PORTFOLIO_TEST_DATA_DIR,events[0].instrument_id,start,boot.today],{cwd:root,encoding:'utf8'});assert.equal(fixture.status,0,fixture.stderr);
   await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(other.id);await page.locator('.portfolio-introduction summary').getByText('暂未填写',{exact:true}).waitFor();
   check(!await page.locator('.portfolio-introduction').getAttribute('open'),'changing portfolio resets the introduction fold');
   await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.locator('.portfolio-introduction summary').getByText('查看背景与策略',{exact:true}).waitFor();

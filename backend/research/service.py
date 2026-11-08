@@ -55,7 +55,9 @@ class ResearchService:
             return int(row[0]) if row else 0
 
     def resolve(self, code):
-        return dict(profile=providers.identity(code), research_revision=self.revision())
+        normalized = code.strip().upper()
+        profile = next((p for p in self.profiles() if p['code'] == normalized), None)
+        return dict(profile=profile or providers.identity(code), research_revision=self.revision())
 
     def profiles(self):
         with self.store.connection() as db:
@@ -89,6 +91,8 @@ class ResearchService:
         """One explicit official-source check; never merges reference values into history."""
         d=self.detail(iid,method='mcw')
         if d['analysis_id']!=expected:raise ConflictError('分析版本已变化，请重新读取后核对')
+        if d['profile'].get('lixinger_identity'):
+            raise DomainError('该指数已通过理杏仁核验，尚未核对编制机构的独立日线来源')
         if not d['latest']:raise DomainError('请先采集价格日线')
         official=providers.prices(d['profile'],'price',d['asof'],str(day(d['asof'])-timedelta(days=45)))
         local={r['date']:r for r in (self.module(iid,'price') or {}).get('rows',[])}
@@ -203,7 +207,7 @@ class ResearchService:
             last=next((i for job in recent for i in reversed(job.get('items',[])) if i.get('target')==iid and i.get('module')==module),None)
             module_status[module]=dict(supported=capability['supported'],status='error' if last and last.get('status')=='error' else 'available' if snapshot else 'unsupported' if not capability['supported'] else 'missing',
                                        reason=capability['reason'] or (last.get('error') if last else None), date=snapshot.get('effective_date') if snapshot else None)
-        series_code=p['return_code'] if basis=='total_return' else p['code']
+        series_code=providers.series_code(p,basis)
         daily_series = moving_averages(prices, window, (price or {}).get('missing_dates', []))
         volatility = {row['date']: row['value'] for row in (resources['volatility'] or {}).get('rows', [])}
         for row in daily_series:
@@ -323,9 +327,21 @@ def validate_backup(db):
     if int(db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]) >= 12:
         from ..waterlevel.validation import backup
         backup(db)
-    for r in db.execute('SELECT id,data FROM research_indices'):
-        p=json.loads(r[1]);known=providers.identity(p['code'])
-        if r[0]!=p.get('id') or r[0]!=known['provider']+':'+known['code'] or p['return_code']!=known['return_code']:raise DomainError('指数家族身份或配对无效')
+    for iid, raw in db.execute('SELECT id,data FROM research_indices'):
+        p = json.loads(raw)
+        known = (providers.lixinger_identity(p['lixinger_identity']) if 'lixinger_identity' in p
+                 else providers.identity(p['code']))
+        if iid != p.get('id') or iid != p['provider']+':'+p['code']:
+            raise DomainError('指数家族身份无效')
+        if any(p.get(key) != known.get(key) for key in ('provider', 'code', 'return_code')):
+            raise DomainError('指数家族身份或配对无效')
+        if 'lixinger_identity' in p and any(p.get(key) != known[key] for key in ('currency', 'exposure', 'launch', 'method_url')):
+            raise DomainError('理杏仁指数档案与核验身份不一致')
+        if 'registration' in p:
+            proof = p['registration']
+            if (not isinstance(proof, dict) or proof.get('source') != 'lixinger'
+                    or not day(p['launch']) <= day(proof.get('price_date')) <= day(str(proof.get('checked_at'))[:10])):
+                raise DomainError('指数日线核验证据无效')
         public_url(p['method_url'])
     summaries=price_chunks.validate_blocks(db)
     for r in db.execute('SELECT id,index_id,module,sha256,data FROM research_snapshots'):

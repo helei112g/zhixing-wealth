@@ -286,6 +286,17 @@ def main():
     try:client.write('/api/portfolios/'+plan_portfolio['id']+'/purchase-plans',plan_body,'POST')
     except RuntimeError as error:check('HTTP 409' in str(error),'AI stale purchase plan cannot overwrite current state')
     else:raise AssertionError('stale purchase plan accepted')
+    pid, iid = plan_portfolio['id'], saved_plan['instrument']['id']
+    path = client.request('/api/capabilities')['purchase_plans']['delete'].format(portfolio_id=pid, instrument_id=iid)
+    removal = client.purchase_plan_deletion_preview(pid, iid)
+    check(removal['target_amount']=='10000' and removal['holding_label_path']==['A股','宽基','合成500'] and
+          removal['revision']==revision(),'AI deletion preview is read-only and describes the exact plan and labels')
+    try:client.write(path, {'expected_revision':removal['revision']-1}, 'DELETE')
+    except RuntimeError as error:check('HTTP 409' in str(error),'AI stale deletion cannot detach the plan')
+    else:raise AssertionError('stale purchase plan deletion accepted')
+    receipt = client.write(path, {'expected_revision':removal['revision']}, 'DELETE')
+    check(receipt['instrument_id']==iid and not client.request(f'/api/portfolios/{pid}/dashboard?view=summary')['holdings'],
+          'AI reads back the removed purchase plan by its scoped ID')
     command('income',dict(kind='salary',month='2023-01',date='2023-01-31',currency='CNY',amount='10000'))
     command('income',dict(kind='fund',month='2023-01',date='2023-01-31',currency='CNY',amount='2000'))
     unconfirmed=client.cashflow(2023)

@@ -65,6 +65,23 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'allocation-expenses-resul
   await page.getByRole('navigation',{name:'配置标签路径'}).getByRole('button',{name:'全部配置',exact:true}).click();await ready();
   for(const width of [390,768]){await page.setViewportSize({width,height:950});await shot('allocation-'+width);check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'allocation layout fits viewport '+width);}
   await page.setViewportSize({width:1600,height:1100});
+
+  await nav('持仓标的');await plannedRow.waitFor();
+  const deletePlan=plannedRow.getByRole('button',{name:'删除计划',exact:true});
+  const confirmDelete=dialog.getByRole('button',{name:'确认删除计划',exact:true});
+  const beforeDelete=await revision();
+  await deletePlan.click();await confirmDelete.waitFor();
+  check((await dialog.innerText()).includes('000506.FUND')&&(await dialog.innerText()).includes('5,000.00')&&
+    (await dialog.innerText()).includes('A股 / 宽基 / 科创50'),'delete confirmation identifies the exact plan and labels');
+  await shot('purchase-plan-delete-preview');
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();
+  check(await plannedRow.isVisible()&&await revision()===beforeDelete,'closing deletion preview leaves the plan intact');
+  check(await page.locator('.holding-row').filter({hasText:'合成消费基金'}).getByRole('button',{name:'删除计划',exact:true}).count()===0,'held row does not offer purchase plan deletion');
+  await deletePlan.click();await confirmDelete.click();await dialog.waitFor({state:'hidden'});await plannedRow.waitFor({state:'detached'});
+  const removed=await api('/portfolios/'+p.id+'/dashboard?view=summary');
+  check(removed.holdings.length===5&&removed.plan_funding.total_target_pct===before.plan_funding.total_target_pct&&
+    removed.cash_total===before.cash_total,'confirmed deletion removes the holding row and releases its plan allocation');
+
   await command('income',{kind:'salary',month:at,amount:'10000',currency:'CNY'});
   await command('income',{kind:'fund',month:at,amount:'2000',currency:'CNY'});
   await command('income',{kind:'salary',month:year+'-02',amount:'20000',currency:'CNY'});

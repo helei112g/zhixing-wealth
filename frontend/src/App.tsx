@@ -13,7 +13,7 @@ import {TradeDetailDrawer} from './trade_detail_ui';
 import {InvestmentNotes} from './notes_ui';
 import {InstrumentSummary} from './instrument_ui';
 import {HoldingAnalysisPage} from './holding_analysis_ui';
-import {PurchasePlanForm} from './allocation_ui';
+import {DeletePurchasePlanModal,PurchasePlanForm} from './allocation_ui';
 import {HoldingsTable} from './holdings_ui';
 import {OverviewSummary,PortfolioIntroduction,CurveQuality} from './overview_ui';
 import {TransactionList} from './transaction_list';
@@ -32,7 +32,7 @@ const familyIcons:Record<string,React.ReactNode>={overview:<Home size={17}/>,ana
 
 export default function App(){
  const [boot,Boot]=useState<Obj|null>(null),[pid,Pid]=useState(new URLSearchParams(location.search).get('dividend')||localStorage.getItem('portfolio.selected')||''),[page,Page]=useState(new URLSearchParams(location.search).has('reminders')||new URLSearchParams(location.search).get('family')==='reminders'?'reminders':new URLSearchParams(location.search).has('family')?'family':new URLSearchParams(location.search).has('dividend')||new URLSearchParams(location.search).get('page')==='overview'?'overview':'family'),[inst,Inst]=useState(''),[version,V]=useState(0),[modal,M]=useState<Obj|null>(null),[toast,T]=useState(''),[error,E]=useState('');
- const reloadFlight=useRef<Promise<void>|null>(null);
+ const reloadFlight=useRef<Promise<Obj|undefined>|null>(null);
  const reloadSequence=useRef(0),[bootLoading,BootLoading]=useState(true);
  const [familyLedger,SetFamilyLedger]=useState({filter:'all',selected:''}),[returnToLedger,ReturnToLedger]=useState(false);
  const [familyTab,FamilyTab]=useState(new URLSearchParams(location.search).get('family')==='reminders'?'overview':new URLSearchParams(location.search).get('family')||'overview');
@@ -43,7 +43,7 @@ export default function App(){
  const [grain,Grain]=useState('month'),[range,Range]=useState('all'),[start,Start]=useState(''),[end,End]=useState('');
  const reminders=useReminders(version+':'+JSON.stringify(jobs));
  const overviewScope=page==='overview';const p=boot?.portfolios.find((p:Obj)=>p.id===pid);const expectedScope=overviewScope?'overview':'latest';const dash=dashboard?.portfolio?.id===pid&&dashboard.scope===expectedScope?dashboard:null;const currentDetail=detail?.portfolio?.id===pid&&detail?.holding?.instrument_id===inst?detail:null;
- function reload(force=false):Promise<void>{if(reloadFlight.current){if(force)return reloadFlight.current.catch(()=>{}).then(()=>reload());return reloadFlight.current;}const run=async()=>{const sequence=++reloadSequence.current;BootLoading(true);try{const value=await api('/bootstrap');if(sequence!==reloadSequence.current)return;Boot(value);Jobs(value.jobs||[]);Polling(value.syncing);Pid(old=>value.portfolios.some((p:Obj)=>p.id===old)?old:(value.portfolios.find((p:Obj)=>!p.archived)||value.portfolios[0])?.id||'');E('');V(v=>v+1);}finally{if(sequence===reloadSequence.current)BootLoading(false);}};const promise=run().finally(()=>{if(reloadFlight.current===promise)reloadFlight.current=null;});reloadFlight.current=promise;return promise;}
+ function reload(force=false):Promise<Obj|undefined>{if(reloadFlight.current){if(force)return reloadFlight.current.catch(()=>{}).then(()=>reload());return reloadFlight.current;}const run=async()=>{const sequence=++reloadSequence.current;BootLoading(true);try{const value=await api('/bootstrap');if(sequence!==reloadSequence.current)return;Boot(value);Jobs(value.jobs||[]);Polling(value.syncing);Pid(old=>value.portfolios.some((p:Obj)=>p.id===old)?old:(value.portfolios.find((p:Obj)=>!p.archived)||value.portfolios[0])?.id||'');E('');V(v=>v+1);return value;}finally{if(sequence===reloadSequence.current)BootLoading(false);}};const promise=run().finally(()=>{if(reloadFlight.current===promise)reloadFlight.current=null;});reloadFlight.current=promise;return promise;}
  useEffect(()=>{reload().catch(e=>E(e.message));},[]);
  useEffect(()=>{localStorage.setItem('portfolio.selected',pid);},[pid]);
  useEffect(()=>{if(!pid||!boot||standalonePages.includes(page))return;let active=true;L(true);const from=!overviewScope?'':range==='year'?String(boot.today).slice(0,4)+'-01-01':range==='quarter'?new Date(Date.parse(boot.today+'T12:00:00Z')-90*86400000).toISOString().slice(0,10):range==='custom'?start:'';api('/portfolios/'+pid+'/dashboard?'+query({grain:overviewScope?grain:undefined,view:overviewScope?'full':'summary',start:from,end:overviewScope&&range==='custom'?end:''})).then(v=>{if(active)D({...v,scope:overviewScope?'overview':'latest'});}).catch(e=>{if(active)E(e.message);}).finally(()=>{if(active)L(false);});return()=>{active=false;};},[pid,version,grain,range,start,end,overviewScope,standalonePages.includes(page)]);
@@ -55,6 +55,15 @@ export default function App(){
  function navigate(next:string,target=''){DataTarget(target);Page(next);TradeOpen(false);E('');}
  function openDetail(id:string){Inst(id);Page('detail');}
  async function saved(value?:any){const creating=modal?.kind==='portfolio'&&!modal?.entity;M(null);await reload(true);if(creating&&value?.id){Pid(value.id);Page('overview');}T(value?.imported!==undefined?'已导入'+value.imported+'行，重复跳过'+value.skipped_duplicates+'行':value?.restored?'备份已恢复，原账本已保留快照':'已保存，账本已重新计算');}
+ async function purchasePlanDeleted(result:Obj){
+  const refreshed = await reload(true);
+  if(!refreshed || refreshed.revision < result.revision ||
+     refreshed.allocations.some((a:Obj)=>a.portfolio_id===result.portfolio_id && a.instrument_id===result.instrument_id)){
+   throw new Error('暂时无法确认计划已移除');
+  }
+  M(null);
+  T('已删除计划');
+ }
  async function sync(instrumentId?:string,full=false,trigger?:string){try{await api('/sync',{instrument_id:instrumentId,full,trigger:trigger||(full?'manual_full':instrumentId?'manual_instrument':'manual_update')});Polling(true);T('正在更新；记账和离线查看仍可使用');}catch(e:any){E(e.message);}}
  const action=(kind:string,extra:Obj={})=>{if(kind==='notification-plan'){FamilyTab('assets');SetFamilyLedger({filter:extra.kind==='debt'?'debt':'insurance',selected:extra.item_id});navigate('family');return;}if(kind==='reminders'||kind==='settings'){navigate(kind);return;}if(kind==='trade-detail'){TradeId(extra.eventId);TradeOpen(true);return;}TradeOpen(false);M({kind,...extra});};
  const [dataTarget,DataTarget]=useState('');
@@ -89,7 +98,7 @@ export default function App(){
  <footer className="app-footer"><span><Database size={12}/> 本地 SQLite 账本 · v{boot?.version||'0.9.0'}</span><span>Leo · 2026.11.02</span></footer></main>
  {loading&&dash&&<div className="refresh-indicator"><LoaderCircle size={15} className="spin"/>重算中</div>}{toast&&<div className="toast" role="status"><Check size={16}/>{toast}</div>}
  {p&&<TradeDetailDrawer key={pid} pid={pid} version={version} selected={tradeId} open={tradeOpen&&!modal} onSelect={(id:string)=>TradeId(id)} onClose={()=>TradeOpen(false)} action={action}/>}
- {boot&&modal&&(()=>{const props={boot,portfolio:p,onClose:()=>M(null),onSaved:saved};switch(modal.kind){case'dividends':return <DividendInbox pid={p.id} version={boot.revision} action={action} onReload={()=>reload(true)} onClose={()=>M(null)}/>;case'portfolio':return <PortfolioForm {...props} portfolio={modal.entity}/>;case'event':return <EventForm {...props} event={modal.entity} initialKind={modal.initialKind||'BUY'} instrumentId={modal.instrumentId||(page==='detail'?inst:'')} proposal={modal.proposal} prefill={modal.prefill} splitNotice={modal.splitNotice}/>;case'purchase-plan':return <PurchasePlanForm {...props}/>;case'plan':return <PlanForm {...props} holding={modal.entity}/>;case'fx':return <FxForm {...props}/>;case'csv':return <CsvForm {...props} instrumentId={modal.instrumentId||(page==='detail'?inst:'')}/>;case'restore':return <RestoreForm {...props}/>;case'cancel':return <DeleteEventModal {...props} event={modal.entity}/>;default:return null;}})()}
+ {boot&&modal&&(()=>{const props={boot,portfolio:p,onClose:()=>M(null),onSaved:saved};switch(modal.kind){case'dividends':return <DividendInbox pid={p.id} version={boot.revision} action={action} onReload={()=>reload(true)} onClose={()=>M(null)}/>;case'portfolio':return <PortfolioForm {...props} portfolio={modal.entity}/>;case'event':return <EventForm {...props} event={modal.entity} initialKind={modal.initialKind||'BUY'} instrumentId={modal.instrumentId||(page==='detail'?inst:'')} proposal={modal.proposal} prefill={modal.prefill} splitNotice={modal.splitNotice}/>;case'purchase-plan':return <PurchasePlanForm {...props}/>;case'delete-purchase-plan':return <DeletePurchasePlanModal {...props} holding={modal.entity} onDeleted={purchasePlanDeleted}/>;case'plan':return <PlanForm {...props} holding={modal.entity}/>;case'fx':return <FxForm {...props}/>;case'csv':return <CsvForm {...props} instrumentId={modal.instrumentId||(page==='detail'?inst:'')}/>;case'restore':return <RestoreForm {...props}/>;case'cancel':return <DeleteEventModal {...props} event={modal.entity}/>;default:return null;}})()}
  </div>;
 }
 

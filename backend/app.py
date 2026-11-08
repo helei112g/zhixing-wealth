@@ -21,7 +21,8 @@ from .service import Service
 from .store import SCHEMA, Store
 from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteRequest, NoteMutationRequest, NoteDetail, NotePage, NoteDeletion, TransactionDetail, CancelRequest, TransactionPage, TransactionRow, SyncRequest
 from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
-from .api_models import HoldingLabelRequest, PurchasePlanRequest
+from .api_models import (HoldingLabelRequest, PurchasePlanRequest, PurchasePlanDeletionRequest,
+                         PurchasePlanDeletionPreview, PurchasePlanDeletionResult)
 from .api_models import InstrumentDetail, DashboardResponse
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
@@ -245,6 +246,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                        'unpaid_dividends': '已确认应收计入分红收益，到账前不属于已回收现金'},
                 'purchase_plans': {'preview':'/api/portfolios/{portfolio_id}/purchase-plans/preview',
                                    'write':'/api/portfolios/{portfolio_id}/purchase-plans', 'expected_revision_required':True,
+                                   'deletion_preview':'/api/portfolios/{portfolio_id}/purchase-plans/{instrument_id}/deletion-preview',
+                                   'delete':'/api/portfolios/{portfolio_id}/purchase-plans/{instrument_id}',
                                    'cash_effect':'none; no event or reserve created', 'target_pct':'percentage of total budget'},
                 'allocation_analysis': {'read':'/api/portfolios/{portfolio_id}/allocation-analysis',
                                         'levels':['scope','direction','detail','instrument'],
@@ -368,6 +371,18 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def create_purchase_plan(portfolio_id: str, payload: PurchasePlanRequest):
         from .allocation_planning import purchase_plan
         return reply(purchase_plan(service, portfolio_id, payload.model_dump(exclude_unset=True)))
+
+    @app.get('/api/portfolios/{portfolio_id}/purchase-plans/{instrument_id}/deletion-preview',
+             response_model=PurchasePlanDeletionPreview, summary='只读核对未买入计划、关联标签及删除资格')
+    def purchase_plan_deletion_preview(portfolio_id: str, instrument_id: str):
+        from .allocation_planning import preview_purchase_plan_deletion
+        return reply(preview_purchase_plan_deletion(service, portfolio_id, instrument_id))
+
+    @app.delete('/api/portfolios/{portfolio_id}/purchase-plans/{instrument_id}',
+                response_model=PurchasePlanDeletionResult, summary='按原revision删除未买入计划及其组合关联与标签')
+    def remove_purchase_plan(portfolio_id: str, instrument_id: str, payload: PurchasePlanDeletionRequest):
+        from .allocation_planning import delete_purchase_plan
+        return reply(delete_purchase_plan(service, portfolio_id, instrument_id, payload.expected_revision))
 
     @app.get('/api/portfolios/{portfolio_id}/allocation-analysis', summary='按一级、二级、三级标签或具体标的盘点配置；分母始终为整个组合')
     def allocation_analysis(portfolio_id: str, level: Literal['scope','direction','detail','instrument']='scope',

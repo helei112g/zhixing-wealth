@@ -11,14 +11,21 @@ export function HoldingsTable({dash,action,openDetail,onLabelsSaved}:Obj){
  <p className="muted small holdings-basis">净投入是实际投入减已回收资金；成本价是剩余持仓的含费税平均成本。份额 × 现价 = 市值，份额 × 成本价 = 持仓成本；外币市值按估值汇率折算为 CNY。</p>
  {!dash.holdings.length?<Empty title="还没有持仓">点击页面右上角“添加计划买入”配置目标，或“记录一笔”录入实际买入。</Empty>:<div className="table-wrap"><table className="holdings-table"><thead><tr>
  {['标的','持仓市值 · CNY','收益表现','占比','投入计划 · CNY','计划进度','操作'].map(label=><th scope="col" key={label}>{label}</th>)}
- </tr></thead><tbody>{shown.map((h:Obj)=>{return <tr key={h.instrument_id} className="holding-row" tabIndex={0} aria-label={'查看'+h.instrument.name+'持仓详情'} onClick={()=>openDetail(h.instrument_id)} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openDetail(h.instrument_id);}}}>
+ </tr></thead><tbody>{shown.map((h:Obj)=>{
+ const previousPurchases = h.allocation?.planned_buy_after;
+ const mayDeletePlan = !previousPurchases?.length && (h.status==='计划买入' || (h.status==='尚未买入' && Array.isArray(previousPurchases)));
+ return <tr key={h.instrument_id} className="holding-row" tabIndex={0} aria-label={'查看'+h.instrument.name+'持仓详情'} onClick={()=>openDetail(h.instrument_id)} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openDetail(h.instrument_id);}}}>
  <td className="holding-identity"><span className={'market-tag market-'+marketKey(h.instrument)}>{marketNames[marketKey(h.instrument)]}</span><button className="text-button" onClick={e=>{e.stopPropagation();openDetail(h.instrument_id);}}>{h.instrument.name}</button><div className="instrument-meta"><small>{h.instrument.code}.{h.instrument.market} · {h.instrument.currency}</small><HoldingStatus status={h.status} closed={h.quantity==null?undefined:Number(h.quantity)===0} unbought={Number(h.quantity)===0&&h.performance?.cost!=null&&Number(h.performance.cost)===0}/></div>{h.holding_labels&&<small className="holding-label-path">{h.holding_labels.path.join(' / ')}</small>}</td>
  <td className="holding-valuation"><b>{money(h.value_base)}</b><small>{units(h.quantity)}份 × 现价 {money(h.price,4)} {h.instrument.currency}</small><small>成本价 {money(h.average_cost,4)} {h.instrument.currency}/份 · 含费税</small>{h.instrument.currency!=='CNY'&&<small>估值汇率 1 {h.instrument.currency} = {money(h.fx?.rate,6)} CNY</small>}</td>
  <td className="holding-return transaction-return"><ReturnPerformance performance={h.performance}/><small className="holding-dividends">累计净分红 {money(h.performance?.dividends_net)} CNY · 已计入收益</small></td>
  <td className="holding-weight"><b>持仓 {percent(h.holding_weight)}</b><small>总资产 {percent(h.weight)}</small></td>
  <td className="holding-plan"><b>{money(h.target_amount)}</b><small>计划占总预算 {money(h.target_pct)}%</small><small>净投入 {money(h.net_invested_base)}</small><small>已投占总预算 {percent(h.input_weight)}</small></td>
  <td className="holding-progress"><InvestmentProgress holding={h}/></td>
- <td><div className="holding-actions"><button type="button" className="text-button" onClick={e=>{e.stopPropagation();action('plan',{entity:h});}}>设置计划</button><button type="button" className="text-button" onClick={e=>{e.stopPropagation();action('event',{instrumentId:h.instrument_id,initialKind:'BUY'});}}>记录买入</button></div></td></tr>;})}</tbody></table></div>}
+ <td><div className="holding-actions">
+  <button type="button" className="text-button" onClick={e=>{e.stopPropagation();action('plan',{entity:h});}}>设置计划</button>
+  <button type="button" className="text-button" onClick={e=>{e.stopPropagation();action('event',{instrumentId:h.instrument_id,initialKind:'BUY'});}}>记录买入</button>
+  {mayDeletePlan && !dash.portfolio.archived && <button type="button" className="text-button delete-purchase-plan" onClick={e=>{e.stopPropagation();action('delete-purchase-plan',{entity:h});}}>删除计划</button>}
+ </div></td></tr>;})}</tbody></table></div>}
 
  {total>0&&<nav className="holdings-pagination" aria-label="持仓与投入计划分页"><span aria-live="polite">共 {total} 只 · 第 {current} / {pages} 页</span><label>每页<select aria-label="持仓每页条数" value={pageSize} onChange={e=>{Size(Number(e.target.value));Page(1);}}>{[10,20,50].map(n=><option key={n} value={n}>{n} 条</option>)}</select></label><div className="inline-actions"><Button small disabled={current===1} onClick={()=>Page(current-1)}>上一页</Button><Button small disabled={current===pages} onClick={()=>Page(current+1)}>下一页</Button></div></nav>}
  <p className="muted small">点击标的行查看详情。持仓占比以全部证券市值为分母，总资产占比包含剩余可投金额与应收。计划进度 = 净投入 ÷ 计划金额。年化口径：仅实际投入资金，不含未投入现金。</p>

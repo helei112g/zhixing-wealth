@@ -69,6 +69,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 | 持有／清仓状态与交易类型 | holdings[].quantity、performance.cost；交易 actual.closed、filters.kind、facets.kinds | 标的无份额且累计成本为0是尚未买入；交易状态指单笔批次，不代替当前标的状态 |
 | 最近交易日／本周行情 | instrument_detail(P,I).market_changes | 只读；输出实际取价日期、序列与缺失原因，行情不等于个人收益 |
 | 投入计划与剩余分配额 | plan_check(P,I,target_pct)，同时读取 labels 的原revision | 两次读取revision一致后PUT计划，可同事务保存holding_labels；计划超配与现金缺口分别说明，均为非阻塞提醒 |
+| 删除未买入计划 | purchase_plan_deletion_preview(P,I)，核对标的、原计划及将移除的本组合标签 | DELETE /api/portfolios/P/purchase-plans/I，携带预览 revision；回读本组合中是否还关联该标的 |
 | 持仓分类与分布 | holding_labels(P,I)、holding_distribution(P,basis) | 独立labels PUT或计划PUT；只影响当前组合同标的，不改历史流水 |
 | 保留实际分红并完成核对 | dividends候选、recorded_event、review_basis | POST dividends/ID/review；原revision、原依据及原因，回读原流水与审计 |
 | 按日期归档／恢复资产 | family/catalog、command-schema及preview | family/commands 的archive/restore；不删除历史、不自动产生收款 |

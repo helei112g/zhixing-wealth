@@ -1,7 +1,7 @@
 /* Household UI acceptance. Only an explicitly isolated synthetic ledger is allowed. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',output=process.env.PORTFOLIO_TEST_OUTPUT;
+const base=process.env.PORTFOLIO_TEST_URL,output=process.env.PORTFOLIO_TEST_OUTPUT;
 (async()=>{const browser=await pw.chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1480,height:1050}});let csrf='',checks=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
 const dialog=page.getByRole('dialog');
 async function api(url,body){const r=await page.request.fetch(base+'/api'+url,{method:body?'POST':'GET',headers:body?{'X-CSRF-Token':csrf}:{},data:body});const data=await r.json();assert.ok(r.ok(),JSON.stringify(data));return data;}
@@ -14,7 +14,7 @@ async function add(category){await page.getByRole('button',{name:'新增记录',
 const field=name=>dialog.getByLabel(new RegExp('^'+name));
 const shot=name=>page.screenshot({path:path.join(output,name+'.png'),fullPage:true});
 try{
-const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
+const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
 const boot=await api('/bootstrap');csrf=boot.csrf_token;const day=(n)=>new Date(Date.parse(boot.today+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
 await page.goto(base+'/?family=overview');await page.getByRole('navigation',{name:'资产分析',exact:true}).getByRole('button',{name:'总览',exact:true}).waitFor();
 check(await page.locator('#nav-portfolios').locator('..').locator('.group-copy').innerText()==='投资组合'&&await page.locator('.sidebar select').count()===0,'sidebar has portfolio navigation without selection controls');check((await page.locator('.page-header .eyebrow').innerText())==='资产分析'&&(await page.locator('.page-header h1').innerText())==='总览'&&(await page.locator('.page-header .page-caption').innerText()).includes('资产 · 统一换算为人民币'),'asset title has no family-only or live-link slogan');
@@ -147,7 +147,7 @@ import sys
 from pathlib import Path
 from backend.environment import claim_environment
 from backend.store import Store
-d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Store(d)
+d=Path(sys.argv[1]).resolve();claim_environment(d,'dev');s=Store(d)
 status=sys.argv[2]
 s.save_job(dict(id='synthetic-corporate-'+status,started_at='2026-01-01T00:0'+('0' if status=='error' else '1'),status='partial' if status=='error' else 'complete',items=[dict(source_kind='corporate_actions',instrument_id='synthetic-cash-stock',name='600000 送转股' if status=='error' else '600000 企业行动数据',status=status,message='合成数据核验失败，不代表存在送转计划')]))
 `;const result=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',fixture,health.data_directory,status],{cwd:root,encoding:'utf8'});assert.equal(result.status,0,result.stderr);}

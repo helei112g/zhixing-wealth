@@ -39,13 +39,13 @@ exec /usr/bin/open -a "$terminal" "$resources/action.command"
 
 
 def command_script(output, code_root, workspace, environment, action):
-    if environment not in ('dev', 'production', 'test') or action not in ('start', 'stop'):
+    if environment not in ('dev', 'production') or action not in ('start', 'stop'):
         raise DomainError('未知环境或启动动作')
     output, code_root, workspace = map(lambda p: Path(p).resolve(), (output, code_root, workspace))
     code = workspace/'runtime/current' if environment == 'production' else code_root
     code_relative = shlex.quote(os.path.relpath(code, output))
     workspace_relative = shlex.quote(os.path.relpath(workspace, output))
-    title = {'dev':'开发', 'test':'测试', 'production':'正式'}[environment]
+    title = {'dev':'开发', 'production':'正式'}[environment]
     lines = ['#!/bin/zsh', 'set -eu', 'location="${0:A:h:h:h:h}"',
              'cd "$location"', 'code="$location"/'+code_relative,
              'workspace="$location"/'+workspace_relative,
@@ -73,14 +73,14 @@ def bundle_id(environment, action):
 
 
 def build_launchers(workspace, environment, *, code_root=ROOT, output=None):
-    if environment not in ('dev','production','test'):raise DomainError('未知环境')
+    if environment not in ('dev','production'):raise DomainError('未知环境')
     if sys.platform != 'darwin':raise DomainError('带图标的应用入口仅用于 macOS；其他平台使用 manage.py')
     workspace, code_root = Path(workspace).resolve(), Path(code_root).resolve()
     if output is None:
-        output = code_root if environment=='dev' else workspace/('runtime' if environment=='production' else 'local/test')
+        output = code_root if environment=='dev' else workspace/'runtime'
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     logo=code_root/'frontend/public/zhixing-logo.png'
-    suffix={'dev':'（开发）','test':'（测试）','production':''}[environment]
+    suffix={'dev':'（开发）','production':''}[environment]
     targets={action:output/(label+'知行财富'+suffix+'.app') for action,label in [('start','启动'),('stop','停止')]}
     # Do not replace another application or a user-created directory at the same path.
     for action,target in targets.items():

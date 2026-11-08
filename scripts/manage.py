@@ -54,8 +54,7 @@ def init_environment(workspace, environment):
     path=config_path(workspace,environment)
     if not path.exists():
         path.parent.mkdir(parents=True,exist_ok=True)
-        data='browser-test' if environment=='test' else 'data'
-        content=f'environment = "{environment}"\nport = {PORTS[environment]}\ndata_dir = "{data}"\nruntime_dir = ".runtime"\nauto_sync = '+('true' if environment=='production' else 'false')+'\n'
+        content=f'environment = "{environment}"\nport = {PORTS[environment]}\ndata_dir = "data"\nruntime_dir = ".runtime"\nauto_sync = '+('true' if environment=='production' else 'false')+'\n'
         with path.open('x') as handle:handle.write(content)
     values=read_config(path)
     if values['environment']!=environment:raise DomainError('配置所属环境不一致')
@@ -196,6 +195,13 @@ def wait_for_ledger_stop(directory, timeout=15):
         if time.monotonic()>=deadline:
             raise DomainError('实例仍占用数据锁，未继续备份或迁移；请核对退出中的服务')
         time.sleep(.1)
+
+
+def deploy_dev(workspace):
+    init_environment(workspace, 'dev')
+    subprocess.run(['npm', '--prefix', 'frontend', 'run', 'build'], cwd=ROOT, check=True)
+    stop(workspace, 'dev')
+    return start(workspace, 'dev', no_sync=True)
 
 
 def backup(workspace,environment):
@@ -414,6 +420,7 @@ def main():
         p=sub.add_parser(action);p.add_argument('--environment',choices=LABELS,default='dev')
         if action=='start':p.add_argument('--open',action='store_true');p.add_argument('--no-sync',action='store_true')
     sub.add_parser('prepare')
+    sub.add_parser('deploy-dev', help='构建当前分支并重启开发环境，保留开发账本')
     launchers=sub.add_parser('launchers',help='生成带图标的 macOS 应用入口')
     launchers.add_argument('--environment',choices=LABELS,default='dev')
     launchers.add_argument('--output',type=Path)
@@ -434,6 +441,7 @@ def main():
             'data_dir':str(values['data_dir']),'schema':schema_version(values['data_dir']/'portfolio.sqlite')}
     elif args.action=='backup':result=backup(workspace,args.environment)
     elif args.action=='prepare':result=prepare(workspace)
+    elif args.action=='deploy-dev':result=deploy_dev(workspace)
     elif args.action=='storage-plan':
         from storage_cleanup import make_plan
         result=make_plan(workspace)

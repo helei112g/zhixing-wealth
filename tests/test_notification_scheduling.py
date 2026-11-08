@@ -21,8 +21,8 @@ class NotificationSchedulingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = Store(claim_environment(Path(self.temp.name)/'synthetic', 'test'))
-        self.native = FamilyNotifications(self.store, FamilyService(self.store), 'test')
+        self.store = Store(claim_environment(Path(self.temp.name)/'synthetic', 'dev'))
+        self.native = FamilyNotifications(self.store, FamilyService(self.store), 'dev')
         self.native.prepared = True
         self.native._save(self.native.preferences, {'enabled': True})
         self.current = datetime(2026, 11, 2, 8, 59, 50, tzinfo=TZ)
@@ -240,7 +240,7 @@ class NotificationSchedulingTests(unittest.TestCase):
         self.dividends = [self.dividend()]
         self.reconcile()
         self.current += timedelta(seconds=15)
-        restarted = FamilyNotifications(self.store, FamilyService(self.store), 'test')
+        restarted = FamilyNotifications(self.store, FamilyService(self.store), 'dev')
         restarted.prepared = True
         with patch.object(restarted, 'dividend_rows', return_value=self.dividends), patch.object(restarted, '_helper', side_effect=self.os_call):
             result = restarted.reconcile(True)

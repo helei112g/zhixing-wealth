@@ -34,7 +34,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directory=None, environment=None,
                read_only=False, deployment_guard_path=None):
-    environment = environment or ('test' if testing else 'dev')
+    environment = environment or 'dev'
+    if testing and data_dir is None:
+        raise DomainError('合成测试须显式指定独立数据目录')
     directory = Path(data_dir or os.environ.get('PORTFOLIO_DATA_DIR') or workspace_for(ROOT) / 'local/dev/data')
     directory = claim_environment(directory, environment)
     session_cookie = cookie_name(directory, environment)
@@ -147,7 +149,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
 
     @app.get('/api/health')
     def health():
-        return {'ok': True, 'application': 'portfolio-journal', 'version': VERSION, 'environment': environment, 'schema': SCHEMA, 'release': release_info(), 'root': str(ROOT), 'data_directory':str(store.directory), 'instance': instance, 'read_only': writes_blocked()}
+        return {'ok': True, 'application': 'portfolio-journal', 'version': VERSION, 'environment': environment, 'schema': SCHEMA, 'release': release_info(), 'root': str(ROOT), 'data_directory':str(store.directory), 'instance': instance, 'read_only': writes_blocked(),
+                'synthetic_fixture': environment == 'dev' and (directory / '.synthetic-fixture').is_file()}
 
     @app.get('/api/bootstrap')
     def bootstrap():
@@ -184,12 +187,13 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                'preview': 'review the current values and proposed changes; no dedicated preview endpoint'},
                 'research': {'resolve':'/api/research/indices/resolve','indices':'/api/research/indices','detail':'/api/research/indices/{id}',
                              'catalog':'/api/research/catalog','collection_preview':'/api/research/collection/preview',
-                             'collection':{'path':'/api/research/collection','method':'PUT','revision':'expected_research_revision','enqueue':False},
+                             'collection':{'path':'/api/research/collection','method':'PUT','revision':'expected_research_revision',
+                                           'validate_new':'lixinger_identity_and_price','enqueue':'full_sync_on_first_save','job_field':'job_id'},
                              'source_check':'/api/research/indices/{id}/source-check','studio':'/api/research/indices/{id}/studio','versions':'/api/research/indices/{id}/versions',
                              'studio_features':['valuation_curve','ranks','funds','volatility','concentration'],
                              'retired_features':['return_backtest','index_overlap'],
                              'financial_periods':['annual','first_quarter','half_year','third_quarter'],
-                             'local_credentials':{'location':'research_data_management','manual_collection':'explicit_update_with_configured_token', 'status':'/api/settings/lixinger','token_entry':'user_local_UI_only','never_read_token':True,'local_request_limit':None,'request_counts':'cumulative_attempts_not_provider_balance'},
+                             'local_credentials':{'location':'research_data_management','manual_collection':'initial_sync_on_add_then_explicit_update', 'status':'/api/settings/lixinger','token_entry':'user_local_UI_only','never_read_token':True,'local_request_limit':None,'request_counts':'cumulative_attempts_not_provider_balance'},
                              'parts':['series','constituents','financials','sources'],'scenarios':'/api/research/indices/{id}/scenarios',
                              'projection': '/api/research/indices/{id}/{part}',
                              'scenario': {'method': 'POST', 'read_only': True, 'cli': 'scenario INDEX_ID REQUEST.json',

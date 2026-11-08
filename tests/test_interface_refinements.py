@@ -20,7 +20,7 @@ from backend.store import Store
 class RefinementTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.directory = claim_environment(Path(self.temp.name)/'synthetic', 'test')
+        self.directory = claim_environment(Path(self.temp.name)/'synthetic', 'dev')
         self.store = Store(self.directory)
         self.service = Service(self.store)
         self.family = FamilyService(self.store)
@@ -98,7 +98,7 @@ class RefinementTests(unittest.TestCase):
             self.assertEqual(after_state[table], expected)
         self.assertEqual(before_state['holding_labels'], after_state['holding_labels'])
         self.assertEqual(before_state['revision'], after_state['revision'])
-        target = Store(claim_environment(Path(self.temp.name)/'restored','test'))
+        target = Store(claim_environment(Path(self.temp.name)/'restored','dev'))
         target.restore(old_backup.read_bytes())
         self.assertEqual(target.state()['events'], after_state['events'])
         self.assertEqual(target.state()['holding_labels'], after_state['holding_labels'])
@@ -178,7 +178,7 @@ class RefinementTests(unittest.TestCase):
 
     def test_notification_retry_clears_resolved_details(self):
         self.policy(policy_end=(datetime.now().date()+timedelta(days=15)).isoformat())
-        native = FamilyNotifications(self.store,self.family,'test'); native.prepared=True
+        native = FamilyNotifications(self.store,self.family,'dev'); native.prepared=True
         native._save(native.preferences,{'enabled':True})
         with patch.object(native,'_helper',return_value={'authorization':'authorized','pending_ids':[]}):
             failed = native.reconcile(True)

@@ -19,11 +19,11 @@ from backend.store import Store
 class SummaryReminderTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
-        self.store=Store(claim_environment(Path(self.temp.name)/'synthetic','test'))
+        self.store=Store(claim_environment(Path(self.temp.name)/'synthetic','dev'))
         self.family=FamilyService(self.store);self.service=Service(self.store)
         self.clock=[patch(m+'.today',return_value=date(2026,10,28)) for m in ('backend.family_domain','backend.family_service','backend.family_summary','backend.reminders','backend.service')]
         for p in self.clock:p.start()
-        self.notifications=FamilyNotifications(self.store,self.family,'test')
+        self.notifications=FamilyNotifications(self.store,self.family,'dev')
         self.center=ReminderService(self.store,self.notifications)
     def tearDown(self):
         for p in self.clock:p.stop()

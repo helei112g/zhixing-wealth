@@ -18,7 +18,7 @@ from backend.store import Store
 class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
-        self.data=claim_environment(Path(self.temp.name)/'synthetic','test')
+        self.data=claim_environment(Path(self.temp.name)/'synthetic','dev')
         self.store=Store(self.data);self.family=FamilyService(self.store);self.portfolio=Service(self.store)
         self.clocks=[patch(m+'.today',return_value=date(2026,11,1)) for m in ('backend.family_domain','backend.family_service')]
         for clock in self.clocks:clock.start()

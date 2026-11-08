@@ -1,7 +1,7 @@
 /* All fixtures and writes target the exact marked synthetic test ledger. */
 const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright'),root=path.resolve(__dirname,'..');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.env.PORTFOLIO_TEST_OUTPUT;
+const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
 assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:true});
 (async()=>{
  const browser=await pw.chromium.launch({executablePath:process.env.CHROME_PATH||undefined,headless:true});
@@ -15,11 +15,11 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
  const previewButton=()=>dialog().getByRole('button',{name:'预览记账结果',exact:true});
  function fixture(id,rows,notice){
   const result=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',
-   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;p=json.load(sys.stdin);d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');s=Service(Store(d));s.cache_prices(p['id'],p['rows']);s.cache_dividends(p['id'],[p['notice']]) if p.get('notice') else None"],
+   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;p=json.load(sys.stdin);d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');s=Service(Store(d));s.cache_prices(p['id'],p['rows']);s.cache_dividends(p['id'],[p['notice']]) if p.get('notice') else None"],
    {cwd:root,encoding:'utf8',input:JSON.stringify({id,rows,notice})});assert.equal(result.status,0,result.stderr);
  }
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   csrf=(await api('/bootstrap')).csrf_token;
   const p=await api('/portfolios',{name:'合成再投份额验收',start_date:'2024-01-01',planned_amount:'10000'});
   const fund=async(code)=>api('/events',{portfolio_id:p.id,kind:'BUY',date:'2024-01-02',instrument:{market:'FUND',code,name:'合成基金'+code},quantity:'100',gross_amount:'100',fx_rate:'1'});

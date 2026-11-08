@@ -17,7 +17,7 @@ from backend.store import Store
 class HoldingAnalysisTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.directory = claim_environment(Path(self.temp.name) / 'test', 'test')
+        self.directory = claim_environment(Path(self.temp.name) / 'test', 'dev')
         self.store = Store(self.directory)
         self.s = Service(self.store)
         self.p = self.s.save_portfolio(dict(name='合成标签组合', planned_amount='10000', start_date='2023-01-01'))
@@ -174,9 +174,9 @@ class HoldingAnalysisTests(unittest.TestCase):
 
     def test_http_contract_revision_guard_and_retired_endpoint(self):
         e = self.buy()
-        with TestClient(create_app(self.directory, testing=True, auto_sync=False), base_url='http://127.0.0.1:8876') as client:
+        with TestClient(create_app(self.directory, testing=True, auto_sync=False), base_url='http://127.0.0.1:8877') as client:
             csrf = client.get('/api/bootstrap').json()['csrf_token']
-            client.headers.update({'origin':'http://127.0.0.1:8876','x-csrf-token':csrf})
+            client.headers.update({'origin':'http://127.0.0.1:8877','x-csrf-token':csrf})
             url = f"/api/portfolios/{self.p['id']}/instruments/{e['instrument_id']}/labels"
             read = client.get(url).json()
             payload = dict(expected_revision=read['revision'], scope='大宗商品', direction='能源', detail='原油')

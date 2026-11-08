@@ -23,7 +23,7 @@ class StorageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.store = Store(claim_environment(self.root / 'data', 'test'))
+        self.store = Store(claim_environment(self.root / 'data', 'dev'))
         self.service = Service(self.store)
         self.portfolio = self.service.save_portfolio({'name': '合成存储验证', 'planned_amount': '10000', 'start_date': '2024-01-01'})
         self.trade = self.service.save_event({'portfolio_id': self.portfolio['id'], 'kind': 'BUY',
@@ -104,7 +104,7 @@ class StorageTests(unittest.TestCase):
         old = self.store.backup('synthetic-old')
         with zipfile.ZipFile(old.with_suffix('.notes.zip')) as z:
             notes = {name: z.read(name) for name in z.namelist()}
-        target = Store(claim_environment(self.root / 'restored', 'test'))
+        target = Store(claim_environment(self.root / 'restored', 'dev'))
         target.restore(old.read_bytes(), notes)
         self.assertEqual(schema_version(target.path), SCHEMA)
         self.assertEqual(len(target.state()['prices']), 5)
@@ -174,7 +174,7 @@ class StorageTests(unittest.TestCase):
         self.assertFalse(list(self.store.backups.glob('manual-*.sqlite')))
         again = self.service.backup_download()
         self.assertEqual(len(list(self.store.backups.glob('manual-*.zip'))), 2)
-        target = Service(Store(claim_environment(self.root / 'roundtrip', 'test')))
+        target = Service(Store(claim_environment(self.root / 'roundtrip', 'dev')))
         target.restore(again)
         self.assertEqual(target.store.state()['events'], self.store.state()['events'])
         self.assertEqual(len(target.notes.list(self.portfolio['id'], self.iid)['items']), 1)
@@ -198,7 +198,7 @@ class CleanupTests(unittest.TestCase):
             (work / 'screenshot.png').write_bytes(b'synthetic')
         (self.root / 'runtime/current').symlink_to('releases/v6')
         (self.root / 'runtime/last-deployment.json').write_text(json.dumps({'previous': 'v2'}))
-        self.cache = self.root / 'local/test/synthetic/.native-notifications/module-cache'; self.cache.mkdir(parents=True)
+        self.cache = self.root / 'local/work/synthetic/native/module-cache'; self.cache.mkdir(parents=True)
         (self.cache / 'cache').write_bytes(b'rebuildable')
 
     def tearDown(self): self.temp.cleanup()

@@ -29,7 +29,7 @@ from maintenance import snapshot
 class InstallationTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
-        self.data=claim_environment(self.root/'data','test')
+        self.data=claim_environment(self.root/'data','dev')
         self.service=Service(Store(self.data))
 
     def tearDown(self): self.temp.cleanup()
@@ -60,7 +60,7 @@ class InstallationTests(unittest.TestCase):
         self.populated();before=capture(self.data)
         with self.assertRaisesRegex(DomainError,'不会清空'): require_empty(self.data)
         result=subprocess.run([sys.executable,str(ROOT/'scripts/check_empty_install.py'),
-            '--data-dir',str(self.data),'--environment','test'],capture_output=True,text=True)
+            '--data-dir',str(self.data),'--environment','dev'],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0)
         verify(before,capture(self.data,before))
 
@@ -137,7 +137,7 @@ class InstallationTests(unittest.TestCase):
         before=capture(self.data)
         backup=snapshot(self.data,self.root/'schema7-protected.zip')
         runtime=self.root/'rehearsal-runtime';runtime.mkdir()
-        result=manage.rehearse_deployment(ROOT,{'runtime_dir':runtime,'environment':'test'},backup['backup'],before)
+        result=manage.rehearse_deployment(ROOT,{'runtime_dir':runtime,'environment':'dev'},backup['backup'],before)
         self.assertTrue(result['preserved'])
         self.assertEqual(capture(self.data),before)
         Store(self.data,migration_backup=False)
@@ -170,7 +170,7 @@ class InstallationTests(unittest.TestCase):
         # relocating only the executable would lose pyvenv.cfg/site-packages.
         (candidate/'.venv').symlink_to(Path(sys.prefix),target_is_directory=True)
         runtime=self.root/'runtime';runtime.mkdir()
-        values={'runtime_dir':runtime,'environment':'test'}
+        values={'runtime_dir':runtime,'environment':'dev'}
         result=manage.rehearse_deployment(candidate,values,backup['backup'],before)
         self.assertTrue(result['preserved']);verify(before,capture(self.data,before))
         with script.open('a') as handle:
@@ -186,14 +186,14 @@ class DeploymentFlowTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
         # All business data are synthetic. The production paths are not consulted:
         # mock configuration points at an explicitly marked test ledger.
-        self.data=claim_environment(self.root/'synthetic-data','test')
+        self.data=claim_environment(self.root/'synthetic-data','dev')
         self.service=Service(Store(self.data))
         self.service.save_portfolio({'name':'合成保护','planned_amount':'100','start_date':'2024-01-01'})
         self.runtime=self.root/'run';self.runtime.mkdir()
         self.destination=self.root/'runtime/releases/candidate';self.destination.mkdir(parents=True)
         self.manifest={'version':'synthetic','schema':SCHEMA,'supported_schemas':[SCHEMA],
                        'checks':{'deployment_guard':True}}
-        self.values={'environment':'test','data_dir':self.data,'runtime_dir':self.runtime,'port':8876}
+        self.values={'environment':'dev','data_dir':self.data,'runtime_dir':self.runtime,'port':8877}
         self.starts=[]
 
     def tearDown(self): self.temp.cleanup()
@@ -261,7 +261,7 @@ class DeploymentFlowTests(unittest.TestCase):
         self.assertTrue((self.runtime/'deployment-guard.json').is_file())
 
     def test_fresh_apply_creates_an_empty_ledger_without_a_source_database(self):
-        self.data=claim_environment(self.root/'fresh-data','test');self.values['data_dir']=self.data
+        self.data=claim_environment(self.root/'fresh-data','dev');self.values['data_dir']=self.data
         result=self.run_apply()
         self.assertTrue(require_empty(self.data)['empty'])
         evidence=json.loads(Path(result['data_verification']).read_text())

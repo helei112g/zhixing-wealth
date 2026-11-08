@@ -21,7 +21,7 @@ from backend.research.metrics import moving_averages,full_window,years_before
 from backend.research.service import ResearchService,validate_backup
 from backend.service import Service
 from backend.store import Store
-from tests.lixinger_fixtures import transport
+from tests.lixinger_fixtures import CUSTOM_CODE, transport
 
 SYNTHETIC='synthetic-local-only-credential'
 
@@ -130,19 +130,53 @@ class CollectionTests(unittest.TestCase):
     def tearDown(self):self.request.stop();self.no_start.stop();self.r.shutdown();self.temp.cleanup()
     def add(self,modules=None):
         return self.r.collection.save('000905',modules or list(lixinger.DEFAULT_MODULES),'2026-10-01',True,self.r.revision())['id']
-    def test_read_preview_add_are_offline_and_pause_prevents_queue(self):
+    def test_new_preview_verifies_data_and_saved_reads_remain_offline(self):
         before=self.store.state()['revision'];p=self.r.collection.preview('000905',['price'],None)
         self.assertTrue(p['endpoint_budget'])
         self.assertTrue(all(row['remaining'] is None for row in p['endpoint_budget']))
-        self.assertEqual(self.r.profiles(),[]);self.assertFalse(self.calls)
-        iid=self.add();self.r.detail(iid,method='mcw');self.r.listing();self.assertFalse(self.calls)
+        self.assertTrue(p['verified_price_date'])
+        self.assertEqual(self.r.profiles(),[])
+        self.assertEqual([e for e, _ in self.calls], ['cn/index', 'cn/index/candlestick'])
+        iid=self.add()
+        self.calls.clear()
+        self.r.detail(iid,method='mcw');self.r.listing();self.assertFalse(self.calls)
         self.r.collection.save('000905',['price'],'2026-10-01',False,self.r.revision())
         with self.assertRaises(DomainError):self.r.run(dict(scopes=['index_prices'],targets=[iid],request_id='paused'))
         self.assertFalse(self.calls);self.assertEqual(self.store.state()['revision'],before)
     def test_subscription_cas_and_duplicate_family_no_new_data(self):
         iid=self.add();n=len(self.r.profiles())
+        self.calls.clear()
         with self.assertRaises(ConflictError):self.r.collection.save('000905',['price'],None,True,0)
         self.assertEqual(iid,self.add());self.assertEqual(len(self.r.profiles()),n);self.assertFalse(self.calls)
+        self.assertEqual(len(self.r.updates.jobs()), 1)
+
+    def test_custom_index_requires_identity_and_data_then_saves_with_one_full_job(self):
+        revision = self.r.revision()
+        with self.assertRaisesRegex(DomainError, '唯一指数档案'):
+            self.r.collection.preview('INVALID', ['price'], None)
+        with patch.object(lixinger, 'normalize', return_value=[]):
+            with self.assertRaisesRegex(DomainError, '没有有效价格日线'):
+                self.r.collection.save(CUSTOM_CODE, ['price'], None, True, revision)
+        self.assertEqual(self.r.revision(), revision)
+        self.assertEqual(self.r.profiles(), [])
+        self.assertEqual(self.r.updates.jobs(), [])
+
+        with patch.object(self.r.updates, 'enqueue', side_effect=DomainError('合成队列失败')):
+            with self.assertRaises(DomainError):
+                self.r.collection.save(CUSTOM_CODE, ['price'], None, True, revision)
+        self.assertEqual(self.r.profiles(), [])
+        self.assertEqual(self.r.revision(), revision)
+
+        saved = self.r.collection.save(CUSTOM_CODE, list(lixinger.MODULES), None, True, revision)
+        job = self.r.updates.get(saved['job_id'])
+        self.assertEqual(job['state'], 'pending')
+        self.assertEqual(job['trigger'], 'index_create')
+        self.assertEqual({r['module'] for r in job['resources']}, {*lixinger.MODULES, 'volatility'})
+        self.assertTrue(all(r['full'] and r['target'] == saved['id'] for r in job['resources']))
+        with self.store.connection() as db:
+            validate_backup(db)
+        self.r.updates.recover()
+        self.assertEqual(self.r.updates.get(saved['job_id'])['state'], 'pending')
     def test_collection_and_independent_valuation_date_and_version_restore(self):
         iid=self.add()
         for m in lixinger.DEFAULT_MODULES:self.r.collection.collect(iid,m,'2026-11-04')
@@ -306,6 +340,7 @@ class CollectionTests(unittest.TestCase):
         with self.assertRaises(DomainError):merge(old,dict(provider_id='lixinger',baskets=[dict(period='2025-12-31',members=[])]),True)
     def test_identity_is_required_before_any_paid_series_request(self):
         iid=self.add(['price'])
+        self.calls.clear()
         with self.assertRaises(DomainError):self.r.collection.collect(iid,'price','2026-11-04')
         self.assertEqual(self.calls,[])
     def test_company_cache_shared_only_at_same_query_cutoff(self):
@@ -466,7 +501,10 @@ class LocalApiTests(unittest.TestCase):
                     self.assertFalse(any('private-lixinger' in name for name in z.namelist()))
                     for name in z.namelist():self.assertNotIn(SYNTHETIC.encode(),z.read(name))
                 r=app.state.research
-                iid=r.collection.save('000905',['price'],'2026-10-01',True,r.revision())['id']
+                with patch.object(r.updates, 'start'), patch.object(
+                    r.access, 'request', side_effect=lambda endpoint, params: LocalAccess.request(r.access, endpoint, params, transport=transport)
+                ):
+                    iid=r.collection.save('000905',['price'],'2026-10-01',True,r.revision())['id']
                 response=c.get('/api/research/indices/'+iid+'/studio?window=0')
                 self.assertEqual(response.status_code,200,response.text)
                 self.assertNotIn('backtest',response.json())

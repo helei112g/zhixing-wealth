@@ -16,7 +16,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'allocation-expenses-resul
  const shot=async name=>{await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth+1&&Array.from(document.querySelectorAll('.recharts-wrapper')).every(e=>e.getBoundingClientRect().right<=innerWidth+1)&&(innerWidth>760||document.querySelector('.sidebar').getBoundingClientRect().right<=0));return page.screenshot({path:path.join(out,name+'.png'),fullPage:true,animations:'disabled'});};
  const ready=async()=>{await page.locator('.allocation-table').waitFor();await page.locator('.allocation-analysis .table-wrap[aria-busy="false"]').waitFor();};
  try{
-  const h=await api('/health');assert.equal(h.environment,'test');assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
+  const h=await api('/health');assert.equal(h.environment,'dev');assert.equal(h.synthetic_fixture,true);assert.equal(path.resolve(h.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   const boot=await api('/bootstrap');csrf=boot.csrf_token;const year=Number(boot.today.slice(0,4)),at=year+'-01';
   const p=await api('/portfolios',{name:'合成多视角配置',planned_amount:'100000',start_date:year+'-01-01'});
   const plans=[];
@@ -30,7 +30,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'allocation-expenses-resul
     const saved=await api('/portfolios/'+p.id+'/purchase-plans',body);plans.push(saved);
     if(Number(amount))await api('/events',{portfolio_id:p.id,instrument_id:saved.instrument.id,kind:'BUY',date:year+'-01-02',quantity:'100',gross_amount:amount,fx_rate:'1'});
   }
-  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,os;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;p=json.load(__import__('sys').stdin);d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');s=Service(Store(d));[s.cache_prices(i['instrument']['id'],[dict(date=p['today'],price=str(v),source='synthetic')]) for i,v in zip(p['plans'],[66,126,88,50,42])]"],{cwd:root,encoding:'utf8',input:JSON.stringify({plans,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
+  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,os;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;p=json.load(__import__('sys').stdin);d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');s=Service(Store(d));[s.cache_prices(i['instrument']['id'],[dict(date=p['today'],price=str(v),source='synthetic')]) for i,v in zip(p['plans'],[66,126,88,50,42])]"],{cwd:root,encoding:'utf8',input:JSON.stringify({plans,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
   const before=await api('/portfolios/'+p.id+'/dashboard?view=summary');
   await page.goto(base+'/?page=overview');await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.locator('.holding-return-rate').waitFor();
   check((await page.locator('.holding-return-rate').innerText()).includes('%'),'current holding profit includes return on remaining cost');

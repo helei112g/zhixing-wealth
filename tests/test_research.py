@@ -21,6 +21,7 @@ from backend.research.snapshots import encode,decode,MAX_PAYLOAD
 from backend.service import Service
 from backend.store import Store
 from tests.research_fixtures import ASOF,price_payload,valuation_payload,member_payload,stock_payload,finance_payload
+from tests.lixinger_fixtures import transport
 
 
 class MetricTests(unittest.TestCase):
@@ -225,7 +226,8 @@ class ResearchTests(unittest.TestCase):
         with patch('requests.Session.post') as post:self.r.detail(added['id'],method='mcw');post.assert_not_called()
 
     def test_collection_preview_identity_and_cas(self):
-        p=self.r.collection.preview('H00905',['price'],None)
+        with patch.object(self.r.access, 'request', side_effect=lambda endpoint, params: transport(endpoint, params)[1]['data']):
+            p=self.r.collection.preview('H00905',['price'],None)
         self.assertEqual(p['profile']['code'],'000905');self.assertEqual(self.r.profiles(),[])
         self.add('399006','other')
         with self.assertRaises(ConflictError):self.r.collection.save('000905',['price'],None,True,p['research_revision'])
@@ -400,7 +402,11 @@ class ResearchApiTests(unittest.TestCase):
     def test_authenticated_api_revision_projection_scenario_and_readonly_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
             app=create_app(tmp,testing=True,auto_sync=False)
-            with patch.object(app.state.research.updates,'start'),TestClient(app) as c:
+            with (
+                patch.object(app.state.research.updates, 'start'),
+                patch.object(app.state.research.access, 'request', side_effect=lambda endpoint, params: transport(endpoint, params)[1]['data']),
+                TestClient(app) as c,
+            ):
                 b=c.get('/api/bootstrap').json();h={'X-CSRF-Token':b['csrf_token']}
                 self.assertEqual(c.post('/api/research/indices/resolve',json={'code':'000905'}).status_code,403)
                 preview=c.post('/api/research/indices/resolve',headers=h,json={'code':'000905'}).json()

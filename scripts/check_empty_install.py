@@ -13,7 +13,7 @@ from backend.deployment_guard import require_empty
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-dir', type=Path, required=True)
-    parser.add_argument('--environment', choices=('production', 'dev', 'test'), required=True)
+    parser.add_argument('--environment', choices=('production', 'dev'), required=True)
     args = parser.parse_args()
     marker = args.data_dir/'.environment.json'
     if marker.is_symlink() or json.loads(marker.read_text()).get('environment') != args.environment:

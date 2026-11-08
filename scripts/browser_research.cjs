@@ -28,7 +28,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
 
  try {
   const health = await api('/health');
-  assert.equal(health.environment,'test');
+  assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);
   assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
   csrf = (await api('/bootstrap')).csrf_token;
   await page.goto(base);
@@ -53,16 +53,27 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await navigate('指数资料库');
   await page.getByRole('button',{name:'添加采集',exact:true}).first().click();
   const dialog = page.getByRole('dialog',{name:'添加指数采集'});
+  await dialog.getByLabel('采集指数代码',{exact:true}).fill('INVALID');
+  await dialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  await dialog.getByText('理杏仁未返回该代码的唯一指数档案').waitFor();
+  check(await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).count()===0,'unrecognized index cannot be saved');
+  await dialog.getByLabel('采集指数代码',{exact:true}).fill('SYNIDX1');
+  await dialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  await dialog.getByRole('heading',{name:'合成自定义指数 · SYNIDX1'}).waitFor();
+  check((await dialog.locator('.collection-preview').innerText()).includes('已核验理杏仁价格日线'),'custom index shows supplier-verified price date');
+  const countsBeforeKnown=(await api('/settings/lixinger')).counts;
   await dialog.getByLabel('采集指数代码',{exact:true}).fill('000905');
   await dialog.getByRole('button',{name:'全历史',exact:true}).click();
   check(await dialog.getByLabel('采集起始日',{exact:true}).count()===0,'full history removes the custom start field');
   check(await dialog.locator('.collection-modules small').count()===(await api('/research/catalog')).modules.length,'each offered module names its source');
-  for(const name of ['十年历史成分','指数季度/TTM财务','融资与北向持仓','公司估值','公司财务','历史财务备用汇总']){
-   await dialog.getByRole('checkbox',{name,exact:true}).check();
-  }
+  check(await dialog.locator('.collection-modules input').evaluateAll(inputs=>inputs.every(input=>input.checked)),'every collection module is selected by default');
   await dialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
   await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).waitFor();
-  check(Object.keys((await api('/settings/lixinger')).counts).length===0,'preview stays offline');
+  const previewCounts=(await api('/settings/lixinger')).counts;
+  check(previewCounts['cn/index']===countsBeforeKnown['cn/index']+1&&
+    previewCounts['cn/index/candlestick']===countsBeforeKnown['cn/index/candlestick']+1,
+    'new preview checks identity and price with the supplier');
+  check((await api('/research/catalog')).subscriptions.length===0,'preview leaves subscriptions unchanged');
   const previewHeaders=await dialog.locator('.collection-preview th').allTextContents();
   check(JSON.stringify(previewHeaders)===JSON.stringify(['端点','预计首次调用']),'preview shows estimates without local quota');
   check(!(await dialog.innerText()).includes('完整回填超过当前预算'),'preview has no obsolete budget warning');
@@ -73,10 +84,8 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(!(await api('/research/catalog')).modules.includes('tracking_funds'),'catalog omits fund-code collection');
   await page.waitForFunction(()=>document.querySelector('#research-index')?.value==='csi:000905');
   check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===1,'saving the subscription stays in the index library');
+  await page.getByText('首次全量任务已受理。',{exact:false}).waitFor();
   await page.locator('main').getByRole('button',{name:'数据管理',exact:true}).click();
-  const allIndex=page.getByRole('group',{name:'中证500全部已订阅数据',exact:true});
-  await allIndex.getByRole('button',{name:'增量更新',exact:true}).click();
-  await page.getByText('更新任务已受理，完成状态及实际数据日期见下方。',{exact:true}).waitFor();
   let job;
   for(let attempt=0;attempt<180;attempt++){
    job=(await api('/data-updates/jobs')).jobs[0];
@@ -84,7 +93,8 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
    await page.waitForTimeout(500);
   }
   if(job.state!=='complete')console.error(JSON.stringify({state:job.state,items:job.items}));
-  check(job.state==='complete','explicit refresh works with configured token and automation disabled');
+  check(job.state==='complete'&&job.trigger==='index_create'&&job.resources.every(resource=>resource.full),
+    'saving starts one full sync with the configured token');
   const detail=await api('/research/indices/csi%3A000905?method=mcw&window=3');
   check(detail.index_financials.length>0&&detail.historical_memberships.length===40,'source financials and legacy historical records preserved');
   const counts=(await api('/settings/lixinger')).counts;
@@ -287,6 +297,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(await sourceTable.getByRole('button').count()===0 && await sourceTable.getByRole('columnheader',{name:'操作'}).count()===0,
    'index source table only displays data and leaves update controls above it');
   await page.getByText('来源证据、采集进度与历史版本',{exact:true}).click();
+  const allIndex=page.getByRole('group',{name:'中证500全部已订阅数据',exact:true});
   await allIndex.getByRole('button',{name:'全量校准',exact:true}).click();
   let full;
   for(let attempt=0;attempt<180;attempt++){

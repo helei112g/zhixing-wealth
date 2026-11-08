@@ -1,7 +1,7 @@
 /* Financial presentation regression. All writes require the synthetic QA ledger. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=path.join(process.env.PORTFOLIO_TEST_OUTPUT||path.join(root,'../local/work/browser'),'profit-results');
+const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL,out=path.join(process.env.PORTFOLIO_TEST_OUTPUT||path.join(root,'../local/work/browser'),'profit-results');
 fs.mkdirSync(out,{recursive:true});
 (async()=>{
  const browser=await pw.chromium.launch({executablePath:process.env.CHROME_PATH||undefined,headless:true});
@@ -12,9 +12,9 @@ fs.mkdirSync(out,{recursive:true});
  const nav=async name=>{if(page.viewportSize().width<=760)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('navigation',{name:name==='全局设置'?'全局页面':'主要页面'}).getByRole('button',{name,exact:true}).click();await page.locator('.loading').waitFor({state:'hidden'});};
  const money=v=>Number(v).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
  const signed=v=>(Number(v)>0?'+':'')+money(v);
- function quote(iid,value,today){const r=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,sys;from pathlib import Path;from backend.store import Store;from backend.service import Service;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();Service(Store(d)).cache_prices(p['id'],[{'date':'2023-01-02','price':'10'},{'date':p['today'],'price':p['price']}])"],{cwd:root,encoding:'utf8',input:JSON.stringify({directory:path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')),id:iid,price:value,today})});assert.equal(r.status,0,r.stderr);}
+ function quote(iid,value,today){const r=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,sys;from pathlib import Path;from backend.store import Store;from backend.service import Service;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();Service(Store(d)).cache_prices(p['id'],[{'date':'2023-01-02','price':'10'},{'date':p['today'],'price':p['price']}])"],{cwd:root,encoding:'utf8',input:JSON.stringify({directory:path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR),id:iid,price:value,today})});assert.equal(r.status,0,r.stderr);}
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR||path.join(root,'../local/test/browser-test')));assert.equal(health.version,'0.9.0');
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));assert.equal(health.version,'0.9.0');
   const boot=await api('/bootstrap');csrf=boot.csrf_token;
   const p=await api('/portfolios',{name:'合成收益分解验收',planned_amount:'100000',start_date:'2023-01-01'});
   await api('/fx',{currency:'HKD',date:'2023-01-01',rate:'1',mode:'daily'});

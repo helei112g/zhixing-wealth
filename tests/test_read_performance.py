@@ -20,7 +20,7 @@ from backend.store import Store, READ_CACHE_LIMIT, cached_query
 class ReadPerformanceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.directory = claim_environment(Path(self.temp.name) / 'synthetic', 'test')
+        self.directory = claim_environment(Path(self.temp.name) / 'synthetic', 'dev')
         self.store = Store(self.directory)
         self.service = Service(self.store)
         self.family = FamilyService(self.store)
@@ -176,7 +176,7 @@ class ReadPerformanceTests(unittest.TestCase):
         probe = Probe(self.store)
         self.assertEqual(probe.read(1), 1)
         with self.assertRaises(DomainError): probe.read(True)
-        other = Store(claim_environment(Path(self.temp.name) / 'other-synthetic', 'test'))
+        other = Store(claim_environment(Path(self.temp.name) / 'other-synthetic', 'dev'))
         self.store.cached_read(('same-key',), lambda: 'first')
         self.assertEqual(other.cached_read(('same-key',), lambda: 'second'), 'second')
 

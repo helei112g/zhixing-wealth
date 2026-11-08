@@ -52,11 +52,12 @@ class AIEnvironmentTests(unittest.TestCase):
         (exported.parent.parent/'release.json').write_text('{}')
         self.assertEqual(json.loads(self.cli(exported, 'target').stdout)['environment'], 'production')
 
-    def test_explicit_test_environment_overrides_installed_default(self):
+    def test_explicit_development_environment_overrides_installed_default(self):
         script = self.install_client(self.root/'runtime/releases/synthetic')
-        result = self.cli(script, '--environment', 'test', 'target')
+        result = self.cli(script, '--environment', 'dev', 'target')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['base_url'], 'http://127.0.0.1:8876')
+        self.assertEqual(json.loads(result.stdout)['base_url'], 'http://127.0.0.1:8877')
+        self.assertNotEqual(self.cli(script, '--environment', 'test', 'target').returncode, 0)
         self.assertEqual(ai_client.PORTS, PORTS)
 
     def test_explicit_url_environment_and_invalid_origins(self):
@@ -68,7 +69,7 @@ class AIEnvironmentTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError): Client(url)
         with self.assertRaises(ValueError): Client('http://127.0.0.1:8877', environment='production')
         with self.assertRaises(ValueError): Client('http://127.0.0.1:18876')
-        self.assertEqual(Client('http://127.0.0.1:18876', environment='test').environment, 'test')
+        self.assertEqual(Client('http://127.0.0.1:18876', environment='dev').environment, 'dev')
 
     def test_wrong_service_or_ledger_never_receives_business_request(self):
         client = Client(environment='production', expected_data_dir=self.root/'ledger')
@@ -84,8 +85,8 @@ class AIEnvironmentTests(unittest.TestCase):
             request.assert_called_once_with('/api/health')
 
     def test_recheck_environment_on_every_request_preserves_original_payload(self):
-        client = Client(environment='test')
-        good = {'ok':True, 'application':'portfolio-journal', 'environment':'test'}
+        client = Client(environment='dev')
+        good = {'ok':True, 'application':'portfolio-journal', 'environment':'dev'}
         payload = {'expected_revision':7}
         with patch.object(client, '_request', side_effect=[good, {'saved':True}, {**good,'environment':'production'}]) as request:
             self.assertEqual(client.request('/api/events', payload, 'POST'), {'saved':True})
@@ -95,8 +96,8 @@ class AIEnvironmentTests(unittest.TestCase):
             self.assertEqual(request.call_count, 3)
 
     def test_health_is_checked_once_and_redirects_are_refused(self):
-        client = Client(environment='test')
-        health = {'ok':True, 'application':'portfolio-journal', 'environment':'test'}
+        client = Client(environment='dev')
+        health = {'ok':True, 'application':'portfolio-journal', 'environment':'dev'}
         with patch.object(client.opener, 'open', return_value=io.BytesIO(json.dumps(health).encode())) as opened:
             self.assertEqual(client.request('/api/health'), health)
             self.assertEqual(opened.call_count, 1)
@@ -117,7 +118,7 @@ class AIEnvironmentTests(unittest.TestCase):
         self.assertEqual(target['environment'], 'production')
         self.assertEqual(target['base_url'], 'http://127.0.0.1:8765')
         self.assertEqual(target['expected_data_directory'], str((workspace/'runtime/data').resolve()))
-        for args in (('--environment','test','target'), ('--base-url=http://127.0.0.1:8877','target'),
+        for args in (('--environment','dev','target'), ('--base-url=http://127.0.0.1:8877','target'),
                      ('--expected-data-dir','different','target'), ('--env','test','target')):
             self.assertNotEqual(run(*args).returncode, 0)
         before = (daily/'AGENTS.md').read_bytes()

@@ -21,7 +21,7 @@ from backend.store import Store
 
 class AllocationExpenseTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.directory=claim_environment(Path(self.temp.name)/'test','test')
+        self.temp=tempfile.TemporaryDirectory();self.directory=claim_environment(Path(self.temp.name)/'test','dev')
         self.store=Store(self.directory);self.s=Service(self.store);self.f=FamilyService(self.store)
         self.p=self.s.save_portfolio(dict(name='合成配置组合',planned_amount='100000',start_date='2025-01-01'))
 
@@ -192,7 +192,7 @@ class AllocationExpenseTests(unittest.TestCase):
         self.command('expense_plan',dict(name='合成固定开支',amount='2000',effective_month='2025-01'),plan['result']['id'])
         report=expense_summary(self.store,2025)
         self.assertEqual(report['rows'][0]['planned'],'1000');self.assertEqual(report['rows'][1]['planned'],'2000')
-        restored=Service(Store(claim_environment(Path(self.temp.name)/'restored','test')))
+        restored=Service(Store(claim_environment(Path(self.temp.name)/'restored','dev')))
         restored.restore(self.s.backup_download())
         restored_report=expense_summary(restored.store,2025)
         self.assertGreater(restored_report['revision'],report['revision'])

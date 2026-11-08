@@ -13,9 +13,9 @@ def main():
     base=os.environ['PORTFOLIO_TEST_URL']
     expected=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve()
     output=Path(os.environ['PORTFOLIO_TEST_OUTPUT']).resolve()
-    client=Client(base, environment='test', expected_data_dir=expected)
+    client=Client(base, environment='dev', expected_data_dir=expected)
     health=client.request('/api/health')
-    if health['environment']!='test' or Path(health['data_directory']).resolve()!=expected:
+    if health['environment']!='dev' or not health.get('synthetic_fixture') or Path(health['data_directory']).resolve()!=expected:
         raise RuntimeError('AI verification requires the exact synthetic test ledger')
     checks=[]
     def check(value,label):
@@ -162,11 +162,11 @@ def main():
     # Exercise CLI parsing and explicit confirmation, not only the imported client.
     request_file=output/'synthetic-ai-request.json'
     request_file.write_text(json.dumps(dict(operation='valuation',payload=dict(item_id=asset['id'],effective_on=str(date.today()),household_amount='210000'),expected_revision=revision())))
-    cli=[sys.executable,str(Path(__file__).with_name('ai_client.py')),'--environment','test','--base-url',base,
+    cli=[sys.executable,str(Path(__file__).with_name('ai_client.py')),'--environment','dev','--base-url',base,
          '--expected-data-dir',str(expected)]
     try:
         target=subprocess.run(cli+['target'],capture_output=True,text=True,check=True)
-        check(json.loads(target.stdout)['environment']=='test','CLI explicitly targets synthetic environment even inside a release')
+        check(json.loads(target.stdout)['environment']=='dev','CLI explicitly targets synthetic environment even inside a release')
         wrong=subprocess.run(cli+['--expected-data-dir',str(expected/'wrong-ledger'),'read','/api/family/catalog'],capture_output=True,text=True)
         check(wrong.returncode!=0 and 'ledger directory' in wrong.stderr,'CLI refuses a different ledger before reading records')
         preview=subprocess.run(cli+['preview',str(request_file),'--path','/api/family/preview'],capture_output=True,text=True,check=True)
@@ -181,7 +181,7 @@ def main():
     from backend.environment import claim_environment
     from backend.service import Service
     from backend.store import Store
-    claim_environment(expected, 'test')
+    claim_environment(expected, 'dev')
     fund=dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'FUND','code':'000003','name':'AI合成再投基金'},quantity='100',gross_amount='100',fx_rate='1')
     preview=client.preview(fund)
     fund_saved=client.write('/api/events',dict(fund,expected_revision=preview['revision']),'POST')
@@ -205,7 +205,7 @@ def main():
     check(cap['corporate_actions']['confirmation_kind']=='SPLIT' and not cap['corporate_actions']['automatic_ledger_write'],'AI discovers explicit share-action confirmation')
     check('shareholder classes' in cap['corporate_actions']['cash_only_plans'] and 'retain job history' in cap['corporate_actions']['sync_recovery'],'AI discovers cash-only classification and reminder recovery policy')
     stock=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'CN','code':'600000','name':'AI合成送转股'},quantity='100',gross_amount='3000',fx_rate='1',expected_revision=revision()),'POST')
-    fixture="from pathlib import Path;import sys;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');s=Service(Store(d));s.cache_prices(sys.argv[2],[{'date':'2024-01-03','price':'10','source':'synthetic'}]);s.cache_actions(sys.argv[2],[{'kind':'split_notice','date':'2024-01-03','factor':'3','source':'synthetic'}])"
+    fixture="from pathlib import Path;import sys;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'dev');s=Service(Store(d));s.cache_prices(sys.argv[2],[{'date':'2024-01-03','price':'10','source':'synthetic'}]);s.cache_actions(sys.argv[2],[{'kind':'split_notice','date':'2024-01-03','factor':'3','source':'synthetic'}])"
     subprocess.run([sys.executable,'-c',fixture,str(expected),stock['instrument_id']],cwd=Path(__file__).resolve().parents[1],check=True)
     endpoint='/api/portfolios/'+p['id']+'/instruments/'+stock['instrument_id']
     todo=client.request(endpoint)['todos'][0]
@@ -249,7 +249,7 @@ def main():
     check('/api/dividends/{notice_id}/review' in client.request(cap['openapi'])['paths'],'AI discovers dividend review contract')
     holding=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'HK','code':'02800','name':'AI合成分红核对'},quantity='100',gross_amount='1000',fx_rate='.9',expected_revision=revision()),'POST')
     dividend_source=dict(code='02800',source_ref='synthetic-review',record_date=None,ex_date='2024-06-03',pay_date=None,per_share='1',currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')
-    fixture="from pathlib import Path;import sys,json;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'test');Service(Store(d)).cache_dividends(sys.argv[2],[json.loads(sys.argv[3])])"
+    fixture="from pathlib import Path;import sys,json;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();claim_environment(d,'dev');Service(Store(d)).cache_dividends(sys.argv[2],[json.loads(sys.argv[3])])"
     def cache_dividend(rate):
         subprocess.run([sys.executable,'-c',fixture,str(expected),holding['instrument_id'],json.dumps(dict(dividend_source,per_share=rate))],cwd=Path(__file__).resolve().parents[1],check=True)
     candidates='/api/portfolios/'+p['id']+'/dividends?instrument_id='+holding['instrument_id']

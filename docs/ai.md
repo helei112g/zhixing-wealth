@@ -22,7 +22,7 @@ Codex 查找当前目录和向上的技能目录，不递归搜索任意子项�
 
 ## 连接与授权
 
-客户端按脚本所在位置选择默认环境，与当前工作目录无关：开发源码默认 `dev`／8877；`runtime/releases/` 内的发布包（包括经 current 调用）及带 `release.json` 的发布包默认 `production`／8765。合成测试显式传 `--environment test`，默认8876。可用 `target` 离线查看选择结果；这不代表已连接服务。`--base-url` 兼容标准端口并推断对应环境；自定义端口必须同时指定环境，标准端口与显式环境不一致则拒绝。
+客户端按脚本所在位置选择默认环境，与当前工作目录无关：开发源码默认 `dev`／8877；`runtime/releases/` 内的发布包（包括经 current 调用）及带 `release.json` 的发布包默认 `production`／8765。合成回归显式传 `--environment dev`、临时回环地址和精确合成账本路径。可用 `target` 离线查看选择结果；这不代表已连接服务。`--base-url` 兼容标准端口并推断对应环境；自定义端口必须同时指定环境，标准端口与显式环境不一致则拒绝。
 
 正式日常工作区使用其 `./zhixing` 入口，固定正式地址与数据目录，并在每次调用时使用 current 指向的安装版本。这里的示例命令前缀 `python3 scripts/ai_client.py` 应替换为 `./zhixing`，不用切回源码目录。日常工作区明确指定正式账本，但每次业务写入仍须符合用户授权。不可把开发修改回灌正式账本，服务不在线也不自动安装或切换版本。
 
@@ -112,11 +112,11 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 ## 指数研究
 
-读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start)` 展示指数家族、范围、预计调用数和原research_revision；在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交enabled与expected_research_revision，再按id回读。保存不启动采集；使用原有 `refresh_index`，或从指数详情的 `collection.resources` 选择对应来源的资源并提交带稳定request_id的更新任务。
+读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start)` 展示指数家族、范围、预计调用数和原research_revision；在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交enabled与expected_research_revision，再按id回读。新指数预览会联网验证理杏仁身份和日线，首次保存返回全量同步的 job_id。按该 ID 回读任务，避免另发重复更新。以后显式使用 `refresh_index`，或从详情的 `collection.resources` 选择对应资源并提交稳定 request_id。
 
 `research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口；不再提供收益回测或指数重叠。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
 
-Token只能由用户在本机「研究工具 → 数据管理 → 理杏仁数据源」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。本机不设调用次数上限，失败也记录尝试；本机计数不能代表供应商剩余额度。指数采集仅手动触发，不自动解除供应商权限或额度阻断。
+Token只能由用户在本机「研究工具 → 数据管理 → 理杏仁数据源」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。本机不设调用次数上限，失败也记录尝试；本机计数不能代表供应商剩余额度。首次同步随用户确认新增触发，日常更新由用户提交。供应商权限或额度阻断须核对后显式恢复。
 
 详情与快照历史读取不触发网络；只有用户授权的显式更新调用供应商。价格、估值、权重、财报和披露日各自保留。财务按年度/一季度/半年/三季度跨年读取；源端曲线按历史当期成分加总，当前可得版本不是严格PIT；mcw条件试算须明确接受全部成分同比例变化假设，不声称已核验实际点位映射。完整规范见 [研究合同](research.md) 与 [API](api.md)。
 

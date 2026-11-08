@@ -24,7 +24,7 @@ const asof = '2026-10-30';
   const shot = name => page.screenshot({path: path.join(output, name + '.png'), fullPage: true, animations: 'disabled'});
   try {
     const health = await api('/health');
-    assert.equal(health.environment, 'test');
+    assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);
     assert.equal(health.data_directory, process.env.PORTFOLIO_TEST_DATA_DIR);
     const boot = await api('/bootstrap');
     csrf = boot.csrf_token;

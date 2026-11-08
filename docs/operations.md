@@ -22,7 +22,7 @@
 
 页面只读投影在当前服务进程内按账本revision、日期和完整查询条件缓存，最多48项；每次业务提交和恢复清空缓存，其他合法写入引起的revision变化及跨日也会失效。结果返回独立副本；同步任务、同步中标记和系统通知状态单独读取。缓存不写数据库，不缓存投资笔记正文，不改变估值、送转核对或收益口径。同次资产统计复用只读行情索引，持仓、流水、标签分布及标的摘要使用dashboard的summary视图；需要历史曲线和日历时使用默认full视图。
 
-读取性能可用 `python scripts/benchmark_reads.py --reference OLD_SOURCE --output ../local/work/read-benchmark.json` 复测，OLD_SOURCE为已有旧版源码目录。脚本只创建临时、明确标记的合成test账本，在相同数据上比较两版各3次冷查询与5次重复查询的中位耗时，不包含HTTP和浏览器绘制；排除投影的generated_at后逐项对比完整结果哈希，保留所有财务值、未知状态、来源记录与估值日期。没有数值一致性通过标记时不据此交付性能结论。
+读取性能可用 `python scripts/benchmark_reads.py --reference OLD_SOURCE --output ../local/work/read-benchmark.json` 复测，OLD_SOURCE为已有旧版源码目录。脚本只创建临时、明确标记的合成开发账本，在相同数据上比较两版各3次冷查询与5次重复查询的中位耗时，不包含HTTP和浏览器绘制；排除投影的generated_at后逐项对比完整结果哈希，保留所有财务值、未知状态、来源记录与估值日期。没有数值一致性通过标记时不据此交付性能结论。
 
 ### 家庭模块与通知维护
 
@@ -42,22 +42,21 @@
 |---|---|---|---|
 | 开发 | 8877 | `local/dev/config.toml` | `local/dev/data/` |
 | 正式 | 8765 | `runtime/config.toml` | `runtime/data/` |
-| 合成测试 | 8876 | `local/test/config.toml` | `local/test/browser-test/` |
 
 配置路径均相对工作区；TOML 中 data_dir/runtime_dir 相对配置文件。每个数据目录有独立环境标记，不能手工改标记来绕过隔离。启动器仅绑定127.0.0.1，端口冲突不会顺延；Cookie、运行记录、数据库和笔记独立。文件锁位于数据目录，跨版本仍只允许一个服务进程。隔离防止操作串用，不是同一系统用户下的安全沙箱。
 
 ```sh
 .venv/bin/python scripts/manage.py init --environment dev
-.venv/bin/python scripts/manage.py start --environment dev --open
+.venv/bin/python scripts/manage.py deploy-dev
 .venv/bin/python scripts/manage.py status --environment dev
 .venv/bin/python scripts/manage.py stop --environment dev
 ```
 
-macOS 在源码目录执行 `launchers --environment dev`（完整命令前缀为 `.venv/bin/python scripts/manage.py`），生成“启动/停止知行财富（开发）.app”；`launchers --environment test` 在 `local/test/` 生成测试入口。正式发布成功后在 `runtime/` 自动生成“启动/停止知行财富.app”。
+macOS 在源码目录执行 `launchers --environment dev`（完整命令前缀为 `.venv/bin/python scripts/manage.py`），生成“启动/停止知行财富（开发）.app”。正式发布成功后在 `runtime/` 自动生成“启动/停止知行财富.app”。
 
 这些入口使用同一 Logo，通过 macOS 的应用查找机制优先使用 iTerm，未安装时使用系统 Terminal；不更改系统文件关联、不向已有终端会话注入命令。启动入口会打开页面；停止入口仅停止对应环境。可给入口创建 Finder 替身，不能把应用包移出它所在的工作区目录。生成的 `.app` 不进入 GitHub，公开仓库保留生成脚本和 Logo。
 
-开发、测试页面的侧边栏和浏览器标题显示对应环境字样；正式页面只显示“知行财富”。开发默认不自动同步行情，可在页面手动同步；正式默认自动同步。
+开发页面的侧边栏和浏览器标题显示开发环境字样；正式页面只显示“知行财富”。开发默认不自动同步行情，可在页面手动同步；正式默认自动同步。
 
 ## 准备和发布
 
@@ -73,7 +72,7 @@ macOS 在源码目录执行 `launchers --environment dev`（完整命令前缀�
 
 ### AI 客户端与日常工作区
 
-开发源码中的客户端默认8877；发布包默认8765，按脚本位置而非当前工作目录判断。测试必须显式选择 `--environment test`／8876。`manage.py prepare` 包含合成实例的真实 HTTP 读写回归，随后检查候选包不带参数的 `ai_client.py target` 确实指向production／8765，并记录 `checks.ai_client=true`。安装/启动重新检查默认目标；apply在暂停所有后台任务并拒绝API写入的验收阶段，使用候选包客户端与精确正式数据目录执行只读health检查，再恢复正常服务。apply/rollback目标包还必须具备 `checks.deployment_guard=true`；不使用旧管理脚本绕过缺失的保护能力。
+开发源码中的客户端默认8877；发布包默认8765，按脚本位置而非当前工作目录判断。合成回归显式选择开发环境、临时回环端口和精确合成账本路径。`manage.py prepare` 包含合成实例的真实 HTTP 读写回归，随后检查候选包不带参数的 `ai_client.py target` 确实指向production／8765，并记录 `checks.ai_client=true`。安装/启动重新检查默认目标；apply在暂停所有后台任务并拒绝API写入的验收阶段，使用候选包客户端与精确正式数据目录执行只读health检查，再恢复正常服务。apply/rollback目标包还必须具备 `checks.deployment_guard=true`；不使用旧管理脚本绕过缺失的保护能力。
 
 可在独立于开发工作区的目录初始化日常入口：
 
@@ -104,7 +103,7 @@ Alembic迁移位于 `migrations/versions/`，支持schema1–11逐步迁移到sc
 
 `rollback VERSION_ID` 仅允许目标版本支持当前数据库和数据保护流程，仍须备份、演练、数据比对和只读验收；不会自动降级数据库。若升级后结构不兼容，或已产生新的业务写入，应保留当前完整备份后准备专门修复/回迁，不能直接以旧备份覆盖。迁移、启动或核验失败会写入阻断记录，保持停机，不自动重启旧程序或覆盖数据库。具体证据位置和阻断处理见安装指南。
 
-离线维护入口：`scripts/maintenance.py snapshot|migrate|inspect|restore --data-dir PATH --environment dev|production|test`。snapshot/restore另需 `--archive PATH`。先停止对应服务；所有操作均受目录锁保护。恢复前自动保留原库，历史备份恢复后执行所需迁移。维护日志只输出数量、哈希和状态，不输出账本内容。
+离线维护入口：`scripts/maintenance.py snapshot|migrate|inspect|restore --data-dir PATH --environment dev|production`。snapshot/restore另需 `--archive PATH`。先停止对应服务；所有操作均受目录锁保护。恢复前自动保留原库，历史备份恢复后执行所需迁移。维护日志只输出数量、哈希和状态，不输出账本内容。
 
 ## GitHub发布边界
 
@@ -164,7 +163,7 @@ schema11→12新增market_snapshots、market_heads、market_reports、market_set
 
 schema10新增研究与任务表，不重写业务流水。研究快照以有大小上限的压缩JSON嵌入SQLite，价格历史按年度块共享，沿用完整ZIP格式2；全部版本、来源引用、设置与任务随数据库备份，恢复验证哈希及引用。400MiB数据库阈值阻止新增研究快照，保留现有内容，为512MiB数据库/100MiB ZIP上限留余量。研究更新进行中不能恢复备份；恢复后清投影缓存，下次启动重建本机执行状态。
 
-旧 `/api/sync` 保持手动兼容。持仓行情与汇率的周期、启动及记账后补齐均进入统一持久规划器。记账后只补齐已开启且非“仅手动”的行情/汇率范围，保留全量历史与触发原因。明确手动更新不受自动排程开关限制，但理杏仁仍须本机启用；保存订阅不自动补齐。
+旧 `/api/sync` 保持手动兼容。持仓行情与汇率的周期、启动及记账后补齐均进入统一持久规划器。记账后只补齐已开启且非“仅手动”的行情/汇率范围，保留全量历史与触发原因。明确手动更新不受自动排程开关限制，但理杏仁仍须本机启用。新指数确认保存后自动同步所选范围，日常研究更新从数据管理提交。
 
 
 ## 0.9.0 开支计划迁移

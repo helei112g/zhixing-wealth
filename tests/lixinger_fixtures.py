@@ -1,13 +1,21 @@
 """Deterministic synthetic supplier responses; never copied from a user's ledger."""
 import calendar
 from datetime import date,timedelta
-from backend.research import lixinger
+from backend.research import lixinger, providers
+
+CUSTOM_CODE = 'SYNIDX1'
 
 
 def transport(endpoint, params):
     code=(params.get('stockCodes') or [params.get('stockCode')])[0]
     if endpoint=='cn/index':
-        return 200,dict(code=1,data=[dict(stockCode=code,name='合成指数',source='cni' if code=='399006' else 'csi',areaCode='cn',market='a',currency='CNY',fsTableType='hybrid',rebalancingFrequency='quarterly')])
+        known = providers.catalog_identity(code)
+        if not known and code != CUSTOM_CODE:
+            return 200, dict(code=1, data=[])
+        launch = known['launch'] if known else '2026-07-01'
+        return 200,dict(code=1,data=[dict(stockCode=code,name='合成自定义指数' if not known else '合成指数',
+            source=known['provider'] if known else 'lxri', areaCode='cn',market='a',currency='CNY',fsTableType='hybrid',
+            launchDate=launch,series='thematic',rebalancingFrequency='quarterly')])
     if endpoint.endswith('/tracking-fund'):
         return 200,dict(code=1,data=[dict(stockCode='510001',name='合成跟踪基金',areaCode='cn',market='a',exchange='sh')])
     if endpoint.endswith('/constituents'):
@@ -42,7 +50,7 @@ def transport(endpoint, params):
                                   securitiesBalance=1e7+n*100,securitiesSellAmount=200,securitiesRepaymentAmount=80,
                                   securitiesNetSellAmount=120,securitiesBalanceToMarketCap=.002))
         cursor+=timedelta(days=1)
-    return 200,dict(code=1,data=rows)
+    return 200,dict(code=1,data=rows[-params['limit']:] if params.get('limit') else rows)
 
 
 def install():
@@ -51,8 +59,8 @@ def install():
     def request(self,endpoint,params,**kwargs):
         import os
         from pathlib import Path
-        if self.directory.parent.resolve()!=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve():
-            raise RuntimeError('Synthetic adapter requires the exact test data directory')
-        # Browser harness is separately guarded by its exact test data directory.
+        expected = Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve()
+        if self.directory.parent.resolve() != expected or not (expected / '.synthetic-fixture').is_file():
+            raise RuntimeError('Synthetic adapter requires the exact synthetic development ledger')
         return original(self,endpoint,params,**dict(kwargs,transport=transport))
     LocalAccess.request=request

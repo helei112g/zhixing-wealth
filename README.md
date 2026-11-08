@@ -235,7 +235,7 @@ frontend/node_modules/.bin/playwright install chromium
 .venv/bin/python scripts/verify.py --browser
 ```
 
-Linux 浏览器运行依赖及完整安装要求见 [安装指南](docs/install.md)。自动验收使用带 `test` 标记的临时合成账本，测试端口为 8876，输出保存在源码目录之外。
+Linux 浏览器运行依赖及完整安装要求见 [安装指南](docs/install.md)。自动验收在开发模式下使用带合成标记的临时账本和临时回环端口，输出保存在源码目录之外。日常开发验收使用 8877。
 
 提交边界仅限本源码目录。数据库、笔记、备份、日志、私人截图和本机配置不进入仓库；提交前运行 `scripts/source_check.py` 并人工复核。开发规范见 [AGENTS.md](AGENTS.md)。
 

@@ -10,7 +10,7 @@ const base=process.env.PORTFOLIO_TEST_URL,output=process.env.PORTFOLIO_TEST_OUTP
  const read=async p=>{const r=await page.request.get(base+p);assert.ok(r.ok());return r.json();};
  try{
   const health=await read('/api/health');
-  assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
+  assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
   const boot=await read('/api/bootstrap');
   for(const field of ['portfolios','instruments','allocations','event_refs','jobs','price_status','fx_entries'])
    check(Array.isArray(boot[field])&&boot[field].length===0,'fresh '+field+' is empty');

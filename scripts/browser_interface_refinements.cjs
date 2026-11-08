@@ -1,7 +1,7 @@
 /* Only synthetic ledgers; native notification responses are explicitly simulated. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.env.PORTFOLIO_TEST_OUTPUT;
+const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
 (async()=>{
  const browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1480,height:1050}});
  let csrf='',checks=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -11,14 +11,14 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
  const field=label=>page.getByRole('dialog').locator('label.field').filter({has:page.locator('span').filter({hasText:new RegExp('^'+label)})}).locator('input,select').first();
  const shot=name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true});
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
   const boot=await api('/bootstrap');csrf=boot.csrf_token;
   await api('/fx',{currency:'HKD',date:boot.today,rate:'0.9',mode:'daily'});await api('/fx',{currency:'USD',date:boot.today,rate:'7',mode:'daily'});
   const p=await api('/portfolios',{name:'合成界面验收',planned_amount:'10000',start_date:'2026-01-01'}),events=[];
   for(const [market,code,name,scope,fx] of [['CN','600201','合成权益','A股','1'],['HK','00700','合成港股','港股','0.9'],['US','MSFT','合成美股','美股','7']]){
    const e=await api('/events',{portfolio_id:p.id,kind:'BUY',date:'2026-01-02',instrument:{market,code,name},quantity:'10',gross_amount:'100',fx_rate:fx,holding_labels:{scope,direction:'红利',detail:''},expected_revision:(await api('/bootstrap')).revision});events.push(e);
   }
-  const fixture=cp.spawnSync(path.resolve(__dirname,'../.venv/bin/python'),['-c',"import json,os;from pathlib import Path;from backend.environment import claim_environment;from backend.store import Store;from backend.service import Service;d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');s=Service(Store(d));p=json.load(__import__('sys').stdin);[s.cache_prices(e['instrument_id'],[{'date':'2026-01-02','price':'10','source':'synthetic'},{'date':p['today'],'price':'12','source':'synthetic'}]) for e in p['events']]"],{cwd:path.resolve(__dirname,'..'),encoding:'utf8',input:JSON.stringify({events,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
+  const fixture=cp.spawnSync(path.resolve(__dirname,'../.venv/bin/python'),['-c',"import json,os;from pathlib import Path;from backend.environment import claim_environment;from backend.store import Store;from backend.service import Service;d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');s=Service(Store(d));p=json.load(__import__('sys').stdin);[s.cache_prices(e['instrument_id'],[{'date':'2026-01-02','price':'10','source':'synthetic'},{'date':p['today'],'price':'12','source':'synthetic'}]) for e in p['events']]"],{cwd:path.resolve(__dirname,'..'),encoding:'utf8',input:JSON.stringify({events,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
   await api('/events',{portfolio_id:p.id,instrument_id:events[0].instrument_id,kind:'DIVIDEND',date:'2026-03-01',ex_date:'2026-03-01',pay_date:'2026-03-01',gross_amount:'5',tax:'0',tax_known:true,fx_rate:'1'});
   await page.goto(new URL('/?page=overview',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);
   await page.locator('.summary-cumulative [data-profit-equation]').waitFor();
@@ -50,7 +50,7 @@ const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.e
   await shot('insurance-lifetime');await page.getByRole('button',{name:'检查并继续',exact:true}).click();await page.getByRole('button',{name:'确认保存',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
   await page.getByText('保障期限：终身',{exact:true}).waitFor();const family=await api('/family/overview'),policy=family.items.find(r=>r.name==='合成终身保单');
   check(policy.policy_lifetime===true&&policy.policy_end===null,'lifetime insurance saves and reads back explicitly');
-  const failure={enabled:true,supported:true,authorization:'authorized',pending_count:1,missing_count:1,environment:'test',error:'1 条提醒未成功排入系统通知队列',missing_requests:[{id:'synthetic-notification',item_id:policy.id,name:policy.name,kind:'premium',due_date:'2026-11-08',at:'2026-11-01T09:00:00+08:00',reason:'合成系统排程失败',error_domain:'SyntheticError',error_code:7}]};let status=failure,retried=false;
+  const failure={enabled:true,supported:true,authorization:'authorized',pending_count:1,missing_count:1,environment:'dev',error:'1 条提醒未成功排入系统通知队列',missing_requests:[{id:'synthetic-notification',item_id:policy.id,name:policy.name,kind:'premium',due_date:'2026-11-08',at:'2026-11-01T09:00:00+08:00',reason:'合成系统排程失败',error_domain:'SyntheticError',error_code:7}]};let status=failure,retried=false;
   const healthy={...failure,error:null,missing_count:0,missing_requests:[],scheduling_mode:'single_next',desired_count:75,selected_count:1,deferred_count:74,next_notification_at:'2026-11-02T09:00:00+08:00',note:'每次仅安排最近一条，同一时刻的事项合并提醒；后续排程需要本机服务运行。服务停止后仅保留已登记的一条。'};
   let holdNextRead=false,heldRead=null,postCount=0;
   await page.route('**/api/notifications',async route=>{

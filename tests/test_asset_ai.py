@@ -41,7 +41,7 @@ class AssetAITests(unittest.TestCase):
 
     def test_capabilities_schema_and_snapshot_contract(self):
         with tempfile.TemporaryDirectory() as temp:
-            data=claim_environment(Path(temp)/'synthetic','test')
+            data=claim_environment(Path(temp)/'synthetic','dev')
             with TestClient(create_app(data,testing=True,auto_sync=False)) as c:
                 cap=c.get('/api/capabilities').json()['family']
                 self.assertEqual(cap['label'],'资产分析')

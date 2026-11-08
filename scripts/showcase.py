@@ -21,7 +21,7 @@ def seed(directory):
     """Only accept a nonexistent directory; never open an existing ledger."""
     directory=Path(directory)
     directory.mkdir()  # fails even for an existing empty directory or a symlink
-    claim_environment(directory,'test')
+    claim_environment(directory,'dev')
     service=Service(Store(directory));family=FamilyService(service.store)
     end=date.today();start=date(end.year-1,1,1)
     months=(end.year-start.year)*12+end.month
@@ -87,6 +87,8 @@ def seed(directory):
 
 
 def main():
+    from verify import available_port
+
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,default=workspace_for(ROOT)/'local/work/showcase')
     args=parser.parse_args();output=args.output.resolve()
@@ -94,9 +96,10 @@ def main():
     output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='synthetic-showcase-',dir=output) as temp:
         data=Path(temp)/'data';seed(data)
-        print('合成展示实例：http://127.0.0.1:8876/?family=overview；Ctrl+C 退出并删除本次临时账本。',flush=True)
-        command=[sys.executable,str(ROOT/'run.py'),'--environment','test','--data-dir',str(data),
-            '--runtime-dir',str(Path(temp)/'runtime'),'--port','8876','--no-open','--no-sync']
+        port = available_port()
+        print(f'合成展示实例：http://127.0.0.1:{port}/?family=overview；Ctrl+C 退出并删除本次临时账本。',flush=True)
+        command=[sys.executable,str(ROOT/'run.py'),'--environment','dev','--data-dir',str(data),
+            '--runtime-dir',str(Path(temp)/'runtime'),'--port',str(port),'--no-open','--no-sync']
         with (output/'server.log').open('w') as log:
             process=subprocess.Popen(command,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT)
             try:

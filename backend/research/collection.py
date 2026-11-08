@@ -1,5 +1,6 @@
 """Subscribed, resumable collection using existing versioned snapshots."""
 import hashlib
+import json
 from copy import deepcopy
 from datetime import timedelta
 from ..common import ConflictError, DomainError, day, json_dumps, now
@@ -29,10 +30,22 @@ class Collection:
         self.research = research
 
     def preview(self, code, modules, history_start):
-        p = providers.identity(code)
         if not modules or len(modules) != len(set(modules)) or any(m not in lixinger.MODULES for m in modules):
             raise DomainError('请选择有效且不重复的采集模块')
+        known = providers.catalog_identity(code)
+        canonical = known['code'] if known else code.strip().upper()
+        if not providers.INDEX_CODE.fullmatch(canonical):
+            raise DomainError('请输入理杏仁的指数代码（字母和数字）')
+        revision = self.research.revision()
+        existing = next((p for p in self.research.profiles() if p['code'] == canonical), None)
         end = providers.cutoff()
+        price_date = None
+        if existing:
+            p = existing
+        else:
+            p, price_date = lixinger.verify_index(self.research.access, canonical, known, history_start, end)
+            if not known:
+                p['registration'] = dict(source='lixinger', price_date=price_date, checked_at=now())
         start = str(day(history_start)) if history_start else p['launch']
         if not p['launch'] <= start <= end: raise DomainError('历史起点须介于指数发布日期和已完成交易日之间')
         overseas=p.get('exposure')=='overseas'
@@ -48,17 +61,27 @@ class Collection:
                 e = call['endpoint']; calls_by_endpoint[e] = calls_by_endpoint.get(e, 0)+1
         state = self.research.access.status()
         return dict(profile=p, modules=chosen, history_start=history_start, effective_start=start, end=end,
-                    research_revision=self.research.revision(), endpoint_budget=[dict(endpoint=e, calls=n,
+                    verified_price_date=price_date, initial_sync=existing is None,
+                    research_revision=revision, endpoint_budget=[dict(endpoint=e, calls=n,
                     remaining=None) for e, n in sorted(calls_by_endpoint.items())],
                     dependencies_pending=pending, unsupported_modules=unsupported, configured=state['configured'], enabled=state['enabled'],
-                    limitation='公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。添加仅保存订阅，点击更新才请求接口。')
+                    limitation='公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。新订阅保存后立即启动一次全量同步。')
 
     def save(self, code, modules, history_start, enabled, expected):
+        from .updates import index_resources
+
+        if self.research.revision() != expected:
+            raise ConflictError('资料或设置已变化，请重新读取并核对；本次未写入')
+        if not self.research.writes_allowed():
+            raise DomainError('系统处于只读验收或停写状态')
         plan = self.preview(code, modules, history_start)
-        p = plan['profile']; iid = p['provider']+':'+p['code']
+        p = plan['profile']
+        iid = p['provider']+':'+p['code']
+        job_id = None
         with self.research.worker_lock, self.research.transaction(expected=expected, bump=True) as db:
             old = db.execute('SELECT data FROM research_indices WHERE id=?', (iid,)).fetchone()
-            import json
+            if not old and not enabled:
+                raise DomainError('新增指数须启用并执行首次同步，保存后可暂停')
             value = json.loads(old[0]) if old else dict(p, id=iid, created_at=now())
             previous = subscription(value)
             changed = previous.get('modules') != plan['modules'] or previous.get('history_start') != history_start
@@ -66,7 +89,13 @@ class Collection:
             # A changed range invalidates checkpoints, never observations or historical versions.
             if changed: value['collection_generation'] = value.get('collection_generation', 0)+1
             db.execute('INSERT INTO research_indices VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data', (iid, json_dumps(value)))
-        return dict(id=iid, subscription=value['subscription'], research_revision=self.research.revision())
+            if not old:
+                resources = [dict(resource, full=True) for resource in index_resources(iid, collection_modules(value))]
+                job_id = self.research.updates.enqueue(db, resources, trigger='index_create')
+
+        if job_id:
+            self.research.updates.start()
+        return dict(id=iid, subscription=value['subscription'], research_revision=self.research.revision(), job_id=job_id)
 
     def active(self, iid, module):
         p = self.research.profile(iid); sub = subscription(p)
@@ -75,12 +104,11 @@ class Collection:
         return p
 
     def status(self, iid):
-        from .updates import MODULES
+        from .updates import index_resources
 
         p = self.research.profile(iid)
         enabled = collection_modules(p)
-        resources = [dict(scope=scope, target=iid, module=module) for scope, modules in MODULES.items()
-                     for module in modules if module in enabled]
+        resources = index_resources(iid, enabled)
         states = {}
         for m in enabled:
             stage = self.research.module(iid, 'stage.'+m)

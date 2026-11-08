@@ -15,7 +15,7 @@ from scripts.source_check import SKILLS
 class AICoverageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        data = claim_environment(Path(self.temp.name) / 'synthetic', 'test')
+        data = claim_environment(Path(self.temp.name) / 'synthetic', 'dev')
         self.app = create_app(data, testing=True, auto_sync=False)
         self.client = TestClient(self.app).__enter__()
         self.boot = self.client.get('/api/bootstrap').json()

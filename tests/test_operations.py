@@ -23,12 +23,12 @@ from backend.store import Store, SCHEMA
 class OperationsTests(unittest.TestCase):
     def test_running_backup_reuses_verified_compressed_export(self):
         with tempfile.TemporaryDirectory() as temp:
-            root=Path(temp);_,values=manage.init_environment(root,'test')
+            root=Path(temp);_,values=manage.init_environment(root,'dev')
             service=Service(Store(values['data_dir']))
             content=service.backup_download()
-            with patch.object(manage,'health',return_value={'environment':'test'}), \
+            with patch.object(manage,'health',return_value={'environment':'dev'}), \
                     patch.object(manage.urllib.request,'urlopen',return_value=io.BytesIO(content)):
-                result=manage.backup(root,'test')
+                result=manage.backup(root,'dev')
             self.assertEqual(Path(result['backup']).read_bytes(),content)
             self.assertTrue(Path(result['backup']).name.startswith('manual-'))
             self.assertFalse(list((values['data_dir']/'backups').glob('full-*')))
@@ -89,7 +89,7 @@ class OperationsTests(unittest.TestCase):
             root=Path(temp);(root/'frontend').mkdir();(root/'frontend/index.html').write_text('test')
             occupied.bind(('127.0.0.1',0));occupied.listen()
             port=occupied.getsockname()[1]
-            result=subprocess.run([sys.executable,str(ROOT/'run.py'),'--environment','test',
+            result=subprocess.run([sys.executable,str(ROOT/'run.py'),'--environment','dev',
                 '--port',str(port),'--data-dir',str(root/'data'),'--runtime-dir',str(root/'runtime'),
                 '--frontend-dir',str(root/'frontend'),'--no-sync','--no-open'],capture_output=True,text=True,timeout=10)
             self.assertNotEqual(result.returncode,0)

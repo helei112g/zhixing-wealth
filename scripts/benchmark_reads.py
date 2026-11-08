@@ -33,7 +33,7 @@ def seed(directory):
     from backend.family_service import FamilyService
     from backend.service import Service
     from backend.store import Store
-    service = Service(Store(claim_environment(directory, 'test')))
+    service = Service(Store(claim_environment(directory, 'dev')))
     family = FamilyService(service.store)
     end = today(); start = end - timedelta(days=1400)
     portfolios = [service.save_portfolio(dict(name='合成基准组合'+str(n), start_date=str(start), planned_amount='1000000')) for n in range(2)]
@@ -79,7 +79,7 @@ def worker(source, directory):
     from backend.ledger import Market
     from backend.service import Service
     from backend.store import Store
-    assert json.loads((directory/'.environment.json').read_text())['environment'] == 'test'
+    assert json.loads((directory/'.environment.json').read_text())['environment'] == 'dev'
     service = Service(Store(directory)); family = FamilyService(service.store)
     from backend.research.service import ResearchService
     research=ResearchService(service.store,service)

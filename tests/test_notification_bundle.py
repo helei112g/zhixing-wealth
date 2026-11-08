@@ -33,7 +33,7 @@ class NotificationBundleTests(unittest.TestCase):
 
     def test_brand_is_packaged_and_changed_logo_rebuilds_same_identity(self):
         with tempfile.TemporaryDirectory() as temp:
-            args = (*self.fixture(Path(temp)), 'test', 8876, '/synthetic/python')
+            args = (*self.fixture(Path(temp)), 'dev', 8877, '/synthetic/python')
             with patch.object(notifications, 'make_icon', side_effect=self.icon) as icon, \
                     patch.object(notifications.subprocess, 'run') as command:
                 app = notifications.build(*args)
@@ -52,7 +52,7 @@ class NotificationBundleTests(unittest.TestCase):
 
     def test_legacy_cached_bundle_without_icon_is_upgraded(self):
         with tempfile.TemporaryDirectory() as temp:
-            args = (*self.fixture(Path(temp)), 'test', 8876, '/synthetic/python')
+            args = (*self.fixture(Path(temp)), 'dev', 8877, '/synthetic/python')
             with patch.object(notifications, 'make_icon', side_effect=self.icon) as icon, \
                     patch.object(notifications.subprocess, 'run'):
                 app = notifications.build(*args)
@@ -71,7 +71,7 @@ class NotificationBundleTests(unittest.TestCase):
 
     def test_failed_signing_is_not_cached_as_success(self):
         with tempfile.TemporaryDirectory() as temp:
-            args = (*self.fixture(Path(temp)), 'test', 8876, '/synthetic/python')
+            args = (*self.fixture(Path(temp)), 'dev', 8877, '/synthetic/python')
             with patch.object(notifications, 'make_icon', side_effect=self.icon), \
                     patch.object(notifications.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'codesign')):
                 with self.assertRaises(DomainError):
@@ -80,7 +80,7 @@ class NotificationBundleTests(unittest.TestCase):
 
     def test_development_compile_cache_is_temporary_on_success_and_failure(self):
         with tempfile.TemporaryDirectory() as temp:
-            args = (*self.fixture(Path(temp)), 'test', 8876, '/synthetic/python')
+            args = (*self.fixture(Path(temp)), 'dev', 8877, '/synthetic/python')
             (args[0] / 'native-build/FamilyNotifications').unlink()
             def compile_command(command, **kwargs):
                 if 'swiftc' in command:

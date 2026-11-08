@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 
 
-PORTS = {'dev': 8877, 'production': 8765, 'test': 8876}
+PORTS = {'dev': 8877, 'production': 8765}
 
 
 def default_environment():
@@ -142,7 +142,7 @@ class Client:
         return self.preview({'code':code},'/api/research/indices/resolve')
 
     def collection_preview(self,code,modules,history_start=None):
-        """Offline call estimates; endpoint_budget.remaining is null (no local cap)."""
+        """Check a new index against Lixinger and estimate the selected collection."""
         return self.preview(dict(code=code,modules=modules,history_start=history_start),'/api/research/collection/preview')
 
     def research_studio(self,index_id,**options):

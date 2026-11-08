@@ -51,14 +51,14 @@ class MacLauncherTests(unittest.TestCase):
             script=code/'scripts/manage.py';script.parent.mkdir();script.write_text('import json,os,sys\nwith open(os.environ["LAUNCHER_TEST_REPORT"],"a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\n')
             output=root/'entry space';file=output/'测试.app/Contents/Resources/action.command';file.parent.mkdir(parents=True)
             report=root/'report.jsonl'
-            for environment in ('dev','test'):
+            for environment in ('dev',):
                 for action in ('start','stop'):
                     file.write_text(launchers.command_script(output,code,root,environment,action))
                     subprocess.run(['zsh',str(file)],env={**os.environ,'LAUNCHER_TEST_REPORT':str(report)},check=True,capture_output=True)
             values=[json.loads(line) for line in report.read_text().splitlines()]
-            self.assertEqual([v[2] for v in values],['init','start','stop']*2)
+            self.assertEqual([v[2] for v in values],['init','start','stop'])
             self.assertTrue(all(v[:2]==['--workspace',str(output/'..')] for v in values))
-            self.assertEqual([v[v.index('--environment')+1] for v in values],['dev']*3+['test']*3)
+            self.assertEqual([v[v.index('--environment')+1] for v in values],['dev']*3)
             subprocess.run(['zsh','-n'],input=launchers.LAUNCH,text=True,check=True,capture_output=True)
 
     def test_production_launcher_resolves_current_on_every_run(self):

@@ -2,7 +2,7 @@
 
 作者：Leo · 2026.10.29
 
-每个需求都经过 **需求分支 → 开发与测试 → MR / PR → review 与合并 → master 发布**。GitHub 使用 Pull Request（PR）名称，与本文 MR 指同一流程。提交 PR 不等于授权合并或部署。
+每个需求都经过 **需求分支 → 部署开发环境 → 回归与验收 → MR / PR 审阅与合并 → master 发布**。GitHub 使用 Pull Request（PR）名称，与本文 MR 指同一流程。提交 PR 不等于授权合并或部署。
 
 ## 开始一个需求
 
@@ -15,7 +15,7 @@ git switch -c feat/your-change
 git config core.hooksPath .githooks
 ```
 
-修复可用 `fix/…`，文档可用 `docs/…`。开发只连接独立 dev 环境；自动验收与公开截图只能用新建的 test 合成账本。测试库、开发库和演练快照永远不能回灌正式环境。
+修复可用 `fix/…`，文档可用 `docs/…`。本机只保留 dev 与 production。改动后先运行 `.venv/bin/python scripts/manage.py deploy-dev`，它构建当前源码并重启 8877 的开发服务，保留原开发账本。用户在该实例验收。自动回归与公开截图使用开发模式下新建的临时合成账本和临时端口，结束后清理临时账本。开发与演练数据不回灌正式环境。
 
 ## 测试后提交 PR
 
@@ -28,7 +28,7 @@ git commit -m "Describe the user-visible change"
 git push -u origin HEAD
 ```
 
-在 GitHub 创建以 `master` 为 base 的 PR，说明问题、改后行为、实际验证和数据影响。公开截图须为人工检查过的合成画面，并注明来源。CI 成功后交由用户 review；根据意见修改时重新执行受影响检查，更新 PR，不能复用旧提交的验证结论。不得由 Agent 擅自合并或开启自动合并。
+在 GitHub 创建以 `master` 为 base 的 PR，说明问题、改后行为、实际验证和数据影响。公开截图须为人工检查过的合成画面，并注明来源。CI 成功后交由用户 review。根据意见修改时，重新部署开发环境并执行受影响检查，再更新 PR。不得由 Agent 擅自合并或开启自动合并。
 
 本地 hooks 拒绝在主分支提交和直接推送主分支；这是协作防误操作措施，可被 Git 参数跳过，不能当作服务端权限控制。仓库管理员可进一步设置 master 分支保护，要求 PR 与 `verify` 检查；审阅与合并仍由维护者负责。
 

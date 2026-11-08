@@ -161,11 +161,11 @@ def router(service):
     @api.get('/api/research/catalog')
     def catalog():
         from .providers import CATALOG
-        from .lixinger import MODULES,DEFAULT_MODULES,MODULE_SOURCES
-        return dict(items=CATALOG,modules=MODULES,module_sources=MODULE_SOURCES,default_modules=DEFAULT_MODULES,subscriptions=service.profiles(),research_revision=service.revision())
-    @api.post('/api/research/collection/preview')
+        from .lixinger import MODULES,MODULE_SOURCES
+        return dict(items=CATALOG,modules=MODULES,module_sources=MODULE_SOURCES,default_modules=MODULES,subscriptions=service.profiles(),research_revision=service.revision())
+    @api.post('/api/research/collection/preview', summary='新指数在线校验理杏仁身份和日线；已保存指数只做本地预览')
     def collection_preview(body:CollectionPreview):return service.collection.preview(body.code,body.modules,body.history_start)
-    @api.put('/api/research/collection')
+    @api.put('/api/research/collection', summary='按原研究版本保存订阅；首次添加同时排队全量同步')
     def collection_save(body:CollectionSave):return service.collection.save(body.code,body.modules,body.history_start,body.enabled,body.expected_research_revision)
     @api.get('/api/settings/lixinger')
     def access_status():return dict(service.access.status(), automatic=False)

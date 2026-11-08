@@ -9,8 +9,8 @@ from pathlib import Path
 
 from .common import DomainError
 
-LABELS = {'dev': '开发环境', 'production': '正式环境', 'test': '测试环境'}
-PORTS = {'dev': 8877, 'production': 8765, 'test': 8876}
+LABELS = {'dev': '开发环境', 'production': '正式环境'}
+PORTS = {'dev': 8877, 'production': 8765}
 
 
 def workspace_for(root):

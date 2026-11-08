@@ -1,7 +1,7 @@
-/* Every fixture and write is synthetic and guarded by test environment + exact directory. */
+/* Every fixture and write is synthetic and guarded by development environment + exact synthetic directory. */
 const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright'),root=path.resolve(__dirname,'..');
-const base=process.env.PORTFOLIO_TEST_URL||'http://127.0.0.1:8876',out=process.env.PORTFOLIO_TEST_OUTPUT;
+const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
 assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:true});
 (async()=>{
  const browser=await pw.chromium.launch({executablePath:process.env.CHROME_PATH||undefined,headless:true});
@@ -13,11 +13,11 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
  const keep=()=>dialog().getByRole('button',{name:'保留实际到账金额并完成核对',exact:true});
  function fixture(id,per_share,code='00700'){
   const result=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',
-   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'test');p=json.load(sys.stdin);Service(Store(d)).cache_dividends(p['id'],[dict(code=p['code'],source_ref='synthetic-browser-review',record_date=None,ex_date='2024-01-11',pay_date=None,per_share=p['per_share'],currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')])"],
+   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');p=json.load(sys.stdin);Service(Store(d)).cache_dividends(p['id'],[dict(code=p['code'],source_ref='synthetic-browser-review',record_date=None,ex_date='2024-01-11',pay_date=None,per_share=p['per_share'],currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')])"],
    {cwd:root,encoding:'utf8',input:JSON.stringify({id,per_share,code})});assert.equal(result.status,0,result.stderr);
  }
  try{
-  const health=await api('/health');assert.equal(health.environment,'test');assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
+  const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   csrf=(await api('/bootstrap')).csrf_token;
   const p=await api('/portfolios',{name:'合成分红保留验收',start_date:'2024-01-01',planned_amount:'10000'});
   const buy=await api('/events',{portfolio_id:p.id,kind:'BUY',date:'2024-01-02',instrument:{market:'HK',code:'00700',name:'合成分红标的'},quantity:'100',gross_amount:'1000',fx_rate:'.91'});

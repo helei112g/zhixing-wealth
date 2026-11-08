@@ -121,6 +121,27 @@ class PurchasePlanRequest(BaseModel):
     holding_labels: dict[str, str] | None = None
 
 
+class PurchasePlanDeletionRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: int = Field(strict=True, ge=0, description='原删除预览 revision，过期返回409')
+
+
+class PurchasePlanDeletionResult(BaseModel):
+    portfolio_id: str
+    instrument_id: str
+    revision: int
+
+
+class PurchasePlanDeletionPreview(PurchasePlanDeletionResult):
+    portfolio_name: str
+    instrument_name: str
+    instrument_code: str
+    instrument_market: str
+    target_pct: str
+    target_amount: str
+    holding_label_path: list[str] | None = Field(description='将随计划移除的本组合标签路径；无记录时为null')
+
+
 class AllocationRequest(WriteRequest):
     planned_buy: bool | None = Field(None, description='显式重新计划买入/取消意向；省略保持现状，比例0取消计划')
     model_config = ConfigDict(extra='forbid')

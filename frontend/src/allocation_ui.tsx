@@ -18,6 +18,61 @@ export function PurchasePlanForm({boot,portfolio,onClose,onSaved}:Obj){
  <Notice>保存后进入计划买入列表；实际买入时再录入交易。计划不会扣减或预留现金。</Notice><ErrorBox error={error}/>{error&&<Button small onClick={()=>{P(null);C(null);R(n=>n+1);E('');}}>重新读取并核对</Button>}<footer className="form-actions"><Button onClick={onClose}>取消</Button><button className="button primary" disabled={!context||busy}>{preview?'确认保存计划':'预览计划'}</button></footer></fieldset></form></Modal>;
 }
 
+export function DeletePurchasePlanModal({portfolio,holding,onClose,onDeleted}:Obj){
+ const [preview, setPreview] = useState<Obj|null>(null);
+ const [receipt, setReceipt] = useState<Obj|null>(null);
+ const [error, setError] = useState('');
+ const [busy, setBusy] = useState(false);
+ const [attempt, setAttempt] = useState(0);
+ const path = `/portfolios/${encodeURIComponent(portfolio.id)}/purchase-plans/${encodeURIComponent(holding.instrument_id)}`;
+
+ useEffect(() => {
+  let active = true;
+  api(path+'/deletion-preview').then(value => {
+   if(active) setPreview(value);
+  }).catch(error => {
+   if(active) setError(error.message);
+  });
+  return () => { active = false; };
+ }, [path, attempt]);
+
+ async function confirmDeletion(){
+  if(busy || (!preview && !receipt)) return;
+  setBusy(true);
+  setError('');
+  let result = receipt;
+  try{
+   if(!result){
+    result = await api(path,{expected_revision:preview!.revision},'DELETE');
+    setReceipt(result);
+   }
+   await onDeleted(result);
+  }catch(error:any){
+   if(!result) setPreview(null);
+   setError(result ? '已提交删除，暂时无法核对结果。请重新核对。' : error.message);
+  }finally{
+   setBusy(false);
+  }
+ }
+
+ return <Modal title="删除计划" subtitle={portfolio.name} onClose={onClose} busy={busy}>
+  {preview ? <>
+   <h3>{preview.instrument_name} · {preview.instrument_code}.{preview.instrument_market}</h3>
+   <p>计划金额 <b>{money(preview.target_amount)} CNY</b> · 占总预算 {preview.target_pct}%</p>
+   {preview.holding_label_path && <p>随计划移除的标签：{preview.holding_label_path.join(' / ')}</p>}
+   <Notice>确认后，这个标的将从当前组合的持仓列表移除。你可以重新添加买入计划。</Notice>
+  </> : !error && <p role="status">正在核对买入计划…</p>}
+  <ErrorBox error={error}/>
+  <footer className="form-actions">
+   <Button onClick={onClose} disabled={busy}>取消</Button>
+   {error && !receipt && <Button onClick={() => {setError('');setAttempt(value => value+1);}}>重新读取计划</Button>}
+   {(preview || receipt) && <Button primary disabled={busy} onClick={confirmDeletion}>
+    {busy ? '处理中…' : receipt ? '重新核对结果' : '确认删除计划'}
+   </Button>}
+  </footer>
+ </Modal>;
+}
+
 export function AllocationAnalysis({pid,version,openDetail,action,initialPath=[]}:Obj){
  const [level,Level]=useState(initialPath.length>=3?'instrument':initialPath.length===2?'detail':initialPath.length===1?'direction':'scope');
  const [path,Path]=useState<string[]>(initialPath),[assetClass,AssetClass]=useState(''),[instrument,Instrument]=useState(''),[status,Status]=useState('all'),[sort,Sort]=useState('gap');

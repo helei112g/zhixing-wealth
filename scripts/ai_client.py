@@ -109,7 +109,7 @@ class Client:
         core = (method == 'POST' and path in ('/api/portfolios', '/api/events') or
                 method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans', path) or
                 method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+(?:/labels)?)?|events/[^/]+)', path) or
-                method == 'DELETE' and re.fullmatch(r'/api/events/[^/]+', path) or
+                method == 'DELETE' and re.fullmatch(r'/api/(events/[^/]+|portfolios/[^/]+/purchase-plans/[^/]+)', path) or
                 method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/(confirm|review)', path))
         notes = (method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes(?:/[^/]+/restore)?', path) or
                  method in ('PUT', 'DELETE') and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes/[^/]+', path))
@@ -131,6 +131,11 @@ class Client:
 
     def purchase_plan_preview(self, portfolio_id, payload):
         return self.preview(payload, '/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/purchase-plans/preview')
+
+    def purchase_plan_deletion_preview(self, portfolio_id, instrument_id):
+        path = ('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/purchase-plans/'
+                + urllib.parse.quote(instrument_id, safe='') + '/deletion-preview')
+        return self.request(path)
 
     def allocation_analysis(self, portfolio_id, **filters):
         return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='') + '/allocation-analysis?' + urllib.parse.urlencode(filters))

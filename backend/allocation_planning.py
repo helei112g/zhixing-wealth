@@ -1,4 +1,6 @@
 """Budget allocation projections and atomic, non-trading purchase intentions."""
+import json
+
 from .common import ConflictError, DomainError, ZERO, dec, ds, json_dumps, ratio, wire
 from .holding_analysis import label_map, normalize_labels, resolve_labels
 from .ledger import Ledger
@@ -87,6 +89,71 @@ def purchase_plan(service, pid, data, preview=False):
         service.store.audit(db, 'allocation', pid + ':' + inst['id'], old, allocation, '设置计划买入；不扣减现金')
         service.holding_analysis.write(db, candidate, pid, inst, labels)
     return wire(dict(value, revision=value['revision'] + 1, preview=False))
+
+
+def purchase_plan_deletion_context(db, pid, iid):
+    row = db.execute('''
+        SELECT a.data AS allocation, p.data AS portfolio, i.data AS instrument, l.data AS labels,
+               (SELECT value FROM meta WHERE key='revision') AS revision
+        FROM allocations a
+        JOIN portfolios p ON p.id=a.portfolio_id
+        JOIN instruments i ON i.id=a.instrument_id
+        LEFT JOIN holding_labels l ON l.portfolio_id=a.portfolio_id AND l.instrument_id=a.instrument_id
+        WHERE a.portfolio_id=? AND a.instrument_id=?
+    ''', (pid, iid)).fetchone()
+    if not row:
+        raise DomainError('当前组合没有此标的的买入计划')
+    allocation = json.loads(row['allocation'])
+    portfolio = json.loads(row['portfolio'])
+    instrument = json.loads(row['instrument'])
+    labels = json.loads(row['labels']) if row['labels'] is not None else None
+    if portfolio.get('archived'):
+        raise DomainError('组合已归档，请先恢复后再删除计划')
+    # Setting the target to zero clears planned_buy but retains the original plan marker.
+    if not (allocation.get('planned_buy') or isinstance(allocation.get('planned_buy_after'), list)):
+        raise DomainError('只有通过计划买入添加或标记的标的可以删除计划')
+
+    scope = (pid, iid)
+    if db.execute("SELECT 1 FROM events WHERE portfolio_id=? AND json_extract(data,'$.instrument_id')=? LIMIT 1", scope).fetchone():
+        raise DomainError('此标的有交易流水或删除历史，只能调整投入目标')
+    if db.execute('SELECT 1 FROM investment_notes WHERE portfolio_id=? AND instrument_id=? LIMIT 1', scope).fetchone():
+        raise DomainError('此标的有投资笔记或删除历史，只能调整投入目标')
+    if db.execute("SELECT 1 FROM reservations WHERE portfolio_id=? AND json_extract(data,'$.instrument_id')=? LIMIT 1", scope).fetchone():
+        raise DomainError('此标的有历史资金预留，只能调整投入目标')
+    if db.execute("SELECT 1 FROM corporate_actions WHERE instrument_id=? AND json_extract(data,'$.portfolio_id')=? LIMIT 1", (iid, pid)).fetchone():
+        raise DomainError('此标的有分红或企业行动核对记录，只能调整投入目标')
+
+    pct = dec(allocation['target_pct'])
+    label_path = resolve_labels(instrument, labels)['path'] if labels and any(labels.get(k) for k in ('scope', 'direction', 'detail')) else None
+    preview = wire(dict(portfolio_id=pid, instrument_id=iid, portfolio_name=portfolio['name'],
+                        instrument_name=instrument['name'], instrument_code=instrument['code'],
+                        instrument_market=instrument['market'], revision=int(row['revision']), target_pct=pct,
+                        target_amount=dec(portfolio['planned_amount']) * pct / 100,
+                        holding_label_path=label_path))
+    return preview, allocation, labels
+
+
+def preview_purchase_plan_deletion(service, pid, iid):
+    with service.store.connection() as db:
+        db.execute('BEGIN')  # Read the revision and all dependencies from the same snapshot.
+        preview, _, _ = purchase_plan_deletion_context(db, pid, iid)
+    return preview
+
+
+def delete_purchase_plan(service, pid, iid, expected_revision):
+    if type(expected_revision) is not int or expected_revision < 0:
+        raise DomainError('删除计划须携带预览时的 expected_revision')
+    with service.store.transaction(expected_revision=expected_revision) as db:
+        _, allocation, labels = purchase_plan_deletion_context(db, pid, iid)
+        scope = (pid, iid)
+        key = pid + ':' + iid
+        reason = '删除未买入计划并从当前组合移除标的'
+        if labels is not None:
+            db.execute('DELETE FROM holding_labels WHERE portfolio_id=? AND instrument_id=?', scope)
+            service.store.audit(db, 'holding_labels', key, labels, None, reason)
+        db.execute('DELETE FROM allocations WHERE portfolio_id=? AND instrument_id=?', scope)
+        service.store.audit(db, 'allocation', key, allocation, None, reason)
+    return dict(portfolio_id=pid, instrument_id=iid, revision=expected_revision + 1)
 
 
 def allocation_report(service, pid, level='scope', scope='', direction='', detail='', asset_class='', status='all', sort='gap', *, instrument_id='', _state=None, _snapshot=None):

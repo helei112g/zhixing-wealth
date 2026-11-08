@@ -18,6 +18,7 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 - 当前标签用客户端holding_labels(P,I)读取，展示scope/direction/detail差异，再以原revision PUT /api/portfolios/P/instruments/I/labels并回读。每层单选、可留空，细分标签须先选方向；标签独立于计划与历史流水。没有标签预览接口时展示明确差异，不声称服务端预览；409/超时先回读，不自动换revision。首次BUY可附带holding_labels，随交易预览、同事务保存，不能改写已有标签或将标签塞进历史交易。
 - 计划资产类别仅权益、债券、大宗商品、其他、未分类；地区仅A股、美股、港股、海外其他、未分类。旧tags不可写入，历史混合已迁移为未分类；独立持仓分类路径保留。
 - 投入计划先调用`GET /api/portfolios/P/instruments/I/plan-check?target_pct=...`，仅改计划时按返回revision提交PUT；合并标签修改时须与labels读取的revision一致，不一致则重读并核对；缺口仅提醒，不自动加预算或卖出。
+- 删除未买入计划先读 `GET /api/portfolios/P/purchase-plans/I/deletion-preview`，核对组合、标的、计划金额和将移除的标签。获授权后以原 `expected_revision` 用 `write DELETE /api/portfolios/P/purchase-plans/I REQUEST.json --confirm-write` 提交，按返回的组合和标的 ID 回读关联是否移除。若被账务历史保护，可按用户授权调整投入目标。409或超时先回读，不自动重试。
 - 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理不代表行情更新成功，应看jobs逐项状态。
 - jobs只返回最近20条，后台默认最多保存20条（含运行中），不清理运行中任务，不当作完整业务审计。价格子项saved/unchanged表示新增变化版本/跳过重复；交易锁定汇率不随同步改变。部署和文件清理须另有授权。
 - 企业行动数据的同步失败不代表存在送转计划。纯现金方案可含中小股东／大股东差异化金额；金额差异见jobs子项notes与分红候选note，按公告和实际到账核对，基础金额不保证适用于特定股东。获授权重试后核对同标的最新corporate_actions子项及reminders；成功自动消除旧同步失败提醒，不删除历史、不为消除提醒创建SPLIT。

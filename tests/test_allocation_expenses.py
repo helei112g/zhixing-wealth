@@ -6,7 +6,7 @@ import unittest
 from decimal import Decimal as D
 from pathlib import Path
 from unittest.mock import patch
-from backend.allocation_planning import allocation_report, purchase_plan
+from backend.allocation_planning import allocation_report, delete_purchase_plan, preview_purchase_plan_deletion, purchase_plan
 from backend.common import ConflictError, DomainError
 from backend.deployment_guard import capture, verify
 from backend.environment import claim_environment
@@ -86,8 +86,85 @@ class AllocationExpenseTests(unittest.TestCase):
         self.s.save_event(dict(portfolio_id=self.p['id'],kind='SELL',date='2025-01-03',instrument_id=iid,quantity='100',gross_amount='1100',fx_rate='1',sell_lots=[dict(buy_event_id=buy['id'],quantity='100')]))
         self.assertEqual(self.s.dashboard(self.p['id'],view='summary')['holdings'][0]['status'],'已清仓')
         self.purchase();self.assertEqual(self.s.dashboard(self.p['id'],view='summary')['holdings'][0]['status'],'计划买入')
+        with self.assertRaisesRegex(DomainError, '交易流水'):
+            preview_purchase_plan_deletion(self.s, self.p['id'], iid)
         self.s.attach_instrument(self.p['id'],iid,dict(target_pct='0',expected_revision=self.store.state()['revision']))
         self.assertEqual(self.s.dashboard(self.p['id'],view='summary')['holdings'][0]['status'],'已清仓')
+
+    def test_delete_plan_http_removes_only_the_target_combination(self):
+        from fastapi.testclient import TestClient
+        from backend.app import create_app
+
+        pid = self.p['id']
+        iid = self.purchase()['instrument']['id']
+        other = self.s.save_portfolio(dict(name='合成共享标的组合', planned_amount='20000', start_date='2025-01-01'))
+        purchase_plan(self.s, other['id'], dict(instrument_id=iid, target_pct='15', expected_revision=self.store.state()['revision']))
+        self.s.save_event(dict(portfolio_id=other['id'], instrument_id=iid, kind='BUY', date='2025-01-02',
+                               quantity='100', gross_amount='2000', fx_rate='1'))
+        self.s.cache_prices(iid, [dict(date='2025-01-03', price='20', source='synthetic')])
+        before = self.store.state()
+        cash = self.s.dashboard(pid, view='summary')['cash_total']
+        other_dashboard = self.s.dashboard(other['id'], view='summary')
+        with TestClient(create_app(self.directory, testing=True, auto_sync=False)) as client:
+            path = f'/api/portfolios/{pid}/purchase-plans/{iid}'
+            headers = {'X-CSRF-Token': client.get('/api/bootstrap').json()['csrf_token']}
+            preview = client.get(path+'/deletion-preview').json()
+            self.assertEqual(preview['holding_label_path'], ['A股', '宽基', '中证500'])
+            self.assertEqual(preview['target_amount'], '10000')
+            self.assertEqual(self.store.state(), before)
+            for invalid, status in ((True, 422), (str(preview['revision']), 422), (preview['revision']-1, 409)):
+                response = client.request('DELETE', path, json={'expected_revision': invalid}, headers=headers)
+                self.assertEqual(response.status_code, status)
+            self.assertEqual(self.store.state(), before)
+            response = client.request('DELETE', path, json={'expected_revision': preview['revision']}, headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json(), dict(portfolio_id=pid, instrument_id=iid, revision=preview['revision']+1))
+            after = client.get(f'/api/portfolios/{pid}/dashboard?view=summary').json()
+            self.assertEqual((after['holdings'], after['cash_total'], after['plan_funding']['total_target_pct']), ([], cash, '0'))
+            self.assertEqual(client.get(path+'/deletion-preview').status_code, 422)
+            audit = client.get(f'/api/revisions/allocation/{pid}:{iid}').json()[0]
+            self.assertEqual(audit['before_data']['target_pct'], '10')
+            self.assertIsNone(audit['after_data'])
+
+        state = self.store.state()
+        for key in ('events', 'prices', 'instruments'):
+            self.assertEqual(state[key], before[key])
+        for key in ('allocations', 'holding_labels'):
+            self.assertEqual(state[key], [row for row in before[key] if row['portfolio_id'] != pid])
+        current_other = self.s.dashboard(other['id'], view='summary')
+        self.assertEqual(current_other['holdings'], other_dashboard['holdings'])
+        self.assertEqual(self.purchase()['instrument']['id'], iid)
+
+    def test_delete_previously_zeroed_plan_and_protect_deleted_history(self):
+        pid = self.p['id']
+        iid = self.purchase()['instrument']['id']
+        self.s.attach_instrument(pid, iid, dict(target_pct='0', expected_revision=self.store.state()['revision']))
+        cancelled = preview_purchase_plan_deletion(self.s, pid, iid)
+        self.assertEqual(cancelled['target_pct'], '0')
+        delete_purchase_plan(self.s, pid, iid, cancelled['revision'])
+        self.assertEqual(self.s.dashboard(pid, view='summary')['holdings'], [])
+
+        self.purchase()
+        preview = preview_purchase_plan_deletion(self.s, pid, iid)
+        buy = self.s.save_event(dict(portfolio_id=pid, instrument_id=iid, kind='BUY', date='2025-01-02',
+                                     quantity='100', gross_amount='1000', fx_rate='1'))
+        with self.assertRaises(ConflictError):
+            delete_purchase_plan(self.s, pid, iid, preview['revision'])
+        self.s.delete_event(buy['id'], '撤销合成买入')
+        before = capture(self.directory)
+        with self.assertRaisesRegex(DomainError, '交易流水或删除历史'):
+            delete_purchase_plan(self.s, pid, iid, self.store.state()['revision'])
+        self.assertEqual(capture(self.directory), before)
+
+        noted = self.purchase('000502')['instrument']['id']
+        note = self.s.notes.save(pid, noted, dict(title='合成笔记', body='合成研究内容', expected_revision=self.store.state()['revision']))
+        with self.assertRaisesRegex(DomainError, '投资笔记'):
+            preview_purchase_plan_deletion(self.s, pid, noted)
+        self.s.notes.set_deleted(pid, noted, note['id'], deleted=True, expected_revision=note['revision'])
+        before = capture(self.directory)
+        with self.assertRaisesRegex(DomainError, '投资笔记或删除历史'):
+            delete_purchase_plan(self.s, pid, noted, self.store.state()['revision'])
+        self.assertEqual(capture(self.directory), before)
 
     def test_updating_held_target_does_not_rearm_after_sale(self):
         plan=self.purchase();iid=plan['instrument']['id']

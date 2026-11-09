@@ -148,7 +148,7 @@ class UpdateJobs:
                 profile = profiles.get(FULL_MARKET_ID)
                 if profile:
                     if not subscription(profile)['enabled'] or 'valuations' not in subscription(profile)['modules']:
-                        raise DomainError('指数资料库的A股全指估值已暂停，请启用后更新')
+                        raise DomainError('指数研究的A股全指估值已暂停，请启用后更新')
                     r = dict(r, scope='valuations', target=FULL_MARKET_ID, module='valuations')
                     del r['group']
             target = r.get('target')

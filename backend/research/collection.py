@@ -119,7 +119,7 @@ class Collection:
 
     def collect(self, iid, module, end, automatic=False, *, full=False):
         if automatic:
-            raise DomainError('指数资料库仅支持手动更新')
+            raise DomainError('指数研究仅支持手动更新')
         p = self.active(iid, module)
         sub = subscription(p)
         if module in ('stock_valuations', 'financials', 'historical_financials'):

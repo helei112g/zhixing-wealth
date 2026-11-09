@@ -213,6 +213,33 @@ const asof = '2026-10-30';
     check(await turnover.locator('.recharts-line-curve').count() === 1 &&
       first.series.find(item=>item.id==='a_share_turnover').statistics.current === '800000000000',
       'turnover renders and API preserves exact CNY amount');
+    const activity = await api('/market-waterlevel/activity?asof=' + asof);
+    for (const [chart, id, title] of [[margin,'margin_balance','沪深两融余额'], [turnover,'a_share_turnover','A股全指当日成交额']]) {
+      const points = activity.series[id];
+      const countPoints = () => chart.locator('.recharts-line-curve').first().evaluate(
+        path => path.getAttribute('d').match(/[ML]/g).length);
+      const window = page.getByLabel(title+'曲线窗口', {exact:true});
+      const recent = points.filter(point=>point.date>='2025-10-30');
+      check(await window.getByRole('button',{name:'1年',exact:true}).getAttribute('aria-pressed')==='true' &&
+        await countPoints() === recent.length,
+        title+' defaults to one year of unsampled daily observations');
+      await chart.scrollIntoViewIfNeeded();
+      const positions = await chart.locator('.recharts-line-curve').first().evaluate(path=>
+        [...path.getAttribute('d').matchAll(/[ML]([\d.]+),([\d.]+)/g)].slice(10,12).map(([,x,y])=>{
+          const point = new DOMPoint(Number(x),Number(y)).matrixTransform(path.getScreenCTM());
+          return {x:point.x,y:point.y};
+        }));
+      for (const [i,{x,y}] of positions.entries()) {
+        await page.mouse.move(x,y);
+        await chart.locator('.recharts-tooltip-label').filter({hasText:recent[10+i].date}).waitFor();
+      }
+      check(positions.length===2,title+' shows adjacent trading dates in the tooltip');
+      await window.getByRole('button',{name:'全历史',exact:true}).click();
+      await page.waitForFunction(({name,count})=>{
+        const path=document.querySelector('[aria-label="'+name+'历史曲线"] .recharts-line-curve');
+        return path?.getAttribute('d')?.match(/[ML]/g).length===count;
+      }, {name:title,count:points.length});
+    }
     await shot('waterlevel-valuations');
 
     await page.getByRole('tab', {name: '宏观背景', exact: true}).click();

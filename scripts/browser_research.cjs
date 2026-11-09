@@ -32,7 +32,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
   csrf = (await api('/bootstrap')).csrf_token;
   await page.goto(base);
-  await navigate('指数资料库');
+  await navigate('指数研究');
   await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();
   check((await api('/research/catalog')).subscriptions.length===0,'catalog does not subscribe automatically');
   check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===1,'index library has one add entry');
@@ -50,7 +50,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(Object.keys(access.counts).length===0&&!access.automatic,'saving token does not collect or enable automation');
   check(access.limit===null&&access.endpoints.every(row=>row.limit===null&&row.remaining===null),'local request counts have no cap');
 
-  await navigate('指数资料库');
+  await navigate('指数研究');
   await page.getByRole('button',{name:'添加采集',exact:true}).first().click();
   const dialog = page.getByRole('dialog',{name:'添加指数采集'});
   await dialog.getByLabel('采集指数代码',{exact:true}).fill('INVALID');
@@ -104,17 +104,25 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   const counts=(await api('/settings/lixinger')).counts;
   check(Object.values(counts).some(value=>value>20),'full history collection continues past the former default cap');
 
-  await navigate('指数资料库');
+  await navigate('指数研究');
   const listing=page.getByRole('table',{name:'指数列表',exact:true});
   const indexLink=listing.getByRole('button',{name:'中证500',exact:true});
   await indexLink.waitFor();
   const indexListData=await api('/research/indices?method=mcw');
   const year=indexListData.calendar_year;
   check(JSON.stringify(await listing.getByRole('columnheader').allTextContents())===JSON.stringify([
-   '指数','PE TTM','PB',(year-1)+'年',(year-2)+'年',(year-3)+'年','今年','本月','上一个交易日','操作',
+   '指数','PE TTM','PE 分位','PB','PB 分位',(year-1)+'年',(year-2)+'年',(year-3)+'年','今年','本月','上一个交易日','操作',
   ]),'index library opens on the list with the requested periods');
   check(indexListData.items[0].valuation.pe.date===detail.valuation.pe.date&&
    await page.getByRole('heading',{name:'点位走势',exact:true}).count()===0,'index list and detail share the latest valuation snapshot');
+  const indexRow = listing.getByRole('row').filter({has:page.getByRole('button',{name:'中证500',exact:true})});
+  const valuationCells = await indexRow.getByRole('cell').allTextContents();
+  for (const [i, metric] of ['pe','pb'].entries()) {
+   const valuation = detail.valuation[metric];
+   const expected = [5,10].map(years=>Math.round(Number(valuation.windows[years].rank)*100)+'%').join(' / ');
+   check(valuation.field.endsWith('.mcw') && [5,10].every(years=>valuation.windows[years].rank!=null) &&
+    valuationCells[2*i+1]===expected, metric+' renders the 5/10-year market-cap weighted ranks');
+  }
   await shot('index-library-list');
   await indexLink.click();
   await ready();
@@ -334,7 +342,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(shared.snapshot_id===full.items.find(item=>item.module==='valuations').snapshot_id,
    'market reads the exact snapshot published from the index library');
   await shot('index-manual-updates');
-  await navigate('指数资料库');
+  await navigate('指数研究');
   await indexLink.click();
   await ready();
   await backToList.click();
@@ -365,7 +373,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await manage.waitFor({state:'hidden'});
   check(!(await api('/research/catalog')).subscriptions[0].subscription.enabled,'pause retains history');
   await page.setViewportSize({width:390,height:844});
-  await navigate('指数资料库');
+  await navigate('指数研究');
   await indexLink.waitFor();
   check(await listing.getByRole('button',{name:'更新数据',exact:true}).isDisabled(),'paused index update remains disabled');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile list scrolls within the table');

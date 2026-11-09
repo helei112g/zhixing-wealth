@@ -8,7 +8,7 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from ..research.collection import subscription
 from ..research.snapshots import encode, decode
 from . import sources, validation
-from .catalog import (FULL_MARKET_FIELDS, FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, LIXINGER_FIELDS,
+from .catalog import (AMOUNT_GROUPS, FULL_MARKET_FIELDS, FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, LIXINGER_FIELDS,
                       MARKET_SCHEDULE, SERIES, SPLIT_GROUPS)
 from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, score
 
@@ -135,12 +135,29 @@ class WaterlevelService:
             return dict(research_revision=self.research.revision(), updating=self.research.updating(),
                         errors_version=hashlib.sha256(json_dumps(failures).encode()).hexdigest())
 
-    def dashboard(self, method='mcw', asof=None):
-        if method not in METHODS:
-            raise DomainError('市场估值方法只支持mcw、ew、ewpvo、median')
+    @staticmethod
+    def _cutoff(asof):
         asof = str(day(asof)) if asof else str(today())
         if asof > str(today()):
             raise DomainError('市场研究截止日不能晚于今天')
+        return asof
+
+    def activity(self, asof=None):
+        asof = self._cutoff(asof)
+        with self.store.lock:
+            revision = self.research.revision()
+            snapshots = {group: self.source(group) or {} for group in AMOUNT_GROUPS}
+        series = {}
+        for key, (group, _, _, _) in SERIES.items():
+            if group in snapshots:
+                rows = snapshots[group].get('series', {}).get(key, ())
+                series[key] = [dict(date=row['date'], value=row['value']) for row in rows if row['date'] <= asof]
+        return dict(asof=asof, research_revision=revision, series=series)
+
+    def dashboard(self, method='mcw', asof=None):
+        if method not in METHODS:
+            raise DomainError('市场估值方法只支持mcw、ew、ewpvo、median')
+        asof = self._cutoff(asof)
         with self.store.lock:
             revision = self.research.revision()
             recent = self.research.updates.jobs()
@@ -238,7 +255,7 @@ class WaterlevelService:
             indices.append(dict(id=iid, label=label, method=method, metrics=metrics,
                                 subscribed=iid in profiles, updatable=valuation_enabled(profiles.get(iid)),
                                 source='理杏仁' if valid_source else None,
-                                reason=None if valid_source else '尚未取得理杏仁估值，请在指数资料库添加并采集估值模块'))
+                                reason=None if valid_source else '尚未取得理杏仁估值，请在指数研究添加并采集估值模块'))
         statistics = {item['id']: item['statistics'] for item in items}
         for metric in ('pe', 'pb'):
             fixed = analyze(raw_series.get(f'full_market_{metric}_median', []), asof, positive=True)

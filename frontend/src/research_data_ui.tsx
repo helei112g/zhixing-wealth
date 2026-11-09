@@ -105,7 +105,7 @@ function MarketData({item,busy,onUpdate}:Obj){
     <td>{item.error?'更新失败':item.dates.length?'已取得':'待采集'}{item.error&&<small>{item.error}</small>}</td>
    </tr></tbody>
   </table></div>
-  {!item.updatable&&<p className="muted small">指数资料库的 A 股全指估值采集已暂停。</p>}
+  {!item.updatable&&<p className="muted small">指数研究的 A 股全指估值采集已暂停。</p>}
   {item.evidence.length>0&&<details className="data-target-evidence">
    <summary>最近来源组证据</summary>
    <p className="muted small">快照 {item.snapshot_id}</p>

@@ -115,7 +115,7 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 ## 指数研究
 
-`research_indices(page=1, method='mcw')` 读取与指数库首页相同的已建档列表。PE、PB 和价格各自有观测日期，涨跌幅带起止取价日期。最近三个完整自然年的结果位于 `changes.annual`，缺少有效基准时返回 null。
+`research_indices(page=1, method='mcw')` 读取与指数研究首页相同的已建档列表。PE、PB 和价格各自有观测日期，PE/PB 的 5 年和 10 年分位见 `valuation` 中对应指标的 `windows`。涨跌幅带起止取价日期。最近三个完整自然年的结果位于 `changes.annual`，缺少有效基准时返回 null。
 
 读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start)` 展示指数家族、范围、预计调用数和原research_revision；在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交enabled与expected_research_revision，再按id回读。新指数预览会联网验证理杏仁身份和日线，首次保存返回全量同步的 job_id。按该 ID 回读任务，避免另发重复更新。以后显式使用 `refresh_index`，或从详情的 `collection.resources` 选择对应资源并提交稳定 request_id。
 
@@ -132,6 +132,8 @@ Token只能由用户在本机「研究工具 → 数据管理 → 理杏仁数�
 使用`market_waterlevel(method='mcw', asof=None, facts=True)`或`GET /api/market-waterlevel/facts`读取版本化事实。指数估值来自现有理杏仁快照；全市场估值来自理杏仁 A股全指1000002，按请求选择估值方法。两综指、宏观与债券来自公开来源。comparisons提供两综指共同基准月及对齐说明，完整dashboard包含曲线。GET读取本地数据。先核对asof、实际观测日、来源、method_version、窗口样本、状态和缺口，再解释历史位置。
 
 用 `market_data_sources()` 读取可更新指标、实际观测日期和 `schedule`。实例开启自动更新时，每周五北京时间 18:00 增量更新，可在更新历史查 `trigger=market_schedule`。用户授权手动更新时，通过 `write('/api/data-updates/run', payload)` 提交该项返回的 `resource`，例如 CPI 的 `group=prices, series=cpi_yoy`。沪深两融余额 `margin_balances` 与理杏仁 A股全指样本成交额 `market_turnover` 独立更新，金额为 CNY 元，均不计分。省略full走增量，显式true执行全量校对，保存收据并回读任务状态。复用稳定request_id，结果未知先查询。full_market 与 market_turnover 消耗理杏仁基本面额度。
+
+用 `market_activity(asof=None)` 读取两融余额与成交额的逐交易日观测，核对返回的 asof 与 research_revision，再与事实包对应。
 
 冻结流程为读取事实包→按原analysis_id、method、asof、expected_research_revision提交`write('/api/market-waterlevel/snapshots', payload)`→精确ID回读→按需下载export。409先重新读取核对，不替换成最新revision强行提交。冻结保存不触发供应商调用，报告独立于后续来源更新。
 

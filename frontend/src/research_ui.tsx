@@ -6,6 +6,7 @@ import {StudioOverview,CapitalFlows,CollectionDialog,IndexFinancials,moduleLabel
 import {activeJob,useSubmission} from './sync_ui';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d);
+const valuationRank=(rank:string|null|undefined)=>rank==null?'—':money(Number(rank)*100,0)+'%';
 const indexScopes=['index_prices','memberships','valuations','financials'];
 const jobStates:Obj={pending:'等待中',running:'更新中',complete:'已完成',partial:'部分失败',error:'更新失败',interrupted:'已中断'};
 
@@ -92,10 +93,10 @@ function IndexList({revision,running,page,onPage,onSelect,onData,job,setJob}:Obj
   {!current?<p className="muted small" role="status">正在读取本地指数列表…</p>
    :!rows.length?<Empty title="还没有指数档案">选择要采集的指数和模块。添加后即可在此查看进度和数据。</Empty>
    :<Panel title="指数列表" right={<small className="muted">{current.total} 个指数</small>}>
-    <p className="muted small">PE TTM、PB 使用总市值加权口径。涨跌幅按价格指数收盘点位计算，年度和月度以相应的上期末收盘为基准。</p>
+    <p className="muted small">PE TTM、PB 的当前值与分位均采用总市值加权。分位按 5 年 / 10 年显示，历史不足显示「—」。涨跌幅按价格指数收盘点位计算，年度和月度以相应的上期末收盘为基准。</p>
     <div className="table-wrap"><table className="index-library-table" aria-label="指数列表">
      <thead><tr>
-      <th scope="col">指数</th><th scope="col">PE TTM</th><th scope="col">PB</th>
+      <th scope="col">指数</th><th scope="col">PE TTM</th><th scope="col">PE 分位</th><th scope="col">PB</th><th scope="col">PB 分位</th>
       {years.map(year=><th key={year} scope="col">{year}年</th>)}
       <th scope="col">今年</th><th scope="col">本月</th><th scope="col">上一个交易日</th><th scope="col">操作</th>
      </tr></thead>
@@ -109,7 +110,10 @@ function IndexList({revision,running,page,onPage,onSelect,onData,job,setJob}:Obj
        </th>
        {['pe','pb'].map(metric=>{
         const value=row.valuation[metric];
-        return <td key={metric}>{money(value?.current)}{value?.date&&<small>{value.date}</small>}</td>;
+        return <React.Fragment key={metric}>
+         <td>{money(value?.current)}{value?.date&&<small>{value.date}</small>}</td>
+         <td>{valuationRank(value?.windows?.[5]?.rank)} / {valuationRank(value?.windows?.[10]?.rank)}</td>
+        </React.Fragment>;
        })}
        {years.map(year=>ratioCell(year,row.changes.annual[year]))}
        {['ytd','monthly','daily'].map(key=>ratioCell(key,row.changes[key]))}

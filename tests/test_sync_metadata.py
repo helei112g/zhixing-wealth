@@ -59,6 +59,40 @@ class SyncMetadataTests(unittest.TestCase):
         inst=next(i for i in self.store.state()['instruments'] if i['id']==iid)
         self.assertNotIn('quote_history_requested_start',inst)
 
+    def test_mismatched_fund_dividend_page_leaves_notices_and_ledger_unchanged(self):
+        portfolio = self.s.save_portfolio(dict(name='合成组合', start_date='2024-01-01', planned_amount='1000'))
+        event = self.s.save_event(dict(portfolio_id=portfolio['id'], kind='BUY', date='2024-01-02',
+            instrument=dict(market='FUND', code='999001', name='合成基金'),
+            quantity='10', gross_amount='10', fx_rate='1'))
+        iid = event['instrument_id']
+        notice = dict(code='999001', source_ref='fund:999001:2024-01-08', ex_date='2024-01-08',
+                      record_date='2024-01-08', per_share='0.01', currency='CNY', source='合成分红')
+        self.s.cache_dividends(iid, [notice])
+        before = self.store.state()
+        wrong_page = (
+            '<title>其他基金(999002)基金分红送配</title>'
+            '<table><tr><th>权益登记日</th><th>除息日</th><th>每10份分红</th><th>分红发放日</th></tr>'
+            '<tr><td>2024-01-10</td><td>2024-01-10</td><td>0.15元</td><td>2024-01-11</td></tr></table>'
+        )
+        quote = dict(date='2024-03-01', price='1', source='synthetic', kind='raw')
+        with (
+            patch('backend.market.quotes', return_value=dict(rows=[quote], source='synthetic', notes=[])),
+            patch('backend.dividends._NOTICE_CACHE', {}),
+            patch('backend.dividends.market.fetch', return_value=wrong_page),
+        ):
+            self.s.start_sync(iid, scopes={'quotes'})
+            job = self.wait_for_jobs(1)[0]
+
+        self.assertEqual(job['status'], 'partial')
+        dividend_item = next(item for item in job['items'] if item['source_kind'] == 'dividends')
+        self.assertEqual(dividend_item['status'], 'error')
+        self.assertIn('代码不匹配', dividend_item['message'])
+        after = self.store.state()
+        self.assertEqual(after['corporate_actions'], before['corporate_actions'])
+        self.assertEqual(after['events'], before['events'])
+        self.assertEqual([row['notice']['ex_date'] for row in self.s.dividend_candidates(portfolio['id'], iid)],
+                         ['2024-01-08'])
+
     def test_latest_twenty_by_start_and_stable_creation_order(self):
         for n in range(25):self.store.save_job({'id':str(n),'started_at':'2026-01-01T10:00:00','status':'running','items':[]})
         self.store.save_job({'id':'0','started_at':'2026-01-01T10:00:00','status':'complete','items':[]})

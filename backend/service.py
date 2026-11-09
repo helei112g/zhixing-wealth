@@ -235,6 +235,24 @@ class Service:
                     db.execute('INSERT INTO allocations VALUES (?,?,?)', (scope, result['id'], json_dumps(allocation)))
         return result
 
+    def rename_instrument(self, instrument_id, data):
+        name = data['name'].strip()
+        if not name:
+            raise DomainError('标的名称不能为空')
+
+        with self.store.transaction(expected_revision=data['expected_revision']) as db:
+            row = db.execute('SELECT data FROM instruments WHERE id=?', (instrument_id,)).fetchone()
+            if not row:
+                raise DomainError('标的不存在')
+            original = json.loads(row['data'])
+            if original.get('builtin'):
+                raise DomainError('内置标的不可更名')
+
+            instrument = dict(original, name=name, custom_name=True, updated_at=now())
+            db.execute('UPDATE instruments SET data=? WHERE id=?', (json_dumps(instrument), instrument_id))
+            self.store.audit(db, 'instrument', instrument_id, original, instrument, '更改标的显示名称')
+        return instrument
+
     def attach_instrument(self, portfolio_id, instrument_id, data):
         with self.store.transaction(expected_revision=data.get('expected_revision')) as db:
             state = self.store.state(db); portfolio = self.portfolio(state, portfolio_id)

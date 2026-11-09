@@ -63,6 +63,12 @@ class PortfolioRequest(WriteRequest):
     archived: bool = False
 
 
+class InstrumentNameRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(min_length=1, max_length=100, description='新的全局显示名称')
+    expected_revision: int = Field(ge=0, strict=True, description='从核对标的时的 bootstrap 读取。过期返回409。')
+
+
 class InstrumentInput(BaseModel):
     model_config = ConfigDict(extra='allow')
     market: Literal['CN', 'SH', 'SZ', 'HK', 'US', 'FUND']

@@ -137,6 +137,7 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&asset_class
 | 方法与路径 | 必要内容 |
 |---|---|
 | POST `/api/portfolios` / PUT `/api/portfolios/{pid}` | name、planned_amount、start_date；可选 description 为最多10000字的纯文字组合介绍（保留换行）；目标、基准、归档等见 schema |
+| PUT `/api/instruments/{iid}/name` | `name` 和从 bootstrap 核对标的时取得的 `expected_revision`（严格非负整数）；按已有 ID 修改全局显示名，返回标的，审计见 `/api/revisions/instrument/{iid}`。无预览接口，内置或不存在的标的返回422，旧版本返回409。 |
 | PUT `/api/portfolios/{pid}/instruments/{iid}` | target_pct、asset_class、region；单标的比例0–100；组合资金不足仅提醒，不限制合计≤100 |
 | POST `/api/events/preview` | 拟写入的完整事件；更正带 id。只读计算，返回 revision、event、现金变化、warnings、duplicate_of、instrument_merge |
 | POST `/api/events` | 与已核对预览相同的输入；expected_revision；服务端再校验 |
@@ -183,7 +184,7 @@ UI选择红利再投后自动填入估算，日期/金额/标的变化立即撤�
 
 ## 其他能力
 
-- `POST /api/sync`：`{instrument_id?: string, full?: boolean}`，启动/排队后台更新；用 `/api/jobs` 查看逐项结果，失败可重试。此操作只更新行情/公告缓存，不自动确认分红。
+- `POST /api/sync`：`{instrument_id?: string, full?: boolean}`，启动/排队后台更新；用 `/api/jobs` 查看逐项结果，失败可重试。此操作只更新行情/公告缓存，不自动确认分红。天天基金分红页的标题须包含与请求一致的基金代码。缺失或不匹配时，该标的的分红子项记录失败并保留本地公告。
 - `POST /api/dividends/{notice_id}/ignore`：portfolio_id；仅隐藏候选，不计收益。
 - `POST /api/csv/preview`：text、category=`events/fx`、portfolio_id。只读校验。`POST /api/csv/import` 同参数整批写入；根据 event_id/指纹查重。没有 expected_revision 保护，AI 客户端不暴露此写入；导入前重新预览并确认整个批次。
 - `POST /api/fx`：currency、date、mode=`daily/manual/auto`，非auto时提供 rate；人工估值汇率，不回写交易锁定率。该接口不提供 expected_revision 保护。

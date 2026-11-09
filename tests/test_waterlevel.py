@@ -14,6 +14,7 @@ from backend.common import ConflictError, DomainError, json_dumps
 from backend.deployment_guard import capture, verify
 from backend.migration import SCHEMA
 from backend.research.service import ResearchService, validate_backup
+from backend.research.updates import MARKET_TRIGGER
 from backend.service import Service
 from backend.store import Store
 from backend.waterlevel import metrics, sources
@@ -118,7 +119,7 @@ class MetricTests(unittest.TestCase):
 class SourceTests(unittest.TestCase):
     def test_full_market_uses_exact_code_and_six_fields(self):
         access = Mock()
-        fields = sources.FULL_MARKET_FIELDS
+        fields = sources.LIXINGER_FIELDS['full_market']
         values = {field: n+10 for n, field in enumerate(fields.values())}
         access.request.return_value = [dict(stockCode='1000002', date=ASOF, **values)]
         previous = payload('full_market')
@@ -136,11 +137,38 @@ class SourceTests(unittest.TestCase):
 
     def test_full_market_rejects_missing_method_instead_of_substituting(self):
         access = Mock()
-        values = dict.fromkeys(sources.FULL_MARKET_FIELDS.values(), 10)
+        values = dict.fromkeys(sources.LIXINGER_FIELDS['full_market'].values(), 10)
         values.pop('pb.ew')
         access.request.return_value = [dict(stockCode='1000002', date=ASOF, **values)]
         with self.assertRaisesRegex(DomainError, 'pb.ew'):
             sources.collect('full_market', ASOF, payload('full_market'), access=access)
+
+    def test_turnover_uses_only_ta_and_keeps_exact_cny_amount(self):
+        access = Mock()
+        access.request.return_value = [dict(stockCode='1000002', date=ASOF, ta='1200000000000.25')]
+        value = sources.collect('market_turnover', ASOF, payload('market_turnover'), access=access)
+        self.assertEqual(access.request.call_args.args[1]['metricsList'], ['ta'])
+        self.assertEqual(value['series']['a_share_turnover'][-1],
+                         dict(date=ASOF, value='1200000000000.25', field='ta'))
+
+    def test_margin_uses_same_date_exchange_balances_without_beijing(self):
+        from backend.waterlevel.validation import source
+        data = [dict(DIM_DATE=ASOF, H_RZRQYE='200000000000.25', S_RZRQYE='100000000000',
+                     B_RZRQYE='9000000000'),
+                dict(DIM_DATE='2026-10-29', H_RZRQYE='200000000000', S_RZRQYE=None)]
+        raw = json.dumps(dict(success=True, result=dict(pages=1, data=data))).encode()
+        def get(reader, url):
+            reader.evidence.append(dict(url=url, sha256='a'*64))
+            return raw
+        with patch.object(sources.Reader, 'get', get):
+            value = sources.collect('margin_balances', ASOF)
+        source(value)
+        self.assertEqual(value['series']['margin_balance'],
+                         [dict(date=ASOF, value='300000000000.25', published_at=None)])
+        self.assertEqual(len(value['series']['sh_margin_balance']), 1)
+        value['series']['margin_balance'][0]['value'] = '309000000000.25'
+        with self.assertRaises(DomainError):
+            source(value)
 
     def test_composites_request_correct_price_index_codes(self):
         reader = sources.Reader()
@@ -401,6 +429,66 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(first,self.market.update(['credit'],'synthetic-request'))
         with self.assertRaises(ConflictError):self.market.update(['repo'],'synthetic-request')
 
+    def test_friday_schedule_uses_shanghai_time_and_one_durable_receipt(self):
+        seed_indices(self.research)
+        manual = self.market.update(['credit'], json_dumps([MARKET_TRIGGER, '2026-11-06']))
+        for stamp in ('2026-11-05T19:00:00+08:00', '2026-11-06T09:59:59+00:00',
+                      '2026-11-07T10:00:00+08:00'):
+            self.research.tick(stamp)
+        self.assertEqual([job['id'] for job in self.research.jobs()], [manual['job_id']])
+
+        self.research.tick('2026-11-06T10:00:00+00:00')
+        self.research.tick('2026-11-06T20:00:00+08:00', 'startup')
+        jobs = self.research.jobs()
+        self.assertEqual(len(jobs), 2)
+        scheduled = jobs[0]
+        self.assertEqual((scheduled['trigger'], scheduled['slot_at']),
+                         (MARKET_TRIGGER, '2026-11-06T18:00:00+08:00'))
+        self.assertCountEqual(scheduled['resources'],
+                              [item['resource'] for item in self.market.data_sources()['items'] if item['updatable']])
+
+        self.research.recover(resume=False)
+        self.assertEqual(self.research.updates.get(scheduled['id'])['state'], 'interrupted')
+        self.research.recover(resume=True)
+        self.assertEqual(self.research.updates.get(manual['job_id'])['state'], 'interrupted')
+        with patch.object(self.market, 'collect', return_value=[]) as collect:
+            self.research.updates._work()
+        completed = self.research.updates.get(scheduled['id'])
+        self.assertEqual(completed['state'], 'complete')
+        self.assertEqual(completed['market_cutoff'], '2026-11-06')
+        self.assertEqual(collect.call_count, len(scheduled['resources']))
+        self.assertTrue(all(call.args[1] == '2026-11-06' for call in collect.call_args_list))
+        self.assertEqual(self.research.updates.history('research')['jobs'][0]['trigger_label'], '市场指标每周更新')
+        self.research.tick('2026-11-13T18:00:00+08:00')
+        self.assertNotEqual(self.research.jobs()[0]['id'], scheduled['id'])
+
+    def test_weekly_update_uses_shared_all_market_valuation_and_respects_pause(self):
+        from backend.waterlevel.catalog import FULL_MARKET_ID
+
+        profile = dict(id=FULL_MARKET_ID, code='1000002', name='A股全指', provider='lxri', launch='1994-01-01',
+                       subscription=dict(enabled=True, modules=['index_info', 'valuations'], history_start=None))
+        with self.research.transaction(bump=True) as db:
+            db.execute('INSERT INTO research_indices VALUES (?,?)', (FULL_MARKET_ID, json_dumps(profile)))
+        self.research.tick('2026-11-06T18:10:00+08:00')
+        job = self.research.jobs()[0]
+        self.assertEqual([resource for resource in job['resources'] if resource['scope'] != 'market'],
+                         [dict(scope='index_prices', target=FULL_MARKET_ID, module='index_info'),
+                          dict(scope='valuations', target=FULL_MARKET_ID, module='valuations')])
+        self.assertNotIn('full_market', [resource.get('group') for resource in job['resources']])
+        with patch.object(self.research.collection, 'collect', return_value={}) as collect, \
+             patch.object(self.market, 'collect', return_value=[]):
+            self.research.updates._work()
+        self.assertEqual([call.args for call in collect.call_args_list],
+                         [(FULL_MARKET_ID, 'index_info', '2026-11-06'), (FULL_MARKET_ID, 'valuations', '2026-11-06')])
+        self.assertEqual(self.research.updates.get(job['id'])['state'], 'complete')
+
+        profile['subscription']['enabled'] = False
+        with self.research.transaction(bump=True) as db:
+            db.execute('UPDATE research_indices SET data=? WHERE id=?', (json_dumps(profile), FULL_MARKET_ID))
+        self.research.tick('2026-11-13T18:00:00+08:00')
+        resources = self.research.jobs()[0]['resources']
+        self.assertTrue(all(resource['scope'] == 'market' and resource['group'] != 'full_market' for resource in resources))
+
     def test_previous_lixinger_market_snapshot_remains_restorable(self):
         from backend.waterlevel.validation import source
         old = payload('full_market')
@@ -465,11 +553,27 @@ class ServiceTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def test_automatic_instance_startup_accepts_due_friday_market_job(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_app(directory, testing=True, auto_sync=True)
+            research = app.state.research
+            seed_indices(research)
+            with patch('backend.research.updates.now', return_value='2026-11-06T19:00:00+08:00'), \
+                 patch.object(research.updates, 'start'), TestClient(app) as client:
+                client.get('/api/bootstrap')
+                self.assertTrue(client.get('/api/market-waterlevel/sources').json()['schedule']['enabled'])
+                jobs = client.get('/api/data-updates/jobs').json()['jobs']
+                self.assertEqual([(job['trigger'], job['slot_at']) for job in jobs],
+                                 [(MARKET_TRIGGER, '2026-11-06T18:00:00+08:00')])
+
     def test_local_api_security_facts_freeze_and_no_network_reads(self):
         with tempfile.TemporaryDirectory() as directory:
             app=create_app(directory,testing=True,auto_sync=False)
             with TestClient(app) as client, patch.object(app.state.research.updates,'start'), patch.object(sources,'collect') as fetch:
                 boot=client.get('/api/bootstrap').json()
+                schedule=client.get('/api/market-waterlevel/sources').json()['schedule']
+                self.assertEqual(schedule, dict(weekday=5, time='18:00', timezone='Asia/Shanghai', enabled=False))
+                self.assertEqual(client.get('/api/capabilities').json()['market_waterlevel']['schedule'], schedule)
                 value=client.get('/api/market-waterlevel?asof='+ASOF).json()
                 body=dict(analysis_id=value['analysis_id'],method='mcw',asof=ASOF,expected_research_revision=value['research_revision'])
                 self.assertEqual(client.post('/api/market-waterlevel/snapshots',json=body).status_code,403)
@@ -487,12 +591,20 @@ class ApiTests(unittest.TestCase):
                 self.assertIn('chart',client.get('/api/market-waterlevel?asof='+ASOF).json()['series'][0]['statistics'])
                 self.assertEqual(client.get('/api/market-waterlevel?method=avg').status_code,422)
                 self.assertEqual(client.get('/api/market-waterlevel?asof=2999-01-01').status_code,422)
+                resources = [dict(scope='market', group=group) for group in ('margin_balances', 'market_turnover')]
+                update = client.post('/api/data-updates/run', headers=headers,
+                                     json=dict(scopes=['market'], resources=resources, request_id='synthetic-activity'))
+                self.assertEqual(update.status_code, 202, update.text)
+                job = client.get('/api/data-updates/jobs/'+update.json()['job_id']).json()
+                self.assertEqual((job['trigger'], job['resources']), ('manual', resources))
                 fetch.assert_not_called()
 
     def test_read_only_instance_blocks_new_market_writes(self):
         with tempfile.TemporaryDirectory() as directory:
-            app=create_app(directory,testing=True,auto_sync=False,read_only=True)
+            app=create_app(directory,testing=True,auto_sync=True,read_only=True)
             with TestClient(app) as client:
+                client.get('/api/bootstrap')
+                self.assertFalse(client.get('/api/market-waterlevel/sources').json()['schedule']['enabled'])
                 result=client.post('/api/market-waterlevel/updates',json=dict(groups=['credit'],request_id='synthetic'))
                 self.assertEqual(result.status_code,503)
 

@@ -14,8 +14,8 @@ export type ValuationLine = {
  dash?:string;
 };
 
-export function ValuationTrend({rows,label,lines,preserveBounds=false}:{
- rows:Obj[];label:string;lines:ValuationLine[];preserveBounds?:boolean;
+export function ValuationTrend({rows,label,lines,preserveBounds=false,unit}:{
+ rows:Obj[];label:string;lines:ValuationLine[];preserveBounds?:boolean;unit?:string;
 }){
  const [hidden,Hidden]=useState<string[]>([]);
  return <div role="img" aria-label={label}><ResponsiveContainer width="100%" height={350} minWidth={0}>
@@ -24,13 +24,13 @@ export function ValuationTrend({rows,label,lines,preserveBounds=false}:{
    <XAxis dataKey="date" minTickGap={80} interval={preserveBounds?'preserveStartEnd':undefined}/>
    <YAxis yAxisId="valuation" width={60} domain={['auto','auto']}/>
    {lines.some(line=>line.axis==='price')&&<YAxis yAxisId="price" orientation="right" width={70} domain={['auto','auto']}/>}
-   <Tooltip/>
+   <Tooltip formatter={unit ? value=>num(value)+' '+unit : undefined}/>
    <Legend onClick={item=>{
     const key=String(item.dataKey);
     Hidden(current=>current.includes(key)?current.filter(value=>value!==key):[...current,key]);
    }}/>
    {lines.map(line=><Line key={line.key} dataKey={line.key} name={line.label} yAxisId={line.axis||'valuation'}
-    stroke={line.color} strokeDasharray={line.dash} hide={hidden.includes(line.key)} dot={false}
+    stroke={line.color} strokeDasharray={line.dash} hide={hidden.includes(line.key)} dot={rows.length===1}
     connectNulls={false} isAnimationActive={false}/>)}
   </LineChart>
  </ResponsiveContainer></div>;

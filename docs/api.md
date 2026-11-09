@@ -381,7 +381,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 | POST `/api/research/indices/resolve` | `{code}`，本地查询已保存档案或内置代码配对。目录外新指数通过采集预览在线核验。 |
 | POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。新指数联网验证理杏仁身份及所选范围内有效日线，返回 verified_price_date、预计调用量、依赖缺项和原 research_revision。已保存指数的预览只用本地数据。 |
 | PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。新指数重新核验后，在同一事务保存订阅并排队全量同步，返回 job_id。修改既有订阅返回 job_id=null。 |
-| GET `/api/research/indices` | 兼容每页20的本地摘要读取，kind/page可选；页面首页改用选择器。 |
+| GET `/api/research/indices` | 已建档指数的本地摘要，每页20条。支持kind、page、method。旧调用默认overall，首页显式mcw。返回calendar_year与changes.annual（前三个完整自然年）、ytd、monthly、daily，涨跌幅含ratio、from_date、to_date，缺取价为null。 |
 | GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/ewpvo/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
 | GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield。返回日频估值均值、分位、资金观察、波动率和集中度；收益回测、成分重叠、区间收益比较已退役，含同一analysis_id。 |
 | GET `.../{id}/{part}` | series/constituents/financials/sources；analysis_id 防混版本，page/page_size 分页。 |
@@ -421,23 +421,26 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 
 ## 市场水位（schema12）
 
-读取只用本地快照，无供应商请求。`method=mcw|ew|ewpvo|median`，默认mcw；`asof=YYYY-MM-DD`默认今天，不接受未来日期。历史日期仅截取当前可得版本，不提供严格PIT。页面与AI共同使用`waterlevel-v5`，完整公式及覆盖边界见[市场水位](waterlevel.md)。
+读取只用本地快照，无供应商请求。`method=mcw|ew|ewpvo|median`，默认mcw；`asof=YYYY-MM-DD`默认今天，不接受未来日期。历史日期仅截取当前可得版本，不提供严格PIT。页面与AI共同使用`waterlevel-v6`，完整公式及覆盖边界见[市场水位](waterlevel.md)。
 
 | 接口 | 请求与结果 |
 |---|---|
 | GET `/api/market-waterlevel` | method、asof；返回analysis_id、research_revision、method_version、indices、series、comparisons、scores、sources、groups、limitations、规则commentary。 |
 | GET `/api/market-waterlevel/facts` | 同参数和分析版本；省略统计项及comparisons的chart，其他事实与页面一致，不请求模型。 |
 | GET `/api/market-waterlevel/revision` | 轻量research_revision、updating和errors_version；失败不发布数据也会改变错误版本，页面据此刷新覆盖与状态。 |
-| GET/PUT `/api/market-waterlevel/settings` | 兼容旧客户端。GET报告automatic=false。PUT仅接受automatic=false及原设置版本。 |
+| GET/PUT `/api/market-waterlevel/settings` | 旧版可写字段保留 automatic=false 与原设置版本。实际每周排程状态通过只读 schedule 返回。 |
+| GET `/api/market-waterlevel/sources` | 读取市场指标、精确更新资源、实际观测日期与 schedule。schedule.weekday=5 使用 ISO 周序，time=18:00，timezone=Asia/Shanghai，enabled 取决于实例自动更新和写入状态。 |
 | POST `/api/market-waterlevel/updates` | `{groups:["credit"],request_id:"client-generated-id"}`；可提供indices指定已启用估值的观察指数，可选full=true执行校对。至少指定一个来源组或指数。202返回统一任务收据。 |
 | POST `/api/market-waterlevel/snapshots` | 原analysis_id、method、asof、expected_research_revision；冻结当前查看结果，返回snapshot_id、created_at、sha256、data。输入已变化返回409。相同分析ID幂等回读原报告，不重新抓取。 |
 | GET `/api/market-waterlevel/snapshots` | 最近50条不可变报告元数据items；不删除更早报告。 |
 | GET `/api/market-waterlevel/snapshots/{id}` | 精确回读冻结结果及摘要。 |
 | GET `/api/market-waterlevel/snapshots/{id}/export` | 下载HTML附件；只用冻结数据，含内联SVG，无脚本、字体或外部资源请求。 |
 
-市场来源支持11组，包括`full_market`（理杏仁 A股全指1000002 PE/PB，按 method 读取对应估值）和`composites`（新浪两综指）。`comparisons.pe/pb`含月度`chart`、共同基准`base_month`及对齐说明；`value/mean5/mean10`为估值，`sh/sz`为基准100的价格指数，`bond_inverse`为10Y收益率倒数（PE图展示），各参照保留实际日期。`chart_windows=[5,10,"all"]`只控制页面裁剪；分位窗口仍为5/10年。已冻结v1/v2报告保持原样兼容。
+通过 `GET /api/market-waterlevel/sources` 发现来源组和更新资源。`margin_balances` 提供 `margin_balance`、`sh_margin_balance`、`sz_margin_balance`。`market_turnover` 提供 `a_share_turnover`，范围为理杏仁 A股全指1000002样本。金额使用 CNY 元的 Decimal 字符串，保留实际交易日。两组均不参与评分。
 
-指数库和市场水位均手动更新。市场来源任务和共享指数估值走统一队列。full_market 和共享指数估值使用理杏仁额度。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
+`comparisons.pe/pb`含月度`chart`、共同基准`base_month`及对齐说明；`value/mean5/mean10`为估值，`sh/sz`为基准100的价格指数，`bond_inverse`为10Y收益率倒数（PE图展示），各参照保留实际日期。`chart_windows=[5,10,"all"]`只控制页面裁剪；分位窗口仍为5/10年。已冻结v1至v5报告保留。
+
+市场指标每周五 18:00 增量更新并保留手动入口，任务记录的 trigger 为 market_schedule，slot_at 为原计划时间。指数资料仍可手动更新。市场来源任务和共享指数估值走统一队列。full_market、market_turnover 和共享指数估值使用理杏仁额度。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
 
 数值为Decimal字符串或null。利率、CPI/PPI及货币/社融同比为百分数；期限利差、ERP和M2−M1为百分点；信用/回购利差为BP。股息率、percentile_ratio、deviation_ratio为比例。分位严格小于当前值且包含当前样本作分母；均值使用60/120个完整月末值，不能套用指数观察台的日频计算。statistics保留current、date、frequency、observations、status、windows、means、chart；窗口同时提供样本数与完整性状态。
 

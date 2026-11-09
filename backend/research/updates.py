@@ -1,16 +1,18 @@
 """Single-process durable planner; process ownership is enforced by run.py's ledger lock."""
 import hashlib
 import json
+import logging
 import secrets
 import threading
 import time
 from datetime import datetime,timedelta
-from ..common import ConflictError,DomainError,day,json_dumps,now,today
+from ..common import ConflictError,DomainError,ZONE,day,json_dumps,now,today
 from . import providers
 from .snapshots import encode,decode
 from .collection import collection_modules, subscription
 
 AUTOMATIC_SCOPES = ('quotes', 'fx')
+MARKET_TRIGGER = 'market_schedule'
 SCOPES=(*AUTOMATIC_SCOPES,'index_prices','memberships','valuations','financials')
 UPDATE_SCOPES = (*SCOPES, 'market')
 MODULES={'index_prices':('index_info','price','total_return','volatility'),'memberships':('memberships','historical_memberships'),
@@ -23,6 +25,23 @@ def index_resources(iid, modules, scopes=MODULES):
 
 
 def key(resource):return hashlib.sha256(json_dumps(resource).encode()).hexdigest()
+
+
+def receipt_id(request_id, trigger):
+    if trigger == MARKET_TRIGGER:
+        # An invalid UTF-8 prefix keeps this namespace separate from legacy client IDs.
+        return hashlib.sha256(b'\xffmarket_schedule:' + request_id.encode()).hexdigest()
+    return hashlib.sha256(request_id.encode()).hexdigest()
+
+
+def scheduled_market_resource(resource):
+    from ..waterlevel.catalog import FULL_MARKET_ID, GROUPS
+    if resource.get('full'):
+        return False
+    if resource['scope'] == 'market':
+        return resource.get('group') in GROUPS
+    return resource.get('target') == FULL_MARKET_ID and (resource['scope'], resource.get('module')) in (
+        ('valuations', 'valuations'), ('index_prices', 'index_info'))
 
 
 def load_job(raw):
@@ -147,10 +166,14 @@ class UpdateJobs:
 
     def run(self,body,trigger='manual'):
         resources=self.plan(body);request_id=body.get('request_id')
-        if trigger != 'manual' and any(r['scope'] not in AUTOMATIC_SCOPES for r in resources):
-            raise DomainError('指数资料库和市场水位仅支持手动更新')
+        if trigger == MARKET_TRIGGER:
+            if (body.get('scopes') != ['market'] or not body.get('slot_at') or
+                    not all(scheduled_market_resource(r) for r in resources)):
+                raise DomainError('每周更新仅支持市场指标的增量资源')
+        elif trigger != 'manual' and any(r['scope'] not in AUTOMATIC_SCOPES for r in resources):
+            raise DomainError('该研究资源仅支持手动更新')
         if not isinstance(request_id,str) or not request_id or len(request_id)>160:raise DomainError('更新必须携带1至160字符的request_id')
-        receipt=hashlib.sha256(request_id.encode()).hexdigest()
+        receipt=receipt_id(request_id, trigger)
         signature=dict(scopes=sorted(set(body.get('scopes',SCOPES))),targets=sorted(body['targets']) if body.get('targets') else None,resources=sorted(body['resources'],key=key) if body.get('resources') else None)
         if body.get('full'):signature['full']=True
         request_digest=key(signature)
@@ -169,9 +192,11 @@ class UpdateJobs:
         generation = providers.cutoff()
         digest = key(dict(resources=resources, generation=generation))
         pending = db.execute("SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running')")
-        match = next((r for r in pending if json.loads(r[1])['digest'] == digest), None)
-        if match:
-            return match[0]
+        for entry in pending:
+            job = json.loads(entry[1])
+            if (job['digest'] == digest and
+                    (job.get('trigger') == MARKET_TRIGGER) == (trigger == MARKET_TRIGGER)):
+                return entry[0]
 
         jid = secrets.token_hex(16)
         job = dict(id=jid, created_order=time.time_ns(), digest=digest, generation=generation,
@@ -217,11 +242,14 @@ class UpdateJobs:
 
     def execute(self,r):
         if r['scope'] in AUTOMATIC_SCOPES:return self._legacy(r)
-        if self.current_trigger != 'manual' and not (self.current_trigger == 'index_create' and r.get('target') and r.get('full')):
-            raise DomainError('指数资料库和市场水位仅支持手动更新')
+        initial = self.current_trigger == 'index_create' and r.get('target') and r.get('full')
+        scheduled = self.current_trigger == MARKET_TRIGGER and scheduled_market_resource(r)
+        if self.current_trigger != 'manual' and not (initial or scheduled):
+            raise DomainError('该研究资源仅支持手动更新')
         if r['scope'] == 'market':
+            from ..waterlevel.catalog import LIXINGER_FIELDS
             asof = (self.current_job or {}).get('information_cutoff') or str(today())
-            if r['group'] == 'full_market':
+            if r['group'] in LIXINGER_FIELDS:
                 asof = min(asof, (self.current_job or {}).get('market_cutoff') or providers.cutoff())
             options = {k: r[k] for k in ('full', 'series') if k in r}
             items = self.research.waterlevel.collect(r['group'], asof, **options)
@@ -241,7 +269,12 @@ class UpdateJobs:
                         self.worker=None
                         return
                 job=json.loads(r[0]);self.current_trigger=job['trigger'];self.current_slot=job.get('slot_at')
-                job.setdefault('market_cutoff',providers.cutoff());job.setdefault('information_cutoff',str(today()))
+                if self.current_trigger == MARKET_TRIGGER:
+                    cutoff = job['slot_at'][:10]
+                    job.setdefault('market_cutoff', cutoff)
+                    job.setdefault('information_cutoff', cutoff)
+                else:
+                    job.setdefault('market_cutoff',providers.cutoff());job.setdefault('information_cutoff',str(today()))
                 self.current_job=job;self.save(job,'running')
                 for resource in job['resources']:
                     if key(resource) in job['completed_resources']:continue
@@ -268,6 +301,8 @@ class UpdateJobs:
         return self.run(dict(scopes=list(dict.fromkeys(r['scope'] for r in resources)),resources=resources,request_id='write:'+secrets.token_hex(16)),trigger=trigger)
 
     def tick(self,stamp=None,trigger='schedule'):
+        if not self.research.writes_allowed() or self.stopping.is_set():
+            return
         stamp=stamp or now();d=day(stamp[:10]);clock=stamp[11:16]
         from ..family_domain import TABLES
         with self.store.connection() as db:populated=any(db.execute('SELECT 1 FROM '+t+' LIMIT 1').fetchone() for t in ('portfolios','instruments',*TABLES))
@@ -282,8 +317,29 @@ class UpdateJobs:
                 if db.execute('SELECT 1 FROM data_update_receipts WHERE id=?',(hashlib.sha256(request_id.encode()).hexdigest(),)).fetchone():continue
             try:self.run(dict(scopes=[p['scope']],request_id=request_id,slot_at=slot.isoformat()+'T'+p['time']+':00+08:00'),trigger=trigger)
             except Exception as exc:
-                import logging
                 logging.getLogger(__name__).warning('自动更新检查失败，下一轮重试 scope=%s error=%s',p['scope'],type(exc).__name__)
+        self.tick_market(stamp, populated)
+
+    def tick_market(self, stamp, populated):
+        from ..waterlevel.catalog import MARKET_SCHEDULE
+        local = datetime.fromisoformat(stamp)
+        local = local.astimezone(ZONE) if local.tzinfo else local
+        scheduled_time = MARKET_SCHEDULE['time']
+        if local.isoweekday() != MARKET_SCHEDULE['weekday'] or local.strftime('%H:%M') < scheduled_time:
+            return
+        request_id = str(local.date())
+        with self.store.connection() as db:
+            if db.execute('SELECT 1 FROM data_update_receipts WHERE id=?', (receipt_id(request_id, MARKET_TRIGGER),)).fetchone():
+                return
+            if not populated and not any(db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
+                                         for table in ('market_heads', 'research_indices')):
+                return
+        try:
+            self.run(dict(scopes=['market'], resources=self.research.waterlevel.scheduled_resources(),
+                          request_id=request_id, slot_at=f'{request_id}T{scheduled_time}:00+08:00'),
+                     trigger=MARKET_TRIGGER)
+        except DomainError as exc:
+            logging.getLogger(__name__).warning('市场指标排程未受理，下一轮重试 error=%s', type(exc).__name__)
 
     def recover(self,resume=True):
         query="SELECT id,data FROM data_update_tasks WHERE state IN ('pending','running') OR (state='interrupted' AND json_extract(data,'$.resume_on_start')=1)"
@@ -292,7 +348,9 @@ class UpdateJobs:
         with self.research.transaction() as db:
             for r in rows:
                 job=json.loads(r[1]);job['lease_owner']=None;job['lease_expires']=None;job['resume_on_start']=True
-                manual_research = job.get('trigger') != 'index_create' and any(
+                scheduled = job.get('trigger') == MARKET_TRIGGER and all(
+                    scheduled_market_resource(resource) for resource in job['resources'])
+                manual_research = not scheduled and job.get('trigger') != 'index_create' and any(
                     resource['scope'] not in AUTOMATIC_SCOPES for resource in job['resources'])
                 if manual_research:
                     job['resume_on_start']=False

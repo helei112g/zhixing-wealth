@@ -8,7 +8,8 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from ..research.collection import subscription
 from ..research.snapshots import encode, decode
 from . import sources, validation
-from .catalog import FULL_MARKET_FIELDS, FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, SERIES, SPLIT_GROUPS
+from .catalog import (FULL_MARKET_FIELDS, FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, LIXINGER_FIELDS,
+                      MARKET_SCHEDULE, SERIES, SPLIT_GROUPS)
 from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, score
 
 
@@ -31,7 +32,7 @@ class WaterlevelService:
 
     def collect(self, group, asof, *, full=False, series=None):
         previous = self.source(group)
-        options = {'access': self.research.access} if group == 'full_market' else {}
+        options = {'access': self.research.access} if group in LIXINGER_FIELDS else {}
         if full:
             options['full'] = True
         if series:
@@ -66,11 +67,14 @@ class WaterlevelService:
         return dict(value, automatic=False, expected_settings_revision=revision,
                     policies=[dict(group=key, **entry) for key, entry in GROUPS.items()])
 
+    def schedule(self, auto_sync):
+        return dict(MARKET_SCHEDULE, enabled=auto_sync and self.research.writes_allowed())
+
     def save_settings(self, body):
         value = {key: body[key] for key in ('automatic', 'groups')}
         validation.settings(value)
         if value['automatic']:
-            raise DomainError('市场水位仅支持手动更新')
+            raise DomainError('每周排程由应用的自动更新开关管理')
         with self.research.transaction('settings_revision', body['expected_settings_revision'], bump=True) as db:
             db.execute("INSERT INTO market_settings VALUES ('settings',?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (json_dumps(value),))
         return self.settings()
@@ -118,6 +122,12 @@ class WaterlevelService:
                     updatable = group != 'full_market' or not profile or valuation_enabled(profile)
                     items.append(source_entry(group, key, info, saved, failures.get(error_key), updatable))
             return dict(items=items, research_revision=self.research.revision())
+
+    def scheduled_resources(self):
+        profile = next((p for p in self.research.profiles() if p['id'] == FULL_MARKET_ID), None)
+        return [market_resource(group, series) for group in GROUPS
+                if group != 'full_market' or not profile or valuation_enabled(profile)
+                for series in SPLIT_GROUPS.get(group, (None,))]
 
     def status(self):
         with self.store.lock:
@@ -293,10 +303,15 @@ class WaterlevelService:
         return dict(snapshot_id=sid, created_at=row[0], sha256=row[1], data=decode(row[2], row[1]))
 
 
-def source_entry(group, key, info, saved, error, updatable):
+def market_resource(group, key):
     resource = dict(scope='market', group=group)
     if key:
         resource['series'] = key
+    return resource
+
+
+def source_entry(group, key, info, saved, error, updatable):
+    resource = market_resource(group, key)
     dates = []
     for name, rows in saved.get('series', {}).items():
         if key and name != key:

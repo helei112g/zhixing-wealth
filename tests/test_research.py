@@ -94,6 +94,29 @@ class MetricTests(unittest.TestCase):
         self.assertIsNone(price_changes(rows[1:],'2026-10-30')['ytd'])
         self.assertIsNone(price_changes(rows,'2026-11-06')['weekly'])
         self.assertIsNone(price_changes(rows[:1],'2025-12-31')['daily'])
+
+    def test_list_returns_cover_three_completed_years_and_keep_missing_anchors(self):
+        rows = [dict(date=stamp, close=close) for stamp, close in [
+            ('2022-12-30','100'), ('2023-12-29','110'), ('2024-12-31','99'), ('2025-12-31','99'),
+            ('2026-01-30','100'), ('2026-02-02','120'), ('2026-02-04','132'),
+        ]]
+        changes = price_changes(rows, '2026-02-04', annual=True, missing_dates=['2026-02-03'])
+        self.assertEqual({k:v['ratio'] for k,v in changes['annual'].items()},
+                         {'2025':'0', '2024':'-0.1', '2023':'0.1'})
+        self.assertEqual(changes['monthly']['ratio'], '0.32')
+        self.assertIsNone(changes['daily'])
+        self.assertIsNone(price_changes(rows[1:], '2026-02-04', annual=True)['annual']['2023'])
+        self.assertIsNone(price_changes(rows[:4], '2026-01-01', annual=True)['ytd'])
+        incomplete = [*rows[:3], dict(date='2025-12-24', close='90')]
+        self.assertIsNone(price_changes(incomplete, '2026-01-01', annual=True)['annual']['2025'])
+        incomplete.append(dict(date='2026-01-05', close='110'))
+        later = price_changes(incomplete, '2026-01-05', annual=True)
+        self.assertIsNone(later['annual']['2025'])
+        self.assertIsNone(later['ytd'])
+        self.assertIsNone(later['monthly'])
+        self.assertIsNone(later['daily'])
+        complete = [*rows[:4], incomplete[-1]]
+        self.assertEqual(price_changes(complete, '2026-01-05', annual=True)['daily']['from_date'], '2025-12-31')
     def test_moving_average_uses_full_history_and_exact_observation_counts(self):
         start=date(2023,1,1);rows=[dict(date=str(start+timedelta(days=i)),close=str(i+1)) for i in range(1000)]
         ma=moving_averages(rows,10)
@@ -155,7 +178,10 @@ class ResearchTests(unittest.TestCase):
         iid=self.r.profiles()[0]['id']
         full=self.r.detail(iid)
         summary=next(x for x in self.r.listing()['items'] if x['id']==iid)
-        self.assertEqual(summary,{k:full[k] for k in summary})
+        self.assertEqual({k:v for k,v in summary.items() if k!='changes'},
+                         {k:full[k] for k in summary if k!='changes'})
+        self.assertEqual({k:v for k,v in summary['changes'].items() if k!='annual'},full['changes'])
+        self.assertEqual(len(summary['changes']['annual']),3)
 
     def test_update_history_collapses_active_children_and_limits_total_to_five(self):
         added,_=self.add()

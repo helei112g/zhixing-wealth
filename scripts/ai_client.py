@@ -153,6 +153,12 @@ class Client:
     def research_studio(self,index_id,**options):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/studio?'+urllib.parse.urlencode(options))
 
+    def research_indices(self, page=1, method='mcw', kind=None):
+        params = dict(page=page, method=method)
+        if kind is not None:
+            params['kind'] = kind
+        return self.request('/api/research/indices?' + urllib.parse.urlencode(params))
+
     def market_waterlevel(self, method='mcw', asof=None, facts=False):
         params = dict(method=method)
         if asof is not None:
@@ -160,6 +166,7 @@ class Client:
         return self.request('/api/market-waterlevel' + ('/facts' if facts else '') + '?' + urllib.parse.urlencode(params))
 
     def market_data_sources(self):
+        """Market update resources, observation dates and the instance's weekly schedule."""
         return self.request('/api/market-waterlevel/sources')
 
     def research_index(self,index_id,basis='price',window=3,method='mcw'):

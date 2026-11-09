@@ -103,7 +103,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     app.include_router(household_router)
     app.include_router(research_router(research))
     from .waterlevel.api import router as waterlevel_router
-    app.include_router(waterlevel_router(research.waterlevel))
+    app.include_router(waterlevel_router(research.waterlevel, auto_sync=auto_sync))
     app.add_middleware(GZipMiddleware, minimum_size=2000, compresslevel=4)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'] + (['testserver'] if testing else []))
 
@@ -187,6 +187,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                                'omitted_or_null': 'preserve', 'empty_string': 'clear'},
                                'preview': 'review the current values and proposed changes; no dedicated preview endpoint'},
                 'research': {'resolve':'/api/research/indices/resolve','indices':'/api/research/indices','detail':'/api/research/indices/{id}',
+                             'index_list': {'method':'mcw', 'page_size':20, 'basis':'price',
+                                            'changes':['annual','ytd','monthly','daily']},
                              'catalog':'/api/research/catalog','collection_preview':'/api/research/collection/preview',
                              'collection':{'path':'/api/research/collection','method':'PUT','revision':'expected_research_revision',
                                            'validate_new':'lixinger_identity_and_price','enqueue':'full_sync_on_first_save','job_field':'job_id'},
@@ -209,6 +211,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                     'revision': '/api/market-waterlevel/revision', 'sources': '/api/market-waterlevel/sources',
                     'methods': ['mcw', 'ew', 'ewpvo', 'median'], 'windows': [5, 10], 'chart_windows': [5, 10, 'all'],
                     'comparisons': 'Lixinger A-share all index 1000002 PE/PB by selected method, complete-month means, normalized SSE/SZSE composites; bond inverse on PE',
+                    'market_activity': {'groups':['margin_balances','market_turnover'], 'unit':'CNY',
+                                        'series':['margin_balance','sh_margin_balance','sz_margin_balance','a_share_turnover'],
+                                        'scored':False},
                     'settings': '/api/market-waterlevel/settings', 'settings_revision': 'expected_settings_revision',
                     'updates': '/api/market-waterlevel/updates', 'update_scope': 'market',
                     'update_fields': ['groups', 'indices', 'full', 'request_id'],
@@ -219,7 +224,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                     'score': 'fixed index mcw and full-market median factors; inverse sovereign yield and credit spread; category medians',
                     'percentile': 'strict less-than, current included in denominator, complete 5/10 year span',
                     'mean': '60/120 consecutive completed months, monthly last observation, no fill',
-                    'cadence': 'manual only',
+                    'cadence': 'weekly and manual', 'schedule': research.waterlevel.schedule(auto_sync),
                     'historical_asof': 'truncate currently available revisions, not point-in-time knowledge',
                 },
                 'instrument_price_history':{'start':'six calendar months before earliest purchase; shared cache uses earliest purchase across portfolios','detail_field':'price_history_start','backfill':'next quote update backfills missing requested range once; subsequent updates are incremental'},
@@ -232,7 +237,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                                    'cutoffs':'completed trading day for prices; today for published information; inspect actual module dates'},
                                  'revision_field':'expected_settings_revision','scopes':['quotes','fx','index_prices','memberships','valuations','financials','market'],
                                  'retry':'unknown outcome: read back and preserve original request_id/payload; confirmed failed resource: submit a new request_id with the exact failed item.resource',
-                                 'execution':'index library and market waterlevel require manual submission; only quote/FX tasks may resume on startup'},
+                                 'execution':'market indicators have a Friday schedule and manual updates; independent index updates are manual after initial collection'},
                 'investment_summary': {'read': '/api/portfolios/{portfolio_id}/dashboard?view=summary',
                                        'field': 'capital_summary', 'cumulative_input': 'cost',
                                        'cumulative_input_basis': '历次买入及红利再投含费税成本累计；不扣卖出与分红，再投非新增个人本金',

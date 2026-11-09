@@ -59,7 +59,9 @@ const asof = '2026-10-30';
       throw new Error('synthetic update timed out');
     };
     await openManagement();
-    check(await page.getByLabel('启用市场数据自动更新').count() === 0, 'market updates expose only manual controls');
+    await page.getByText('每周五 18:00（北京时间）自动增量更新 · 当前实例已停用自动更新。', {exact:true}).waitFor();
+    check((await api('/market-waterlevel/sources')).schedule.enabled === false,
+      'development instance shows the weekly schedule and its disabled state');
     check(await page.getByRole('button', {name:'增量更新',exact:true}).count() === 0, 'per-item controls appear after selecting an item');
     await marketSelector.selectOption('cpi_yoy');
     await target('CPI同比').getByRole('group', {name:'CPI同比全部来源'}).getByRole('button', {name:'增量更新'}).click();
@@ -186,24 +188,31 @@ const asof = '2026-10-30';
     await page.getByRole('img', {name:'境内宽基指数 PE 对照',exact:true}).waitFor();
     check(await page.getByLabel('股票估值曲线窗口').getByRole('button',{name:'全历史'}).getAttribute('aria-pressed') === 'true',
       'stock comparison starts at its independent full-history window');
-    const mainIndices = page.getByRole('region', {name:'主要指数估值',exact:true});
-    const selector = mainIndices.getByLabel('估值方法', {exact:true});
-    check(await selector.locator('button[aria-pressed]').count() === 4, 'main index section exposes all four valuation methods');
-    await selector.getByRole('button', {name:'等权',exact:true}).click();
-    await mainIndices.getByText('当前显示 等权（ew）。', {exact:false}).waitFor();
+    check(await page.getByRole('heading', {name:'主要指数估值',exact:true}).count() === 0,
+      'individual index valuation section is removed');
+    const selector = page.getByLabel('估值方法', {exact:true});
+    check(await selector.locator('button[aria-pressed]').count() === 4, 'wide-index comparison exposes all four valuation methods');
+    const selectMethod = async (name, method) => {
+      const loaded = page.waitForResponse(response => response.url().includes('/market-waterlevel?method='+method+'&'));
+      await selector.getByRole('button', {name,exact:true}).click();
+      await loaded;
+      await page.locator('.studio-valuation-chart[aria-busy="false"]').waitFor();
+    };
+    await selectMethod('等权','ew');
     const equal = await api('/market-waterlevel?method=ew&asof=' + asof);
     check(JSON.stringify(first.scores) === JSON.stringify(equal.scores), 'method switch leaves fixed scores unchanged');
-    check(await mainIndices.getByText('当前值无效', {exact:false}).count() > 0, 'negative ew is shown as invalid rather than replaced');
-    check(await page.getByRole('button', {name:'等权',exact:true,pressed:true}).count() === 2,
-      'the comparison and main index selectors stay synchronized');
-    await selector.getByRole('button', {name:'中位数',exact:true}).click();
-    await mainIndices.getByText('当前显示 中位数（median）。', {exact:false}).waitFor();
+    await selectMethod('中位数','median');
     check(await selector.evaluate(element =>
       getComputedStyle(element.querySelector('[aria-pressed="true"]')).backgroundColor !==
       getComputedStyle(element.querySelector('[aria-pressed="false"]')).backgroundColor), 'selected method has visible feedback');
-    await mainIndices.getByLabel('对照指标', {exact:true}).selectOption('pb');
-    await page.getByRole('heading', {name: '沪深300 · PB', exact: true}).waitFor();
-    check(await page.locator('.waterlevel-chart svg').count() >= 3, 'valuation charts render as actual SVG');
+    const margin = page.getByRole('img', {name:'沪深两融余额历史曲线',exact:true});
+    const turnover = page.getByRole('img', {name:'A股全指当日成交额历史曲线',exact:true});
+    await margin.locator('svg').first().waitFor();
+    await turnover.locator('svg').first().waitFor();
+    check(await margin.locator('.recharts-line-curve').count() === 3, 'total, Shanghai, and Shenzhen balance curves render');
+    check(await turnover.locator('.recharts-line-curve').count() === 1 &&
+      first.series.find(item=>item.id==='a_share_turnover').statistics.current === '800000000000',
+      'turnover renders and API preserves exact CNY amount');
     await shot('waterlevel-valuations');
 
     await page.getByRole('tab', {name: '宏观背景', exact: true}).click();
@@ -240,6 +249,9 @@ const asof = '2026-10-30';
     check(await offline.getByText('历史平均', {exact:true}).count() === 2, 'both frozen comparisons include the historical mean');
     check(await offline.getByRole('heading', {name:'全市场 PE TTM · 历史均值与两市综指', exact:true}).count() === 1,
       'offline snapshot includes the full-market comparison');
+    check(await offline.getByRole('heading', {name:'成交与两融',exact:true}).count() === 1 &&
+      await offline.getByRole('heading', {name:'主要指数估值',exact:true}).count() === 0,
+      'new snapshots export market activity and omit individual valuation cards');
     await offline.screenshot({path: path.join(output, 'waterlevel-offline.png'), fullPage: false});
     await offline.close();
 

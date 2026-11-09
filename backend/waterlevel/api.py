@@ -4,20 +4,21 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from .catalog import GROUPS, Group
+
 Method = Literal['mcw', 'ew', 'ewpvo', 'median']
-Group = Literal['full_market', 'composites', 'calendar', 'china_rates', 'us_rates', 'credit', 'repo', 'pmi', 'prices', 'money', 'social_financing']
 
 
 class MarketSettingsRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     automatic: StrictBool
-    groups: list[Group] = Field(min_length=1, max_length=11)
+    groups: list[Group] = Field(min_length=1, max_length=len(GROUPS))
     expected_settings_revision: int = Field(ge=0, strict=True)
 
 
 class MarketUpdateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    groups: list[Group] = Field(default_factory=list, max_length=11)
+    groups: list[Group] = Field(default_factory=list, max_length=len(GROUPS))
     indices: list[str] = Field(default_factory=list, max_length=10)
     full: StrictBool = False
     request_id: str = Field(min_length=1, max_length=160)
@@ -31,7 +32,7 @@ class MarketFreezeRequest(BaseModel):
     expected_research_revision: int = Field(ge=0, strict=True)
 
 
-def router(service):
+def router(service, *, auto_sync):
     api = APIRouter(prefix='/api/market-waterlevel', tags=['市场水位'], responses={
         409: {'description': '原研究或设置版本已变化；回读核对，不强制覆盖'},
         422: {'description': '日期、口径或来源无效；旧快照保留'},
@@ -57,17 +58,17 @@ def router(service):
                 stats.pop('chart')
         return value
 
-    @api.get('/settings')
+    @api.get('/settings', summary='读取旧版设置及当前每周更新排程')
     def settings():
-        return service.settings()
+        return dict(service.settings(), schedule=service.schedule(auto_sync))
 
-    @api.get('/sources', summary='读取可独立更新的市场数据项、来源与最新观测日期')
+    @api.get('/sources', summary='读取市场数据项、最新观测日期及每周更新排程')
     def data_sources():
-        return service.data_sources()
+        return dict(service.data_sources(), schedule=service.schedule(auto_sync))
 
     @api.put('/settings')
     def save_settings(body: MarketSettingsRequest):
-        return service.save_settings(body.model_dump())
+        return dict(service.save_settings(body.model_dump()), schedule=service.schedule(auto_sync))
 
     @api.post('/updates', status_code=202, summary='手动增量或全量校对市场来源及共享指数估值')
     def updates(body: MarketUpdateRequest):

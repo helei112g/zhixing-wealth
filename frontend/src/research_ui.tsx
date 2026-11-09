@@ -1,60 +1,166 @@
 import React,{useEffect,useState} from 'react';
-import {LoaderCircle,Plus} from 'lucide-react';
-import {api,money,Obj,query} from './api';
+import {ArrowLeft,LoaderCircle,Plus} from 'lucide-react';
+import {api,money,Obj,percent,query} from './api';
 import {Button,Empty,ErrorBox,Notice,Panel} from './components';
 import {StudioOverview,CapitalFlows,CollectionDialog,IndexFinancials,moduleLabels} from './research_studio';
+import {activeJob,useSubmission} from './sync_ui';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d);
+const indexScopes=['index_prices','memberships','valuations','financials'];
+const jobStates:Obj={pending:'等待中',running:'更新中',complete:'已完成',partial:'部分失败',error:'更新失败',interrupted:'已中断'};
 
 export function ResearchPage({onData}:Obj){
- const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(()=>{try{return new URLSearchParams(location.search).get('index')||localStorage.getItem('research-selected')||'';}catch{return '';}}),[revision,R]=useState(0),[running,Running]=useState(false),[detail,Detail]=useState<Obj|null>(null),[error,E]=useState('');
+ const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(''),[revision,R]=useState(0),[running,Running]=useState(false),[error,E]=useState('');
  const [adding, setAdding]=useState(false);
  const [initialSync, setInitialSync]=useState('');
- useEffect(()=>{let active=true;api('/research/catalog').then(v=>{if(active){C(v);S(s=>v.subscriptions.some((p:Obj)=>p.id===s)?s:v.subscriptions[0]?.id||'');}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[revision]);
+ const [listPage,setListPage]=useState(1);
+ const [indexJob,setIndexJob]=useState<Obj|null>(null);
+ useEffect(()=>{let active=true;api('/research/catalog').then(v=>{if(active){C(v);S(s=>v.subscriptions.some((p:Obj)=>p.id===s)?s:'');E('');}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[revision]);
  useEffect(()=>{let active=true,busy=false;const refresh=async()=>{if(document.hidden||busy)return;busy=true;try{const v=await api('/research/revision');if(active){R(v.research_revision);Running(v.updating);}}catch(e:any){if(active)E(e.message);}finally{busy=false;}};refresh();const timer=setInterval(refresh,2500);return()=>{active=false;clearInterval(timer);};},[]);
- function select(id:string){S(id);try{localStorage.setItem('research-selected',id);const u=new URL(location.href);u.searchParams.set('index',id);history.replaceState(null,'',u);}catch{}}
  const profile=catalog?.subscriptions.find((p:Obj)=>p.id===selected);
  return <div className="research-page">
   <ErrorBox error={error}/>
   <div className="studio-heading">
-   <div>
-    <label htmlFor="research-index">观察指数</label>
-    <select id="research-index" aria-label="观察指数" value={selected} onChange={e=>select(e.target.value)}>
-     {!selected&&<option value="">尚未添加</option>}
-     {catalog?.subscriptions.map((p:Obj)=><option key={p.id} value={p.id}>
-      {p.name} · {p.code}{p.subscription?.enabled===false?' · 已暂停':''}
-     </option>)}
-    </select>
-    <IndexInformation d={detail?.id===selected?detail:profile}/>
-   </div>
+   {selected?<button type="button" className="text-button back-link" onClick={()=>S('')}><ArrowLeft size={14}/>返回指数列表</button>
+    :<p className="muted small">浏览已建档指数，选择名称查看详情。</p>}
    <div className="inline-actions">
     {profile&&<Button onClick={()=>onData(selected)}>数据管理</Button>}
     <Button primary disabled={!catalog} onClick={()=>setAdding(true)}><Plus size={15}/>添加采集</Button>
    </div>
   </div>
-  {selected?<IndexDetail key={selected} id={selected} revision={revision} onLoaded={Detail}/>
-   :<Empty title="还没有指数档案">选择要采集的指数和模块。内置目录不会自动采集，打开页面只读取本地数据。</Empty>}
+  {selected?<IndexDetail key={selected} id={selected} revision={revision}/>
+   :<IndexList revision={revision} running={running} page={listPage} onPage={setListPage} onSelect={S} onData={onData}
+    job={indexJob} setJob={setIndexJob}/>}
   {initialSync===selected&&initialSync&&<p role="status" className="muted small">首次全量任务已受理。<button className="text-button" onClick={()=>onData(selected)}>在数据管理查看进度和结果</button></p>}
   {running&&<p role="status" className="muted small"><LoaderCircle size={14} className="spin"/>采集正在执行，已有有效快照可继续查看。</p>}
   {adding&&catalog&&<CollectionDialog catalog={catalog} onClose={()=>setAdding(false)} onSaved={(value:Obj)=>{
    setAdding(false);
-   select(value.id);
+   S(value.id);
    if(value.job_id){setInitialSync(value.id);Running(true);}
    R(value.research_revision);
   }}/>}
  </div>;
 }
 
-function IndexDetail({id,revision,onLoaded}:Obj){
+function IndexList({revision,running,page,onPage,onSelect,onData,job,setJob}:Obj){
+ const [listing,setListing]=useState<Obj|null>(null);
+ const [error,setError]=useState('');
+ const submission=useSubmission(()=>{});
+ const pending=job&&activeJob(job);
+
+ useEffect(()=>{
+  let active=true;
+  api('/research/indices?'+query({method:'mcw',page})).then(value=>{
+   if(!active)return;
+   const lastPage=Math.max(1,Math.ceil(value.total/value.page_size));
+   if(page>lastPage)onPage(lastPage);
+   else{setListing(value);setError('');}
+  }).catch(error=>{if(active)setError(error.message);});
+  return()=>{active=false;};
+ },[page,revision]);
+
+ useEffect(()=>{
+  if(!pending)return;
+  let active=true, busy=false;
+  async function load(){
+   if(busy||document.hidden)return;
+   busy=true;
+   try{
+    const result=await api('/data-updates/jobs/'+job!.id);
+    if(active){setJob({...result,target:job!.target});setError('');}
+   }catch(error:any){if(active)setError(error.message);}
+   finally{busy=false;}
+  }
+  load();
+  const timer=setInterval(load,2500);
+  return()=>{active=false;clearInterval(timer);};
+ },[job?.id,pending]);
+
+ async function update(id:string){
+  const result=await submission.submit({scopes:indexScopes,targets:[id]});
+  if(result)setJob({id:result.job_id,target:id,state:'pending'});
+ }
+
+ const current=listing?.page===page?listing:null;
+ const rows:Obj[]=current?.items||[];
+ const years=[1,2,3].map(offset=>Number(current?.calendar_year)-offset);
+ const ratioCell=(key:string|number, change?:Obj)=><td key={key} title={change?change.from_date+' 至 '+change.to_date:'缺少可用取价'}>
+  <span className={Number(change?.ratio)>0?'positive':Number(change?.ratio)<0?'negative':''}>{percent(change?.ratio,true)}</span>
+ </td>;
+ return <>
+  <ErrorBox error={error||submission.error}/>
+  {!current?<p className="muted small" role="status">正在读取本地指数列表…</p>
+   :!rows.length?<Empty title="还没有指数档案">选择要采集的指数和模块。添加后即可在此查看进度和数据。</Empty>
+   :<Panel title="指数列表" right={<small className="muted">{current.total} 个指数</small>}>
+    <p className="muted small">PE TTM、PB 使用总市值加权口径。涨跌幅按价格指数收盘点位计算，年度和月度以相应的上期末收盘为基准。</p>
+    <div className="table-wrap"><table className="index-library-table" aria-label="指数列表">
+     <thead><tr>
+      <th scope="col">指数</th><th scope="col">PE TTM</th><th scope="col">PB</th>
+      {years.map(year=><th key={year} scope="col">{year}年</th>)}
+      <th scope="col">今年</th><th scope="col">本月</th><th scope="col">上一个交易日</th><th scope="col">操作</th>
+     </tr></thead>
+     <tbody>{rows.map(row=>{
+      const rowJob=job?.target===row.id?job:null;
+      const paused=row.profile.subscription?.enabled===false;
+      return <tr key={row.id}>
+       <th scope="row"><button className="text-button" onClick={()=>onSelect(row.id)}>{row.profile.name}</button>
+        <small>{row.profile.code}{paused?' · 已暂停':''}</small>
+        <small>行情 {row.latest?.date||'待采集'}</small>
+       </th>
+       {['pe','pb'].map(metric=>{
+        const value=row.valuation[metric];
+        return <td key={metric}>{money(value?.current)}{value?.date&&<small>{value.date}</small>}</td>;
+       })}
+       {years.map(year=>ratioCell(year,row.changes.annual[year]))}
+       {['ytd','monthly','daily'].map(key=>ratioCell(key,row.changes[key]))}
+       <td><Button small disabled={running||submission.busy||pending||paused} onClick={()=>update(row.id)}>更新数据</Button>
+        {rowJob&&<small role="status">{jobStates[rowJob.state]||rowJob.state}{['error','partial','interrupted'].includes(rowJob.state)&&
+         <> · <button className="text-button" onClick={()=>onData(row.id)}>查看结果</button></>}</small>}
+       </td>
+      </tr>;
+     })}</tbody>
+    </table></div>
+    {current.total>current.page_size&&<div className="research-pagination">
+     <Button disabled={page===1} onClick={()=>onPage(page-1)}>上一页</Button>
+     <small>{page} / {Math.ceil(current.total/current.page_size)}</small>
+     <Button disabled={page*current.page_size>=current.total} onClick={()=>onPage(page+1)}>下一页</Button>
+    </div>}
+   </Panel>}
+ </>;
+}
+
+function IndexDetail({id,revision}:Obj){
  const [basis,Basis]=useState('price'),[method,Method]=useState('mcw'),[window,Window]=useState(3),[tab,Tab]=useState('studio'),[d,D]=useState<Obj|null>(null),[error,E]=useState(''),[loading,L]=useState(false);
- useEffect(()=>{let active=true;L(true);E('');api('/research/indices/'+encodeURIComponent(id)+'?'+query({basis,method,window})).then(v=>{if(active){D(v);onLoaded(v);}}).catch(e=>{if(active)E(e.message);}).finally(()=>{if(active)L(false);});return()=>{active=false;};},[id,basis,method,window,revision]);
- const current=d;
- return <><ErrorBox error={error}/>{!current?<Panel><p className="muted">{loading?'读取本地指数档案…':'暂无有效档案'}</p></Panel>:<>{loading&&<p role="status" className="muted small">正在读取所选口径，暂显示上次数据…</p>}<div className="research-detail-header"><div><h2>{current.profile.name} <small>{current.series_code}</small></h2><p className="muted small">{current.profile.provider==='csi'?'中证指数':'国证指数'} · {current.profile.kind} · CNY · 行情 {current.latest?.date||'-'} · 估值 {current.valuation.pe?.date||'-'} · 成分 {current.membership_date||'-'}</p></div><div className="segmented research-basis" aria-label="指数主口径">{[['price','价格指数'],['total_return','全收益指数']].map(([k,l])=><button key={k} aria-pressed={current.basis===k} className={current.basis===k?'active':''} onClick={()=>Basis(k)}>{l}</button>)}</div></div><div className="instrument-tabs research-tabs" role="tablist" aria-label="指数详情">{[['studio','观察台'],['composition','成分与财务'],['funds','资金与持仓']].map(([k,l])=><button key={k} role="tab" id={'research-tab-'+k} aria-controls="research-content" aria-selected={tab===k} onClick={()=>Tab(k)}>{l}</button>)}</div><div role="tabpanel" id="research-content" aria-labelledby={'research-tab-'+tab}>{tab==='studio'?<StudioOverview d={current} method={current.method} setMethod={Method} window={current.window} setWindow={Window}/>:tab==='composition'?<CompositionPage d={current}/>:<CapitalFlows d={current}/>}</div></>}</>;
+ useEffect(()=>{let active=true;L(true);E('');api('/research/indices/'+encodeURIComponent(id)+'?'+query({basis,method,window})).then(v=>{if(active)D(v);}).catch(e=>{if(active)E(e.message);}).finally(()=>{if(active)L(false);});return()=>{active=false;};},[id,basis,method,window,revision]);
+
+ if(!d)return <><ErrorBox error={error}/><Panel><p className="muted">{loading?'读取本地指数档案…':'暂无有效档案'}</p></Panel></>;
+ const {profile}=d;
+ return <>
+  <ErrorBox error={error}/>
+  {loading&&<p role="status" className="muted small">正在读取所选口径，暂显示上次数据…</p>}
+  <div className="research-detail-header">
+   <div>
+    <div className="research-index-identity">
+     <h2>{profile.name} <small>{d.series_code}</small></h2>
+     <IndexInformation d={d}/>
+    </div>
+    <p className="muted small">{profile.provider==='csi'?'中证指数':'国证指数'} · {profile.kind} · CNY · 行情 {d.latest?.date||'-'} · 估值 {d.valuation.pe?.date||'-'} · 成分 {d.membership_date||'-'}{profile.subscription?.enabled===false?' · 已暂停':''}</p>
+   </div>
+   <div className="segmented research-basis" aria-label="指数主口径">
+    {[['price','价格指数'],['total_return','全收益指数']].map(([k,l])=><button key={k} aria-pressed={d.basis===k} className={d.basis===k?'active':''} onClick={()=>Basis(k)}>{l}</button>)}
+   </div>
+  </div>
+  <div className="instrument-tabs research-tabs" role="tablist" aria-label="指数详情">
+   {[['studio','观察台'],['composition','成分与财务'],['funds','资金与持仓']].map(([k,l])=><button key={k} role="tab" id={'research-tab-'+k} aria-controls="research-content" aria-selected={tab===k} onClick={()=>Tab(k)}>{l}</button>)}
+  </div>
+  <div role="tabpanel" id="research-content" aria-labelledby={'research-tab-'+tab}>
+   {tab==='studio'?<StudioOverview d={d} method={d.method} setMethod={Method} window={d.window} setWindow={Window}/>:tab==='composition'?<CompositionPage d={d}/>:<CapitalFlows d={d}/>}
+  </div>
+ </>;
 }
 function IndexInformation({d}:Obj){
  const [open,Open]=useState(false);
- if(!d)return null;
- const p=d.profile||d;
+ const p=d.profile;
  return <div className="index-info-anchor" onMouseEnter={()=>Open(true)} onMouseLeave={e=>{if(!e.currentTarget.contains(document.activeElement))Open(false);}} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))Open(false);}} onKeyDown={e=>{if(e.key==='Escape')Open(false);}}>
   <button className="index-info-button" aria-expanded={open} aria-haspopup="dialog" onFocus={()=>Open(true)} onClick={()=>Open(true)}>ⓘ 基本资料</button>
   {open&&<div className="index-info-popover" role="dialog" aria-label="指数基本资料">

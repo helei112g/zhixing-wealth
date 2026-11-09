@@ -10,7 +10,7 @@ const indexScopes=['index_prices','memberships','valuations','financials'];
 const jobStates:Obj={pending:'等待中',running:'更新中',complete:'已完成',partial:'部分失败',error:'更新失败',interrupted:'已中断'};
 
 export function ResearchPage({onData}:Obj){
- const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(''),[revision,R]=useState(0),[running,Running]=useState(false),[detail,Detail]=useState<Obj|null>(null),[error,E]=useState('');
+ const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(''),[revision,R]=useState(0),[running,Running]=useState(false),[error,E]=useState('');
  const [adding, setAdding]=useState(false);
  const [initialSync, setInitialSync]=useState('');
  const [listPage,setListPage]=useState(1);
@@ -20,22 +20,14 @@ export function ResearchPage({onData}:Obj){
  return <div className="research-page">
   <ErrorBox error={error}/>
   <div className="studio-heading">
-   {selected?<div className="index-detail-navigation">
-    <Button small onClick={()=>S('')}><ArrowLeft size={14}/>返回指数列表</Button>
-    <label htmlFor="research-index">观察指数</label>
-    <select id="research-index" aria-label="观察指数" value={selected} onChange={e=>S(e.target.value)}>
-     {catalog?.subscriptions.map((p:Obj)=><option key={p.id} value={p.id}>
-      {p.name} · {p.code}{p.subscription?.enabled===false?' · 已暂停':''}
-     </option>)}
-    </select>
-    <IndexInformation d={detail?.id===selected?detail:profile}/>
-   </div>:<p className="muted small">浏览已建档指数，选择名称查看详情。</p>}
+   {selected?<button type="button" className="text-button back-link" onClick={()=>S('')}><ArrowLeft size={14}/>返回指数列表</button>
+    :<p className="muted small">浏览已建档指数，选择名称查看详情。</p>}
    <div className="inline-actions">
     {profile&&<Button onClick={()=>onData(selected)}>数据管理</Button>}
     <Button primary disabled={!catalog} onClick={()=>setAdding(true)}><Plus size={15}/>添加采集</Button>
    </div>
   </div>
-  {selected?<IndexDetail key={selected} id={selected} revision={revision} onLoaded={Detail}/>
+  {selected?<IndexDetail key={selected} id={selected} revision={revision}/>
    :<IndexList revision={revision} running={running} page={listPage} onPage={setListPage} onSelect={S} onData={onData}/>}
   {initialSync===selected&&initialSync&&<p role="status" className="muted small">首次全量任务已受理。<button className="text-button" onClick={()=>onData(selected)}>在数据管理查看进度和结果</button></p>}
   {running&&<p role="status" className="muted small"><LoaderCircle size={14} className="spin"/>采集正在执行，已有有效快照可继续查看。</p>}
@@ -136,16 +128,38 @@ function IndexList({revision,running,page,onPage,onSelect,onData}:Obj){
  </>;
 }
 
-function IndexDetail({id,revision,onLoaded}:Obj){
+function IndexDetail({id,revision}:Obj){
  const [basis,Basis]=useState('price'),[method,Method]=useState('mcw'),[window,Window]=useState(3),[tab,Tab]=useState('studio'),[d,D]=useState<Obj|null>(null),[error,E]=useState(''),[loading,L]=useState(false);
- useEffect(()=>{let active=true;L(true);E('');api('/research/indices/'+encodeURIComponent(id)+'?'+query({basis,method,window})).then(v=>{if(active){D(v);onLoaded(v);}}).catch(e=>{if(active)E(e.message);}).finally(()=>{if(active)L(false);});return()=>{active=false;};},[id,basis,method,window,revision]);
- const current=d;
- return <><ErrorBox error={error}/>{!current?<Panel><p className="muted">{loading?'读取本地指数档案…':'暂无有效档案'}</p></Panel>:<>{loading&&<p role="status" className="muted small">正在读取所选口径，暂显示上次数据…</p>}<div className="research-detail-header"><div><h2>{current.profile.name} <small>{current.series_code}</small></h2><p className="muted small">{current.profile.provider==='csi'?'中证指数':'国证指数'} · {current.profile.kind} · CNY · 行情 {current.latest?.date||'-'} · 估值 {current.valuation.pe?.date||'-'} · 成分 {current.membership_date||'-'}</p></div><div className="segmented research-basis" aria-label="指数主口径">{[['price','价格指数'],['total_return','全收益指数']].map(([k,l])=><button key={k} aria-pressed={current.basis===k} className={current.basis===k?'active':''} onClick={()=>Basis(k)}>{l}</button>)}</div></div><div className="instrument-tabs research-tabs" role="tablist" aria-label="指数详情">{[['studio','观察台'],['composition','成分与财务'],['funds','资金与持仓']].map(([k,l])=><button key={k} role="tab" id={'research-tab-'+k} aria-controls="research-content" aria-selected={tab===k} onClick={()=>Tab(k)}>{l}</button>)}</div><div role="tabpanel" id="research-content" aria-labelledby={'research-tab-'+tab}>{tab==='studio'?<StudioOverview d={current} method={current.method} setMethod={Method} window={current.window} setWindow={Window}/>:tab==='composition'?<CompositionPage d={current}/>:<CapitalFlows d={current}/>}</div></>}</>;
+ useEffect(()=>{let active=true;L(true);E('');api('/research/indices/'+encodeURIComponent(id)+'?'+query({basis,method,window})).then(v=>{if(active)D(v);}).catch(e=>{if(active)E(e.message);}).finally(()=>{if(active)L(false);});return()=>{active=false;};},[id,basis,method,window,revision]);
+
+ if(!d)return <><ErrorBox error={error}/><Panel><p className="muted">{loading?'读取本地指数档案…':'暂无有效档案'}</p></Panel></>;
+ const {profile}=d;
+ return <>
+  <ErrorBox error={error}/>
+  {loading&&<p role="status" className="muted small">正在读取所选口径，暂显示上次数据…</p>}
+  <div className="research-detail-header">
+   <div>
+    <div className="research-index-identity">
+     <h2>{profile.name} <small>{d.series_code}</small></h2>
+     <IndexInformation d={d}/>
+    </div>
+    <p className="muted small">{profile.provider==='csi'?'中证指数':'国证指数'} · {profile.kind} · CNY · 行情 {d.latest?.date||'-'} · 估值 {d.valuation.pe?.date||'-'} · 成分 {d.membership_date||'-'}{profile.subscription?.enabled===false?' · 已暂停':''}</p>
+   </div>
+   <div className="segmented research-basis" aria-label="指数主口径">
+    {[['price','价格指数'],['total_return','全收益指数']].map(([k,l])=><button key={k} aria-pressed={d.basis===k} className={d.basis===k?'active':''} onClick={()=>Basis(k)}>{l}</button>)}
+   </div>
+  </div>
+  <div className="instrument-tabs research-tabs" role="tablist" aria-label="指数详情">
+   {[['studio','观察台'],['composition','成分与财务'],['funds','资金与持仓']].map(([k,l])=><button key={k} role="tab" id={'research-tab-'+k} aria-controls="research-content" aria-selected={tab===k} onClick={()=>Tab(k)}>{l}</button>)}
+  </div>
+  <div role="tabpanel" id="research-content" aria-labelledby={'research-tab-'+tab}>
+   {tab==='studio'?<StudioOverview d={d} method={d.method} setMethod={Method} window={d.window} setWindow={Window}/>:tab==='composition'?<CompositionPage d={d}/>:<CapitalFlows d={d}/>}
+  </div>
+ </>;
 }
 function IndexInformation({d}:Obj){
  const [open,Open]=useState(false);
- if(!d)return null;
- const p=d.profile||d;
+ const p=d.profile;
  return <div className="index-info-anchor" onMouseEnter={()=>Open(true)} onMouseLeave={e=>{if(!e.currentTarget.contains(document.activeElement))Open(false);}} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))Open(false);}} onKeyDown={e=>{if(e.key==='Escape')Open(false);}}>
   <button className="index-info-button" aria-expanded={open} aria-haspopup="dialog" onFocus={()=>Open(true)} onClick={()=>Open(true)}>ⓘ 基本资料</button>
   {open&&<div className="index-info-popover" role="dialog" aria-label="指数基本资料">

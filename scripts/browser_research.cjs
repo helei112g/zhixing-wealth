@@ -82,7 +82,11 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await dialog.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
   await dialog.waitFor({state:'hidden'});
   check(!(await api('/research/catalog')).modules.includes('tracking_funds'),'catalog omits fund-code collection');
-  await page.waitForFunction(()=>document.querySelector('#research-index')?.value==='csi:000905');
+  const backToList=page.getByRole('button',{name:'返回指数列表',exact:true});
+  await page.getByRole('heading',{name:/^中证500\s+000905$/}).waitFor();
+  check(await backToList.evaluate(button=>button.matches('.text-button.back-link'))&&
+   await page.getByRole('combobox',{name:'观察指数',exact:true}).count()===0,
+   'index detail uses the shared text back link and has no index selector');
   check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===1,'saving the subscription stays in the index library');
   await page.getByText('首次全量任务已受理。',{exact:false}).waitFor();
   await page.locator('main').getByRole('button',{name:'数据管理',exact:true}).click();
@@ -228,9 +232,16 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByRole('img',{name:'盈利估值条件区间示意图',exact:true}).waitFor();
   check(true,'conditional valuation remains available');
   await shot('studio-overview');
-  await page.getByRole('button',{name:'ⓘ 基本资料',exact:true}).hover();
-  await page.getByRole('dialog',{name:'指数基本资料',exact:true}).waitFor();
-  check(await page.getByRole('tab',{name:'基本资料',exact:true}).count()===0,'basic information lives beside selector without a separate tab');
+  const identity=page.locator('.research-index-identity');
+  const info=identity.getByRole('button',{name:'ⓘ 基本资料',exact:true});
+  const infoDialog=page.getByRole('dialog',{name:'指数基本资料',exact:true});
+  await backToList.scrollIntoViewIfNeeded();
+  await info.hover();
+  await infoDialog.waitFor();
+  check(await identity.getByRole('heading',{name:/^中证500\s+000905$/}).isVisible()&&
+   await infoDialog.getByText('价格 / 全收益代码',{exact:true}).isVisible(),
+   'basic information opens beside the index name and code');
+  await page.screenshot({path:path.join(out,'index-detail-header.png'),animations:'disabled'});
   await page.mouse.move(1400,900);
 
   await page.getByRole('tab',{name:'成分与财务',exact:true}).click();
@@ -326,7 +337,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await navigate('指数资料库');
   await indexLink.click();
   await ready();
-  await page.getByRole('button',{name:'返回指数列表',exact:true}).click();
+  await backToList.click();
   const update=indexLink.locator('xpath=ancestor::tr').getByRole('button',{name:'更新数据',exact:true});
   const submitted=page.waitForResponse(response=>response.request().method()==='POST'&&response.url().endsWith('/api/data-updates/run'));
   await update.click();
@@ -358,6 +369,13 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await ready();
   await shot('studio-mobile');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile overview has no horizontal overflow');
+  await info.click();
+  await infoDialog.waitFor();
+  const infoBounds=await infoDialog.boundingBox();
+  check(infoBounds.x>=0&&infoBounds.x+infoBounds.width<=390,'basic information fits the mobile viewport');
+  await page.screenshot({path:path.join(out,'index-detail-header-mobile.png'),animations:'disabled'});
+  await info.press('Escape');
+  await infoDialog.waitFor({state:'hidden'});
   for(const label of ['总市值加权','等权','中位数']){
    const helpButton=page.getByRole('button',{name:label+'计算说明',exact:true});
    await helpButton.click();

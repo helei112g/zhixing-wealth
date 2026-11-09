@@ -123,6 +123,7 @@ export function ResearchDataPage({initialTarget}: {initialTarget:string}){
  const [dialog,setDialog]=useState<Obj|null>(null);
  const [catalog,setCatalog]=useState<Obj|null>(null);
  const [market,setMarket]=useState<Obj[]>([]);
+ const [marketSchedule,setMarketSchedule]=useState<Obj|null>(null);
  const [revision,setRevision]=useState(0);
  const [refresh,setRefresh]=useState(0);
  const [error,setError]=useState('');
@@ -151,7 +152,10 @@ export function ResearchDataPage({initialTarget}: {initialTarget:string}){
    if(!current)return;
    setError('');
    if(tab==='indices')setCatalog(value);
-   else setMarket(value.items);
+   else{
+    setMarket(value.items);
+    setMarketSchedule(value.schedule);
+   }
   }).catch(error=>{if(current)setError(error.message);});
   return()=>{current=false;};
  },[tab,revision,refresh,jobVersion]);
@@ -193,6 +197,7 @@ export function ResearchDataPage({initialTarget}: {initialTarget:string}){
     revision={revision+':'+jobVersion+':'+refresh} onUpdate={update} onEdit={()=>setDialog(profile)}/>}
   </Panel>:<Panel title="市场指标" right={<Button disabled={busy||!marketResources.length}
    onClick={()=>update(marketResources)}>更新全部市场指标</Button>}>
+   {marketSchedule&&<p className="muted small">每周{['一','二','三','四','五','六','日'][marketSchedule.weekday-1]} {marketSchedule.time}（北京时间）自动增量更新{marketSchedule.enabled?'，也可手动更新。':' · 当前实例已停用自动更新。'}</p>}
    <label className="data-target-select">选择指标
     <select aria-label="数据管理市场指标" value={marketSelected} onChange={event=>setMarketSelected(event.target.value)}>
      <option value="">请选择市场指标</option>

@@ -131,7 +131,7 @@ Token只能由用户在本机「研究工具 → 数据管理 → 理杏仁数�
 
 使用`market_waterlevel(method='mcw', asof=None, facts=True)`或`GET /api/market-waterlevel/facts`读取版本化事实。指数估值来自现有理杏仁快照；全市场估值来自理杏仁 A股全指1000002，按请求选择估值方法。两综指、宏观与债券来自公开来源。comparisons提供两综指共同基准月及对齐说明，完整dashboard包含曲线。GET读取本地数据。先核对asof、实际观测日、来源、method_version、窗口样本、状态和缺口，再解释历史位置。
 
-用户授权更新时，用 `market_data_sources()` 读取可更新指标和实际观测日期。通过 `write('/api/data-updates/run', payload)` 提交该项返回的 `resource`，例如 CPI 的 `group=prices, series=cpi_yoy`。沪深两融余额 `margin_balances` 与理杏仁 A股全指样本成交额 `market_turnover` 独立更新，金额为 CNY 元，均不计分。省略full走增量，显式true执行全量校对，保存收据并回读任务状态。复用稳定request_id，结果未知先查询。市场水位仅手动更新。full_market 与 market_turnover 消耗理杏仁基本面额度。
+用 `market_data_sources()` 读取可更新指标、实际观测日期和 `schedule`。实例开启自动更新时，每周五北京时间 18:00 增量更新，可在更新历史查 `trigger=market_schedule`。用户授权手动更新时，通过 `write('/api/data-updates/run', payload)` 提交该项返回的 `resource`，例如 CPI 的 `group=prices, series=cpi_yoy`。沪深两融余额 `margin_balances` 与理杏仁 A股全指样本成交额 `market_turnover` 独立更新，金额为 CNY 元，均不计分。省略full走增量，显式true执行全量校对，保存收据并回读任务状态。复用稳定request_id，结果未知先查询。full_market 与 market_turnover 消耗理杏仁基本面额度。
 
 冻结流程为读取事实包→按原analysis_id、method、asof、expected_research_revision提交`write('/api/market-waterlevel/snapshots', payload)`→精确ID回读→按需下载export。409先重新读取核对，不替换成最新revision强行提交。冻结保存不触发供应商调用，报告独立于后续来源更新。
 

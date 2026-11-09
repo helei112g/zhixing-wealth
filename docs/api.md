@@ -428,7 +428,8 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 | GET `/api/market-waterlevel` | method、asof；返回analysis_id、research_revision、method_version、indices、series、comparisons、scores、sources、groups、limitations、规则commentary。 |
 | GET `/api/market-waterlevel/facts` | 同参数和分析版本；省略统计项及comparisons的chart，其他事实与页面一致，不请求模型。 |
 | GET `/api/market-waterlevel/revision` | 轻量research_revision、updating和errors_version；失败不发布数据也会改变错误版本，页面据此刷新覆盖与状态。 |
-| GET/PUT `/api/market-waterlevel/settings` | 兼容旧客户端。GET报告automatic=false。PUT仅接受automatic=false及原设置版本。 |
+| GET/PUT `/api/market-waterlevel/settings` | 旧版可写字段保留 automatic=false 与原设置版本。实际每周排程状态通过只读 schedule 返回。 |
+| GET `/api/market-waterlevel/sources` | 读取市场指标、精确更新资源、实际观测日期与 schedule。schedule.weekday=5 使用 ISO 周序，time=18:00，timezone=Asia/Shanghai，enabled 取决于实例自动更新和写入状态。 |
 | POST `/api/market-waterlevel/updates` | `{groups:["credit"],request_id:"client-generated-id"}`；可提供indices指定已启用估值的观察指数，可选full=true执行校对。至少指定一个来源组或指数。202返回统一任务收据。 |
 | POST `/api/market-waterlevel/snapshots` | 原analysis_id、method、asof、expected_research_revision；冻结当前查看结果，返回snapshot_id、created_at、sha256、data。输入已变化返回409。相同分析ID幂等回读原报告，不重新抓取。 |
 | GET `/api/market-waterlevel/snapshots` | 最近50条不可变报告元数据items；不删除更早报告。 |
@@ -439,7 +440,7 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 
 `comparisons.pe/pb`含月度`chart`、共同基准`base_month`及对齐说明；`value/mean5/mean10`为估值，`sh/sz`为基准100的价格指数，`bond_inverse`为10Y收益率倒数（PE图展示），各参照保留实际日期。`chart_windows=[5,10,"all"]`只控制页面裁剪；分位窗口仍为5/10年。已冻结v1至v5报告保留。
 
-指数库和市场水位均手动更新。市场来源任务和共享指数估值走统一队列。full_market、market_turnover 和共享指数估值使用理杏仁额度。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
+市场指标每周五 18:00 增量更新并保留手动入口，任务记录的 trigger 为 market_schedule，slot_at 为原计划时间。指数资料仍可手动更新。市场来源任务和共享指数估值走统一队列。full_market、market_turnover 和共享指数估值使用理杏仁额度。只读实例拒绝写入（503）；认证、Cookie、Host/Origin、CSRF沿用应用约束（403）；无效日期/方法/来源/报告ID为422。
 
 数值为Decimal字符串或null。利率、CPI/PPI及货币/社融同比为百分数；期限利差、ERP和M2−M1为百分点；信用/回购利差为BP。股息率、percentile_ratio、deviation_ratio为比例。分位严格小于当前值且包含当前样本作分母；均值使用60/120个完整月末值，不能套用指数观察台的日频计算。statistics保留current、date、frequency、observations、status、windows、means、chart；窗口同时提供样本数与完整性状态。
 

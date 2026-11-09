@@ -32,9 +32,13 @@ def main():
           set(row['changes']['annual'])=={str(listing['calendar_year']-n) for n in (1,2,3)},
           'index list shares the same valuation and provides three completed years')
     activity=cap['market_waterlevel']['market_activity']
+    market_sources=c.market_data_sources()
     check(set(activity['series']) <= {row['id'] for row in c.market_waterlevel(facts=True)['series']} and
-          set(activity['groups']) <= {row['id'] for row in c.market_data_sources()['items']},
+          set(activity['groups']) <= {row['id'] for row in market_sources['items']},
           'market facts and source discovery expose both activity groups')
+    check(market_sources['schedule']==cap['market_waterlevel']['schedule'] and
+          market_sources['schedule']==dict(weekday=5, time='18:00', timezone='Asia/Shanghai', enabled=False),
+          'AI sees the Friday market update schedule and current instance state')
     a=c.research_studio(saved['id'],method='mcw',window=3,metric='pe')
     check(a['analysis_id']==c.research_index(saved['id'])['analysis_id'],'UI and AI share analysis snapshot')
     check(a['research_revision']==d['research_revision'],'independent chart windows remain bound to the same research revision')

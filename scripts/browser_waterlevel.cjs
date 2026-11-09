@@ -59,7 +59,9 @@ const asof = '2026-10-30';
       throw new Error('synthetic update timed out');
     };
     await openManagement();
-    check(await page.getByLabel('启用市场数据自动更新').count() === 0, 'market updates expose only manual controls');
+    await page.getByText('每周五 18:00（北京时间）自动增量更新 · 当前实例已停用自动更新。', {exact:true}).waitFor();
+    check((await api('/market-waterlevel/sources')).schedule.enabled === false,
+      'development instance shows the weekly schedule and its disabled state');
     check(await page.getByRole('button', {name:'增量更新',exact:true}).count() === 0, 'per-item controls appear after selecting an item');
     await marketSelector.selectOption('cpi_yoy');
     await target('CPI同比').getByRole('group', {name:'CPI同比全部来源'}).getByRole('button', {name:'增量更新'}).click();

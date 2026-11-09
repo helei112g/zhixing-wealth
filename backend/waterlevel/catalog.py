@@ -1,7 +1,10 @@
 """Explicit series definitions. Source and statistical identities never alias."""
 from typing import Literal
 
+from ..common import ZONE
 from ..research.lixinger import METHODS
+
+MARKET_SCHEDULE = dict(weekday=5, time='18:00', timezone=ZONE.key)
 
 FULL_MARKET_CODE = '1000002'
 FULL_MARKET_ID = 'lxri:' + FULL_MARKET_CODE

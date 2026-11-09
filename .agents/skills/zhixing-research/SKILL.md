@@ -21,6 +21,6 @@ description: 在知行财富本机系统读取指数资料和市场水位事实�
 
 1. 通过`market_waterlevel(method, asof, facts=True)`读取事实包，核对分析ID、方法版本、观测日期、来源和有效覆盖。mcw/ew/ewpvo/median适用于指数和理杏仁A股全指，comparisons提供所选口径PE/PB与两综指的月度对照，PE附国债收益率倒数。历史日期截取当前修订版。GET读取本地快照。
 2. 股票评分固定指数mcw与全市场中位数，方法视角不重复计分；负PE/PB、短历史、陈旧或来源失败保持原状态。均值为60/120个完整月末值，缺月不补；分位严格小于当前值，不能复用指数观察台的日频均值/分位解释。
-3. 明确更新时用 `market_data_sources()` 读取具体指标和最新观测日期，将返回的精确 resource 与稳定 request_id 提交到统一队列。CPI 只提交 `prices/cpi_yoy`。沪深两融余额和 A股全指样本成交额分属 `margin_balances` 与 `market_turnover`，金额用 CNY 元，两者均不计分。市场水位仅手动更新，full_market 与 market_turnover 计入理杏仁基本面端点累计尝试次数。
+3. 用 `market_data_sources()` 读取具体指标、最新观测日期和 `schedule`。每周五北京时间 18:00 自动增量更新，取决于实例自动更新状态。获授权手动更新时，将返回的精确 resource 与稳定 request_id 提交到统一队列。CPI 只提交 `prices/cpi_yoy`。沪深两融余额和 A股全指样本成交额分属 `margin_balances` 与 `market_turnover`，金额用 CNY 元，两者均不计分。full_market 与 market_turnover 计入理杏仁基本面端点累计尝试次数。
 4. 冻结提交原analysis_id、method、asof与expected_research_revision，回读snapshot_id后下载离线报告。409不强行覆盖或自动重试。规则摘要与模型解释分开，未接入的转债、市值/GDP以及具体来源缺口不能替代或虚构。
 5. 详细来源、评分及迁移边界见[市场水位说明](../../../docs/waterlevel.md)。

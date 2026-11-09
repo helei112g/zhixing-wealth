@@ -17,7 +17,7 @@ from backend.store import Store
 
 class DividendParserTests(unittest.TestCase):
     def test_fund_per_ten_and_rowspan_are_exact(self):
-        html='''<script>ignore()</script><table><tr><th>年份</th><th>权益登记日</th><th>除息日</th><th>每10份分红</th><th>分红发放日</th></tr>
+        html='''<title>合成基金(159307)基金分红送配 _ 基金档案</title><script>ignore()</script><table><tr><th>年份</th><th>权益登记日</th><th>除息日</th><th>每10份分红</th><th>分红发放日</th></tr>
         <tr><td rowspan="2">2024</td><td>2024-06-10</td><td>2024-06-11</td><td>每10份派现金0.1100元</td><td>2024-06-14</td></tr>
         <tr><td>2024-03-10</td><td>2024-03-11</td><td>0.1500元</td><td>2024-03-14</td></tr></table>'''
         rows=dividends.parse_fund(html,'159307')
@@ -28,8 +28,21 @@ class DividendParserTests(unittest.TestCase):
         self.assertEqual(rows[0]['source_ref'],revised[0]['source_ref'])
     def test_unknown_table_and_bad_rate_fail_instead_of_zero(self):
         with self.assertRaises(ProviderError):dividends.parse_fund('<html>error</html>','159307')
-        html='<table><tr><th>权益登记日</th><th>除息日</th><th>每10份分红</th><th>分红发放日</th></tr><tr><td>2024-01-01</td><td>2024-01-02</td><td>未知</td><td>--</td></tr></table>'
+        html='<title>合成基金(159307)基金分红送配</title><table><tr><th>权益登记日</th><th>除息日</th><th>每10份分红</th><th>分红发放日</th></tr><tr><td>2024-01-01</td><td>2024-01-02</td><td>未知</td><td>--</td></tr></table>'
         with self.assertRaises(ProviderError):dividends.parse_fund(html,'159307')
+    def test_fund_rejects_wrong_or_missing_page_identity_even_with_valid_table(self):
+        table = (
+            '<table><tr><th>权益登记日</th><th>除息日</th><th>每10份分红</th><th>分红发放日</th></tr>'
+            '<tr><td>2024-01-02</td><td>2024-01-02</td><td>0.15元</td><td>2024-01-03</td></tr></table>'
+        )
+        cases = (
+            ('<title>另一只基金(159308)基金分红送配</title>', '代码不匹配'),
+            ('<title>基金分红送配</title><script>var example="<title>合成基金(159307)基金分红送配</title>";</script>', '缺少基金代码'),
+        )
+        for title, error in cases:
+            with self.subTest(title=title), self.assertRaisesRegex(ProviderError, error):
+                dividends.parse_fund(title + table, '159307')
+
     def test_stock_only_implemented_per_ten_no_fake_pay_date(self):
         row={'SECURITY_CODE':'600519','ASSIGN_PROGRESS':'实施分配','REPORT_DATE':'2024-12-31 00:00:00','EQUITY_RECORD_DATE':'2025-06-25','EX_DIVIDEND_DATE':'2025-06-26','PRETAX_BONUS_RMB':'280.2423','NOTICE_DATE':'2025-06-22'}
         result=dividends.parse_stock([row,dict(row,ASSIGN_PROGRESS='预披露')],'600519')

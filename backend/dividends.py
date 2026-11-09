@@ -12,15 +12,24 @@ from . import market
 class Tables(HTMLParser):
     def __init__(self):
         super().__init__();self.tables=[];self.stack=[];self.cell=None;self.row=None;self.ignore=0
+        self.title = []
+        self.in_title = False
+
     def handle_starttag(self,tag,attrs):
         if tag in ('script','style'):self.ignore+=1
+        if tag == 'title' and not self.ignore:
+            self.in_title = True
         if tag=='table':self.stack.append([])
         if self.stack and tag=='tr':self.row=[]
         if self.stack and tag in ('td','th'):self.cell=[]
     def handle_data(self,data):
+        if self.in_title and not self.ignore:
+            self.title.append(data)
         if self.cell is not None and not self.ignore:self.cell.append(data)
     def handle_endtag(self,tag):
         if tag in ('script','style') and self.ignore:self.ignore-=1
+        if tag == 'title':
+            self.in_title = False
         if tag in ('td','th') and self.cell is not None:
             if self.row is not None:self.row.append(re.sub(r'\s+','',''.join(self.cell)))
             self.cell=None
@@ -38,7 +47,15 @@ def date_or_none(value):
 
 
 def parse_fund(text,code):
-    parser=Tables();parser.feed(text)
+    parser=Tables()
+    parser.feed(text)
+    page_codes = re.findall(r'[(（]([0-9]{6})[)）]\s*基金分红送配', ''.join(parser.title))
+    if not page_codes:
+        raise market.ProviderError('基金分红页面标题缺少基金代码，已保留本地公告')
+    if set(page_codes) != {code}:
+        raise market.ProviderError('基金分红页面代码不匹配，已保留本地公告')
+    page_code = page_codes[0]
+
     for table in parser.tables:
         header=next((r for r in table if any('每10份分红' in c for c in r)),None)
         if header is None:continue
@@ -56,7 +73,7 @@ def parse_fund(text,code):
             if not match:raise market.ProviderError('基金每10份分红不是可核对的数字')
             per_ten=dec(match[1].replace(',',''))
             if per_ten<=0:continue
-            rows.append({'source_ref':f'fund:{code}:{ex_date}', 'code':code,'record_date':date_or_none(row[reg]),
+            rows.append({'source_ref':f'fund:{page_code}:{ex_date}', 'code':page_code,'record_date':date_or_none(row[reg]),
                 'ex_date':ex_date,'pay_date':date_or_none(row[pay]),'per_share':ds(per_ten/Decimal(10)),
                 'currency':'CNY','source':'天天基金·分红送配','source_url':f'https://fundf10.eastmoney.com/fhsp_{code}.html',
                 'original_rate':ds(per_ten),'original_unit':'每10份','status':'published'})

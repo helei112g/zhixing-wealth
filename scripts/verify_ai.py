@@ -82,6 +82,33 @@ def main():
     transactions='/api/portfolios/'+p['id']+'/transactions?page=1&page_size=20'
     rows=client.request(transactions)
     check(any(r['event']['id']==saved['id'] for r in rows['items']),'trade ID and portfolio read back')
+    original = client.request('/api/bootstrap')
+    iid = saved['instrument_id']
+    instrument = next(row for row in original['instruments'] if row['id'] == iid)
+    rename = cap['instrument_name']['write'].format(instrument_id=iid)
+    updated = client.write(rename, dict(name='AI合成标的更名', expected_revision=original['revision']), 'PUT')
+    boot = client.request('/api/bootstrap')
+    current = next(row for row in boot['instruments'] if row['id'] == iid)
+    check(updated == current and current['name'] == 'AI合成标的更名' and current['custom_name'],
+          'AI renames the exact existing instrument and reads it back')
+    untouched = {k: v for k, v in instrument.items() if k not in ('name', 'custom_name', 'updated_at')}
+    check(all(current[k] == v for k, v in untouched.items()) and boot['allocations'] == original['allocations'],
+          'AI instrument rename preserves identity and portfolio allocations')
+    after_rows = client.request(transactions)
+    check([row['event'] for row in after_rows['items']] == [row['event'] for row in rows['items']],
+          'AI instrument rename preserves original ledger events')
+    rows = after_rows
+    audit = client.request(cap['instrument_name']['audit'].format(instrument_id=iid))[0]
+    check(audit['before_data']['name'] == instrument['name'] and audit['after_data']['name'] == current['name'],
+          'AI instrument rename records old and new names in the audit')
+    try:
+        client.write(rename, dict(name='过期名称', expected_revision=original['revision']), 'PUT')
+    except RuntimeError as exc:
+        check(str(exc).startswith('HTTP 409:') and revision() == boot['revision'],
+              'AI instrument rename rejects a stale revision')
+    else:
+        raise AssertionError('AI instrument rename accepted a stale revision')
+
     dashboard='/api/portfolios/'+p['id']+'/dashboard'
     full=client.request(dashboard);summary=client.request(dashboard+'?view=summary')
     check(summary['portfolio']['description']=='合成组合介绍\n保留策略与背景','AI-created introduction reads back with original line breaks')

@@ -23,7 +23,7 @@ from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteR
 from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
 from .api_models import (HoldingLabelRequest, PurchasePlanRequest, PurchasePlanDeletionRequest,
                          PurchasePlanDeletionPreview, PurchasePlanDeletionResult)
-from .api_models import InstrumentDetail, DashboardResponse
+from .api_models import InstrumentDetail, InstrumentNameRequest, DashboardResponse
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -294,6 +294,9 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                      'scope': ['portfolio_id', 'instrument_id'], 'body_storage': 'local Markdown files; DB stores paths only',
                                      'operations': ['list', 'read', 'create', 'edit', 'delete', 'undo_delete'],
                                      'expected_revision_required': True, 'included_in_full_backup': True},
+                'instrument_name': {'read': '/api/bootstrap', 'write': '/api/instruments/{instrument_id}/name',
+                                    'method': 'PUT', 'expected_revision_required': True, 'scope': 'global_instrument',
+                                    'audit': '/api/revisions/instrument/{instrument_id}'},
                 'event_kinds': ['BUY', 'SELL', 'DIVIDEND', 'REINVEST'], 'manual_prices': False,
                 'event_deletion': {'preview': '/api/events/{event_id}/deletion-preview', 'preview_method': 'GET',
                                    'write': '/api/events/{event_id}', 'method': 'DELETE',
@@ -356,6 +359,12 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
 
     @app.post('/api/instruments')
     def create_instrument(payload: dict): return reply(service.save_instrument(payload))
+
+    @app.put('/api/instruments/{instrument_id}/name', summary='只更新已有标的的全局显示名称',
+             responses={409: {'description': '账本已变化，本次未写入'},
+                        422: {'description': '标的不存在、不可更名或请求无效'}})
+    def rename_instrument(instrument_id: str, payload: InstrumentNameRequest):
+        return reply(service.rename_instrument(instrument_id, payload.model_dump()))
 
     @app.put('/api/portfolios/{portfolio_id}/instruments/{instrument_id}', response_model=AllocationResult)
     def allocation(portfolio_id: str, instrument_id: str, payload: AllocationRequest):

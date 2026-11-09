@@ -108,7 +108,7 @@ class Client:
         # Only the documented, atomically revision-checked mutations are exposed here.
         core = (method == 'POST' and path in ('/api/portfolios', '/api/events') or
                 method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/purchase-plans', path) or
-                method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+(?:/labels)?)?|events/[^/]+)', path) or
+                method == 'PUT' and re.fullmatch(r'/api/(portfolios/[^/]+(?:/instruments/[^/]+(?:/labels)?)?|events/[^/]+|instruments/[^/]+/name)', path) or
                 method == 'DELETE' and re.fullmatch(r'/api/(events/[^/]+|portfolios/[^/]+/purchase-plans/[^/]+)', path) or
                 method == 'POST' and re.fullmatch(r'/api/dividends/[^/]+/(confirm|review)', path))
         notes = (method == 'POST' and re.fullmatch(r'/api/portfolios/[^/]+/instruments/[^/]+/notes(?:/[^/]+/restore)?', path) or

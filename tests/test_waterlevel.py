@@ -431,7 +431,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_friday_schedule_uses_shanghai_time_and_one_durable_receipt(self):
         seed_indices(self.research)
-        manual = self.market.update(['credit'], '2026-11-06')
+        manual = self.market.update(['credit'], json_dumps([MARKET_TRIGGER, '2026-11-06']))
         for stamp in ('2026-11-05T19:00:00+08:00', '2026-11-06T09:59:59+00:00',
                       '2026-11-07T10:00:00+08:00'):
             self.research.tick(stamp)

@@ -346,6 +346,11 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   const rowResult=await api('/data-updates/jobs/'+rowJob.job_id);
   check(rowResult.resources.length>0&&rowResult.resources.every(item=>item.target==='csi:000905'&&!item.full),
    'row update refreshes only the selected index and its subscribed resources');
+  await indexLink.click();
+  await ready();
+  await backToList.click();
+  await listing.getByRole('status').filter({hasText:/已完成|部分失败/}).waitFor();
+  check(true,'returning from detail preserves the row update result');
   if(rowResult.state==='partial'){
    check(await listing.getByRole('button',{name:'查看结果',exact:true}).count()===1,
     'partial refresh exposes the detailed results');

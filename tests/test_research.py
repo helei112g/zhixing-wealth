@@ -109,6 +109,14 @@ class MetricTests(unittest.TestCase):
         self.assertIsNone(price_changes(rows[:4], '2026-01-01', annual=True)['ytd'])
         incomplete = [*rows[:3], dict(date='2025-12-24', close='90')]
         self.assertIsNone(price_changes(incomplete, '2026-01-01', annual=True)['annual']['2025'])
+        incomplete.append(dict(date='2026-01-05', close='110'))
+        later = price_changes(incomplete, '2026-01-05', annual=True)
+        self.assertIsNone(later['annual']['2025'])
+        self.assertIsNone(later['ytd'])
+        self.assertIsNone(later['monthly'])
+        self.assertIsNone(later['daily'])
+        complete = [*rows[:4], incomplete[-1]]
+        self.assertEqual(price_changes(complete, '2026-01-05', annual=True)['daily']['from_date'], '2025-12-31')
     def test_moving_average_uses_full_history_and_exact_observation_counts(self):
         start=date(2023,1,1);rows=[dict(date=str(start+timedelta(days=i)),close=str(i+1)) for i in range(1000)]
         ma=moving_averages(rows,10)

@@ -29,7 +29,8 @@ def key(resource):return hashlib.sha256(json_dumps(resource).encode()).hexdigest
 
 def receipt_id(request_id, trigger):
     if trigger == MARKET_TRIGGER:
-        return key([MARKET_TRIGGER, request_id])
+        # An invalid UTF-8 prefix keeps this namespace separate from legacy client IDs.
+        return hashlib.sha256(b'\xffmarket_schedule:' + request_id.encode()).hexdigest()
     return hashlib.sha256(request_id.encode()).hexdigest()
 
 

@@ -14,6 +14,7 @@ export function ResearchPage({onData}:Obj){
  const [adding, setAdding]=useState(false);
  const [initialSync, setInitialSync]=useState('');
  const [listPage,setListPage]=useState(1);
+ const [indexJob,setIndexJob]=useState<Obj|null>(null);
  useEffect(()=>{let active=true;api('/research/catalog').then(v=>{if(active){C(v);S(s=>v.subscriptions.some((p:Obj)=>p.id===s)?s:'');E('');}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[revision]);
  useEffect(()=>{let active=true,busy=false;const refresh=async()=>{if(document.hidden||busy)return;busy=true;try{const v=await api('/research/revision');if(active){R(v.research_revision);Running(v.updating);}}catch(e:any){if(active)E(e.message);}finally{busy=false;}};refresh();const timer=setInterval(refresh,2500);return()=>{active=false;clearInterval(timer);};},[]);
  const profile=catalog?.subscriptions.find((p:Obj)=>p.id===selected);
@@ -28,7 +29,8 @@ export function ResearchPage({onData}:Obj){
    </div>
   </div>
   {selected?<IndexDetail key={selected} id={selected} revision={revision}/>
-   :<IndexList revision={revision} running={running} page={listPage} onPage={setListPage} onSelect={S} onData={onData}/>}
+   :<IndexList revision={revision} running={running} page={listPage} onPage={setListPage} onSelect={S} onData={onData}
+    job={indexJob} setJob={setIndexJob}/>}
   {initialSync===selected&&initialSync&&<p role="status" className="muted small">首次全量任务已受理。<button className="text-button" onClick={()=>onData(selected)}>在数据管理查看进度和结果</button></p>}
   {running&&<p role="status" className="muted small"><LoaderCircle size={14} className="spin"/>采集正在执行，已有有效快照可继续查看。</p>}
   {adding&&catalog&&<CollectionDialog catalog={catalog} onClose={()=>setAdding(false)} onSaved={(value:Obj)=>{
@@ -40,10 +42,9 @@ export function ResearchPage({onData}:Obj){
  </div>;
 }
 
-function IndexList({revision,running,page,onPage,onSelect,onData}:Obj){
+function IndexList({revision,running,page,onPage,onSelect,onData,job,setJob}:Obj){
  const [listing,setListing]=useState<Obj|null>(null);
  const [error,setError]=useState('');
- const [job,setJob]=useState<Obj|null>(null);
  const submission=useSubmission(()=>{});
  const pending=job&&activeJob(job);
 

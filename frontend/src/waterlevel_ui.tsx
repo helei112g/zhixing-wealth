@@ -9,7 +9,7 @@ import './waterlevel.css';
 
 const methods: Obj = {mcw:'总市值加权', ew:'等权', ewpvo:'正数等权', median:'中位数'};
 const states: Obj = {available:'已取得', missing:'缺失', stale:'数据陈旧', invalid_current:'当前值无效', source_error:'更新失败，保留旧值', error:'更新失败'};
-const metricNames: Obj = {pe:'PE TTM', pb:'PB', dividend_yield:'股息率'};
+const metricNames: Obj = {pe:'PE TTM', pb:'PB'};
 const number = (value: any) => value == null ? '—' : money(value, 2);
 const ratio = (value: any) => value == null ? '—' : percent(value);
 
@@ -18,15 +18,14 @@ function visibleRows(rows: Obj[], window: number, asof: string) {
   return rows.filter(row=>row.date.slice(0,7)>=start);
 }
 
-function History({statistics, label, unit, multiplier=1, window=10, asof, means=false, zero=false, zoom=false}: Obj) {
+function History({statistics, label, unit, window=10, asof, zero=false, zoom=false}: Obj) {
   const [start, setStart] = useState<string>();
   const [end, setEnd] = useState<string>();
   const [range, setRange] = useState<string[]>();
   const cancel = () => {setStart(undefined);setEnd(undefined);};
   const visible = visibleRows(statistics.chart, window, asof);
   const selected = range ? visible.filter(row=>row.date>=range[0]&&row.date<=range[1]) : visible;
-  const rows = selected
-    .map((row: Obj) => ({...row, ...Object.fromEntries(['value','mean5','mean10'].map(key => [key, row[key] == null ? null : Number(row[key]) * multiplier]))}));
+  const rows = selected.map((row: Obj) => ({date:row.date,value:row.value==null?null:Number(row.value)}));
   if (!rows.some((row: Obj) => row.value != null)) return <div className="waterlevel-chart-empty">尚无此口径曲线</div>;
   return <div className={zoom?'waterlevel-chart waterlevel-zoom-chart':'waterlevel-chart'}>
     {zoom&&<div className="waterlevel-zoom-controls"><small className="muted">{range?range.join(' 至 '):'在图中拖拽框选时段'}</small>{range&&<Button small onClick={()=>setRange(undefined)}>恢复全历史</Button>}</div>}
@@ -47,27 +46,55 @@ function History({statistics, label, unit, multiplier=1, window=10, asof, means=
         {start&&end&&<ReferenceArea x1={start} x2={end} fill="#365f91" fillOpacity={.15}/>}
         {zero&&<ReferenceLine y={0} stroke="var(--muted)" strokeDasharray="3 3"/>}
         <Line dataKey="value" name="观测值" stroke="#365f91" dot={rows.length===1} connectNulls={false} isAnimationActive={false}/>
-        {means&&<Line dataKey="mean5" name="5年完整月均值" stroke="#b88453" dot={false} connectNulls={false} isAnimationActive={false}/>}
-        {means&&<Line dataKey="mean10" name="10年完整月均值" stroke="#268979" dot={false} connectNulls={false} isAnimationActive={false}/>}
       </LineChart>
     </ResponsiveContainer></div>
   </div>;
 }
 
-function StatisticCard({label, statistics, unit, multiplier=1, window=10, asof, means=false, zero=false, zoom=false}: Obj) {
-  const shown = (value: any) => value == null ? '—' : number(Number(value) * multiplier);
+function StatisticCard({label, statistics, unit, window=10, asof, zero=false, zoom=false}: Obj) {
   return <Panel title={label} className="waterlevel-statistic">
-    <div className="waterlevel-current"><strong>{shown(statistics.current)}</strong><span>{unit}</span>
+    <div className="waterlevel-current"><strong>{number(statistics.current)}</strong><span>{unit}</span>
       <small>{statistics.date||'尚无观测'} · {states[statistics.status]||statistics.status}</small>
     </div>
-    <History {...{statistics,label,unit,multiplier,window,asof,means,zero,zoom}}/>
+    <History {...{statistics,label,unit,window,asof,zero,zoom}}/>
     <div className="waterlevel-window-values">
       {[5,10].map(years=><div key={years}><b>{years}年分位 {ratio(statistics.windows[years].percentile_ratio)}</b>
-        {means&&<><span>均值 {shown(statistics.means[years].value)}</span><span>偏离 {ratio(statistics.means[years].deviation_ratio)}</span>
-          <small>完整月 {statistics.means[years].count}/{statistics.means[years].required}</small></>}
         <small>分位样本 {statistics.windows[years].count} · {statistics.windows[years].status==='available'?'跨度完整':'历史不足'}</small>
       </div>)}
     </div>
+  </Panel>;
+}
+
+const marginLines:ValuationLine[] = [
+  {key:'margin_balance',label:'沪深合计',color:'#365f91'},
+  {key:'sh_margin_balance',label:'沪市两融余额',color:'#b88453'},
+  {key:'sz_margin_balance',label:'深市两融余额',color:'#268979'},
+];
+const turnoverLines:ValuationLine[] = [{key:'a_share_turnover',label:'成交额',color:'#365f91'}];
+
+function MarketAmountCard({data, lines, title, children}: {
+  data:Obj; lines:ValuationLine[]; title:string; children:React.ReactNode;
+}) {
+  const [window, setWindow] = useState(0);
+  const series = lines.map(line=>data.series.find((item:Obj)=>item.id===line.key).statistics);
+  const current = series[0];
+  const monthly = new Map<string,Obj>();
+  for (const [index, line] of lines.entries()) {
+    for (const row of visibleRows(series[index].chart, window, data.asof)) {
+      const date = row.date.slice(0,7);
+      if(!monthly.has(date))monthly.set(date,{date});
+      monthly.get(date)![line.key] = row.value==null?null:Number(row.value)/1e8;
+    }
+  }
+  return <Panel title={title} className="studio-valuation-panel"
+    right={<HistoryWindow label={title+'曲线窗口'} value={window} onChange={setWindow} windows={[5,10,0]}/>}>
+    <div className="waterlevel-current">
+      <strong>{current.current==null?'—':number(Number(current.current)/1e8)}</strong><span>亿元</span>
+      <small>{current.date||'尚无观测'} · {states[current.status]}</small>
+    </div>
+    {current.current==null?<Notice>尚无有效观测，可在数据管理的市场指标中更新。</Notice>
+      :<ValuationTrend rows={[...monthly.values()]} label={title+'历史曲线'} lines={lines} preserveBounds unit="亿元"/>}
+    <p className="muted small">{children} 曲线按月末最后观测展示，当月取最新已发布交易日。</p>
   </Panel>;
 }
 
@@ -175,7 +202,6 @@ function ScoreOverview({data}: Obj) {
 
 export function WaterlevelPage({today,onData}: Obj) {
   const [method, setMethod] = useState('ewpvo');
-  const [metric, setMetric] = useState('pe');
   const [fullMetric, setFullMetric] = useState('pe');
   const asof = today;
   const [tab, setTab] = useState('overview');
@@ -253,20 +279,8 @@ export function WaterlevelPage({today,onData}: Obj) {
       {tab==='overview'&&<><ScoreOverview data={data}/><ComparisonCard data={data} metric={fullMetric} setMetric={setFullMetric} setMethod={selectMethod} window={overviewWindow} setWindow={setOverviewWindow} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/><div className="waterlevel-grid">{lines(['erp','bond_inverse'],overviewWindow)}</div><details className="waterlevel-boundaries"><summary>当前覆盖与计算边界</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details></>}
       {tab==='equity'&&<>
         <BroadCard data={data} window={equityWindow} setWindow={setEquityWindow} setMethod={selectMethod} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/>
-        <section aria-labelledby="waterlevel-main-indices">
-          <h3 id="waterlevel-main-indices">主要指数估值</h3>
-          <div className="studio-controls">
-            <div className="studio-choice"><span>估值方法</span>
-              <ValuationMethods methods={Object.keys(methods)} value={selectedMethod} onChange={selectMethod}/>
-            </div>
-            <Field label="对照指标"><select aria-label="对照指标" value={metric} onChange={event=>setMetric(event.target.value)}>{Object.entries(metricNames).map(([key,label])=><option key={key} value={key}>{String(label)}</option>)}</select></Field>
-          </div>
-          <p className="muted small">当前显示 {methods[data.method]}（{data.method}）。估值方法和窗口与上方对照图同步。均值使用连续的60/120个完整月末观测。</p>
-          {methodStatus&&<p role="status" className="muted small waterlevel-method-status">{methodStatus}</p>}
-          <p className="waterlevel-legend"><span>蓝线：月末观测</span><span>棕线：5年均值</span><span>绿线：10年均值</span></p>
-          <div className="waterlevel-grid" aria-busy={loading}>{data.indices.map((index:Obj)=><StatisticCard key={index.id} label={index.label+' · '+metricNames[metric]} statistics={index.metrics[metric]} unit={metric==='dividend_yield'?'%':'倍'} multiplier={metric==='dividend_yield'?100:1} window={equityWindow} asof={asof} means/>)}</div>
-        </section>
-        <Button onClick={onData}>打开数据管理</Button>
+        <MarketAmountCard data={data} title="沪深两融余额" lines={marginLines}>来源为东方财富，合计同日沪市与深市的融资融券余额，范围为沪深两市。</MarketAmountCard>
+        <MarketAmountCard data={data} title="A股全指当日成交额" lines={turnoverLines}>来源为理杏仁 A股全指（1000002），按指数样本统计已收盘交易日成交额。</MarketAmountCard>
       </>}
       {tab==='bonds'&&<><p className="muted small">信用利差按同日AAA 3Y中票减3Y国债；FR007/FDR007是定盘利率，不是R007/DR007。1个百分点=100 BP。</p><div className="waterlevel-grid">{lines(['cn_10y','cn_2y','cn_30y','us_10y','us_2y','us_30y','cn_term','us_term','credit_spread','aaa_3y','gov_3y','fr007','fdr007','repo_spread'],0,true)}</div></>}
       {tab==='macro'&&<><Notice>日期为统计月份，不能当作发布日期。社融使用人民银行直接公布的存量同比；M2−M1为同月同比之差，跨M1统计口径的历史仅供参考。</Notice><div className="waterlevel-grid">{lines(['pmi','nonmanufacturing_pmi','cpi_yoy','ppi_yoy','m1_yoy','m2_yoy','money_gap','sf_stock_yoy'],0,true)}</div><p className="muted small">本批来源未统一提供原始发布日期；未知日期保留为空，抓取时间见来源记录。</p></>}

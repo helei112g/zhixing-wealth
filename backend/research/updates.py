@@ -220,8 +220,9 @@ class UpdateJobs:
         if self.current_trigger != 'manual' and not (self.current_trigger == 'index_create' and r.get('target') and r.get('full')):
             raise DomainError('指数资料库和市场水位仅支持手动更新')
         if r['scope'] == 'market':
+            from ..waterlevel.catalog import LIXINGER_FIELDS
             asof = (self.current_job or {}).get('information_cutoff') or str(today())
-            if r['group'] == 'full_market':
+            if r['group'] in LIXINGER_FIELDS:
                 asof = min(asof, (self.current_job or {}).get('market_cutoff') or providers.cutoff())
             options = {k: r[k] for k in ('full', 'series') if k in r}
             items = self.research.waterlevel.collect(r['group'], asof, **options)

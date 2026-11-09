@@ -7,7 +7,7 @@ from statistics import median
 from ..common import day, dec, ds
 from ..research.lixinger import METHODS
 
-METHOD_VERSION = 'waterlevel-v5'
+METHOD_VERSION = 'waterlevel-v6'
 
 
 def month_shift(month, offset):

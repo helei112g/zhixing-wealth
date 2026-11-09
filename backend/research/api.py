@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, SecretStr
 from typing import Annotated, Literal
 from ..common import DomainError
+from ..waterlevel.catalog import Group
 
 class ResolveRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -58,7 +59,7 @@ class MarketResource(BaseModel):
     model_config = ConfigDict(extra='forbid')
     scope: Literal['market']
     full: StrictBool = False
-    group: Literal['full_market','composites','calendar','china_rates','us_rates','credit','repo','pmi','prices','money','social_financing']
+    group: Group
     series: Literal['sh_composite','sz_composite','cpi_yoy','ppi_yoy','fr007','fdr007'] | None = None
 
 
@@ -190,8 +191,9 @@ def router(service):
     @api.get('/api/research/revision')
     def revision():
         with service.store.lock:return dict(research_revision=service.revision(),updating=service.updating())
-    @api.get('/api/research/indices')
-    def listing(kind:str|None=None,page:int=Query(1,ge=1)):return service.listing(kind,page)
+    @api.get('/api/research/indices', summary='已建档指数、最新估值、价格涨跌幅与实际取价日期')
+    def listing(kind:str|None=None, page:int=Query(1,ge=1), method:Method='overall'):
+        return service.listing(kind, page, method)
     @api.post('/api/research/indices/resolve')
     def resolve(body:ResolveRequest):return service.resolve(body.code)
     @api.post('/api/research/indices/valuation-preview', deprecated=True)

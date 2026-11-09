@@ -118,7 +118,7 @@ class MetricTests(unittest.TestCase):
 class SourceTests(unittest.TestCase):
     def test_full_market_uses_exact_code_and_six_fields(self):
         access = Mock()
-        fields = sources.FULL_MARKET_FIELDS
+        fields = sources.LIXINGER_FIELDS['full_market']
         values = {field: n+10 for n, field in enumerate(fields.values())}
         access.request.return_value = [dict(stockCode='1000002', date=ASOF, **values)]
         previous = payload('full_market')
@@ -136,11 +136,38 @@ class SourceTests(unittest.TestCase):
 
     def test_full_market_rejects_missing_method_instead_of_substituting(self):
         access = Mock()
-        values = dict.fromkeys(sources.FULL_MARKET_FIELDS.values(), 10)
+        values = dict.fromkeys(sources.LIXINGER_FIELDS['full_market'].values(), 10)
         values.pop('pb.ew')
         access.request.return_value = [dict(stockCode='1000002', date=ASOF, **values)]
         with self.assertRaisesRegex(DomainError, 'pb.ew'):
             sources.collect('full_market', ASOF, payload('full_market'), access=access)
+
+    def test_turnover_uses_only_ta_and_keeps_exact_cny_amount(self):
+        access = Mock()
+        access.request.return_value = [dict(stockCode='1000002', date=ASOF, ta='1200000000000.25')]
+        value = sources.collect('market_turnover', ASOF, payload('market_turnover'), access=access)
+        self.assertEqual(access.request.call_args.args[1]['metricsList'], ['ta'])
+        self.assertEqual(value['series']['a_share_turnover'][-1],
+                         dict(date=ASOF, value='1200000000000.25', field='ta'))
+
+    def test_margin_uses_same_date_exchange_balances_without_beijing(self):
+        from backend.waterlevel.validation import source
+        data = [dict(DIM_DATE=ASOF, H_RZRQYE='200000000000.25', S_RZRQYE='100000000000',
+                     B_RZRQYE='9000000000'),
+                dict(DIM_DATE='2026-10-29', H_RZRQYE='200000000000', S_RZRQYE=None)]
+        raw = json.dumps(dict(success=True, result=dict(pages=1, data=data))).encode()
+        def get(reader, url):
+            reader.evidence.append(dict(url=url, sha256='a'*64))
+            return raw
+        with patch.object(sources.Reader, 'get', get):
+            value = sources.collect('margin_balances', ASOF)
+        source(value)
+        self.assertEqual(value['series']['margin_balance'],
+                         [dict(date=ASOF, value='300000000000.25', published_at=None)])
+        self.assertEqual(len(value['series']['sh_margin_balance']), 1)
+        value['series']['margin_balance'][0]['value'] = '309000000000.25'
+        with self.assertRaises(DomainError):
+            source(value)
 
     def test_composites_request_correct_price_index_codes(self):
         reader = sources.Reader()
@@ -487,6 +514,12 @@ class ApiTests(unittest.TestCase):
                 self.assertIn('chart',client.get('/api/market-waterlevel?asof='+ASOF).json()['series'][0]['statistics'])
                 self.assertEqual(client.get('/api/market-waterlevel?method=avg').status_code,422)
                 self.assertEqual(client.get('/api/market-waterlevel?asof=2999-01-01').status_code,422)
+                resources = [dict(scope='market', group=group) for group in ('margin_balances', 'market_turnover')]
+                update = client.post('/api/data-updates/run', headers=headers,
+                                     json=dict(scopes=['market'], resources=resources, request_id='synthetic-activity'))
+                self.assertEqual(update.status_code, 202, update.text)
+                job = client.get('/api/data-updates/jobs/'+update.json()['job_id']).json()
+                self.assertEqual(job['resources'], resources)
                 fetch.assert_not_called()
 
     def test_read_only_instance_blocks_new_market_writes(self):

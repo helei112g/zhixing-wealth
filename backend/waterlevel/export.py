@@ -1,6 +1,8 @@
 """Standalone, script-free HTML from a frozen snapshot; never retrieves data."""
 from html import escape
 
+from .catalog import AMOUNT_GROUPS
+
 
 def cell(value, suffix=''):
     return '—' if value is None else escape(str(value)) + suffix
@@ -100,11 +102,19 @@ def render(snapshot):
                           for key, name in (('equity', '股票'), ('rates', '利率债'), ('credit', '信用债'))]]:
         cards.append(f'<article><h3>{label}</h3><strong>{cell(item["score"])}</strong> {escape(item["label"])}'
                      f'<small>覆盖 {item["included"]}/{item["expected"]}</small></article>')
-    indices = []
-    for index in data['indices']:
-        for key, label in (('pe', 'PE TTM'), ('pb', 'PB'), ('dividend_yield', '股息率')):
-            unit = '比例（0.01=1%）' if key == 'dividend_yield' else '倍'
-            indices.append(metric(index['label'] + ' ' + label, index['metrics'][key], unit))
+    amounts = [item for item in data['series'] if item['group'] in AMOUNT_GROUPS]
+    equity_section = ''
+    if data['method_version'] in ('waterlevel-v1', 'waterlevel-v2', 'waterlevel-v3', 'waterlevel-v4', 'waterlevel-v5'):
+        indices = []
+        for index in data['indices']:
+            for key, label in (('pe', 'PE TTM'), ('pb', 'PB'), ('dividend_yield', '股息率')):
+                unit = '比例（0.01=1%）' if key == 'dividend_yield' else '倍'
+                indices.append(metric(index['label'] + ' ' + label, index['metrics'][key], unit))
+        equity_section = ('<h2>主要指数估值</h2><p>蓝色：月末观测；棕色：5年均值；绿色：10年均值。股息率保持接口比例单位。</p>'
+                          '<div class="grid">' + ''.join(indices) + '</div>')
+    elif amounts:
+        equity_section = '<h2>成交与两融</h2><div class="grid">' + ''.join(
+            metric(item['label'], item['statistics'], item['unit']) for item in amounts) + '</div>'
     source_rows = []
     for source in data['sources']:
         links = ''.join(f'<li><a href="{escape(item["url"], quote=True)}">{escape(item["url"])}</a>'
@@ -121,10 +131,10 @@ def render(snapshot):
             '<div class="grid">' + ''.join(cards) + '</div><h2>规则摘要</h2><p>' + escape(data['commentary']['overall']) + '</p><ul>'
             + ''.join('<li>' + escape(text) + '</li>' for text in data['commentary']['evidence'])
             + '</ul><h2>全市场估值对照</h2>'
-            + ''.join(comparison_chart(key, item, data['method'] if data.get('method_version') in ('waterlevel-v3', 'waterlevel-v4', 'waterlevel-v5') else None)
+            + ''.join(comparison_chart(key, item, data['method'] if data.get('method_version') not in ('waterlevel-v1', 'waterlevel-v2') else None)
                       for key, item in data.get('comparisons', {}).items())
-            + '<h2>主要指数估值</h2><p>蓝色：月末观测；棕色：5年均值；绿色：10年均值。股息率保持接口比例单位。</p><div class="grid">'
-            + ''.join(indices) + '</div><h2>利率、宏观与跨资产参照</h2><div class="grid">'
-            + ''.join(metric(item['label'], item['statistics'], item['unit']) for item in data['series'] if item['group'] not in ('full_market', 'composites'))
+            + equity_section + '<h2>利率、宏观与跨资产参照</h2><div class="grid">'
+            + ''.join(metric(item['label'], item['statistics'], item['unit']) for item in data['series']
+                      if item['group'] not in ('full_market', 'composites') and item['group'] not in AMOUNT_GROUPS)
             + '</div><h2>方法与边界</h2><ul>' + ''.join('<li>' + escape(text) + '</li>' for text in data['limitations'])
             + '</ul><h2>来源证据</h2>' + ''.join(source_rows) + '</html>')

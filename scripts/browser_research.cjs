@@ -101,6 +101,18 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(Object.values(counts).some(value=>value>20),'full history collection continues past the former default cap');
 
   await navigate('指数资料库');
+  const listing=page.getByRole('table',{name:'指数列表',exact:true});
+  const indexLink=listing.getByRole('button',{name:'中证500',exact:true});
+  await indexLink.waitFor();
+  const indexListData=await api('/research/indices?method=mcw');
+  const year=indexListData.calendar_year;
+  check(JSON.stringify(await listing.getByRole('columnheader').allTextContents())===JSON.stringify([
+   '指数','PE TTM','PB',(year-1)+'年',(year-2)+'年',(year-3)+'年','今年','本月','上一个交易日','操作',
+  ]),'index library opens on the list with the requested periods');
+  check(indexListData.items[0].valuation.pe.date===detail.valuation.pe.date&&
+   await page.getByRole('heading',{name:'点位走势',exact:true}).count()===0,'index list and detail share the latest valuation snapshot');
+  await shot('index-library-list');
+  await indexLink.click();
   await ready();
   check(await page.getByRole('heading',{name:'点位走势',exact:true}).count()===1&&await page.getByRole('heading',{name:'估值走势',exact:true}).count()===1,'price and valuation use separate cards');
   check(await page.locator('.studio-valuation-panel').evaluate(node=>Boolean(node.compareDocumentPosition(document.querySelector('.studio-price-panel'))&Node.DOCUMENT_POSITION_FOLLOWING)),'valuation card appears before price card');
@@ -311,6 +323,24 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(shared.snapshot_id===full.items.find(item=>item.module==='valuations').snapshot_id,
    'market reads the exact snapshot published from the index library');
   await shot('index-manual-updates');
+  await navigate('指数资料库');
+  await indexLink.click();
+  await ready();
+  await page.getByRole('button',{name:'返回指数列表',exact:true}).click();
+  const update=indexLink.locator('xpath=ancestor::tr').getByRole('button',{name:'更新数据',exact:true});
+  const submitted=page.waitForResponse(response=>response.request().method()==='POST'&&response.url().endsWith('/api/data-updates/run'));
+  await update.click();
+  const rowJob=await (await submitted).json();
+  await listing.getByRole('status').filter({hasText:/已完成|部分失败/}).waitFor({timeout:45000});
+  const rowResult=await api('/data-updates/jobs/'+rowJob.job_id);
+  check(rowResult.resources.length>0&&rowResult.resources.every(item=>item.target==='csi:000905'&&!item.full),
+   'row update refreshes only the selected index and its subscribed resources');
+  if(rowResult.state==='partial'){
+   check(await listing.getByRole('button',{name:'查看结果',exact:true}).count()===1,
+    'partial refresh exposes the detailed results');
+  }
+  await navigate('数据管理','研究工具');
+  await page.getByLabel('数据管理指数',{exact:true}).selectOption('csi:000905');
   await page.getByRole('button',{name:'管理采集',exact:true}).click();
   const manage=page.getByRole('dialog',{name:'管理指数采集'});
   await manage.getByRole('checkbox',{name:'启用此指数；关闭即暂停并保留历史',exact:true}).uncheck();
@@ -320,6 +350,11 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(!(await api('/research/catalog')).subscriptions[0].subscription.enabled,'pause retains history');
   await page.setViewportSize({width:390,height:844});
   await navigate('指数资料库');
+  await indexLink.waitFor();
+  check(await listing.getByRole('button',{name:'更新数据',exact:true}).isDisabled(),'paused index update remains disabled');
+  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile list scrolls within the table');
+  await shot('index-library-mobile');
+  await indexLink.click();
   await ready();
   await shot('studio-mobile');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile overview has no horizontal overflow');

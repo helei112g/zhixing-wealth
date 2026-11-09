@@ -26,6 +26,15 @@ def main():
     except RuntimeError as e:check('409' in str(e),'stale subscription rejected')
     else:raise AssertionError('stale subscription accepted')
     d=c.research_index(saved['id'],window=0);check(d['latest'] and d['valuation']['pe']['source']=='理杏仁','reads synthetic cached Lixinger sequence')
+    listing=c.research_indices()
+    row=next(item for item in listing['items'] if item['id']==saved['id'])
+    check(listing['method']=='mcw' and row['valuation']['pe']==d['valuation']['pe'] and
+          set(row['changes']['annual'])=={str(listing['calendar_year']-n) for n in (1,2,3)},
+          'index list shares the same valuation and provides three completed years')
+    activity=cap['market_waterlevel']['market_activity']
+    check(set(activity['series']) <= {row['id'] for row in c.market_waterlevel(facts=True)['series']} and
+          set(activity['groups']) <= {row['id'] for row in c.market_data_sources()['items']},
+          'market facts and source discovery expose both activity groups')
     a=c.research_studio(saved['id'],method='mcw',window=3,metric='pe')
     check(a['analysis_id']==c.research_index(saved['id'])['analysis_id'],'UI and AI share analysis snapshot')
     check(a['research_revision']==d['research_revision'],'independent chart windows remain bound to the same research revision')

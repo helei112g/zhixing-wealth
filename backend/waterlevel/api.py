@@ -4,20 +4,21 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from .catalog import GROUPS, Group
+
 Method = Literal['mcw', 'ew', 'ewpvo', 'median']
-Group = Literal['full_market', 'composites', 'calendar', 'china_rates', 'us_rates', 'credit', 'repo', 'pmi', 'prices', 'money', 'social_financing']
 
 
 class MarketSettingsRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     automatic: StrictBool
-    groups: list[Group] = Field(min_length=1, max_length=11)
+    groups: list[Group] = Field(min_length=1, max_length=len(GROUPS))
     expected_settings_revision: int = Field(ge=0, strict=True)
 
 
 class MarketUpdateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    groups: list[Group] = Field(default_factory=list, max_length=11)
+    groups: list[Group] = Field(default_factory=list, max_length=len(GROUPS))
     indices: list[str] = Field(default_factory=list, max_length=10)
     full: StrictBool = False
     request_id: str = Field(min_length=1, max_length=160)

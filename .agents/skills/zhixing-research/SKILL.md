@@ -5,7 +5,7 @@ description: 在知行财富本机系统读取指数资料和市场水位事实�
 
 # 指数观察台
 
-1. 读取 `/api/capabilities` 和 `/api/research/catalog`，内置目录提供常用代码。新指数用理杏仁代码走在线预览。
+1. 读取 `/api/capabilities` 和 `/api/research/catalog`，内置目录提供常用代码。用 `research_indices(page, method='mcw')` 查看已建档列表、估值和价格涨跌幅，核对各观测日和取价端点。新指数用理杏仁代码走在线预览。
 2. 用 `collection_preview(code, modules, history_start)` 展示核验日线日期、范围、逐端点预计调用量和原研究revision。依据用户授权提交 `PUT /api/research/collection`，保留expected_research_revision，按id回读；409不自动重试。首次保存同时提交全量同步，回读返回的 job_id。后续编辑既有订阅没有首次同步任务。
 3. 明确更新时提交原有公共数据任务，稳定request_id，结果未知先查job_id。按来源更新使用指数详情返回的 `collection.resources`，精确重试只提交失败项原resource；暂停保留历史。本机不设调用次数上限，保留累计尝试计数，不自动解除供应商权限或额度阻断。
 4. Token由用户在本机「研究工具 → 数据管理」输入并保存本地文件。禁止读取Token文件或令牌内容，禁止发到聊天、请求文件、日志、云端或仓库。仅可读取配置状态和非敏感计数。
@@ -21,6 +21,6 @@ description: 在知行财富本机系统读取指数资料和市场水位事实�
 
 1. 通过`market_waterlevel(method, asof, facts=True)`读取事实包，核对分析ID、方法版本、观测日期、来源和有效覆盖。mcw/ew/ewpvo/median适用于指数和理杏仁A股全指，comparisons提供所选口径PE/PB与两综指的月度对照，PE附国债收益率倒数。历史日期截取当前修订版。GET读取本地快照。
 2. 股票评分固定指数mcw与全市场中位数，方法视角不重复计分；负PE/PB、短历史、陈旧或来源失败保持原状态。均值为60/120个完整月末值，缺月不补；分位严格小于当前值，不能复用指数观察台的日频均值/分位解释。
-3. 明确更新时用 `market_data_sources()` 读取具体指标和最新观测日期，将返回的精确 resource 与稳定 request_id 提交到统一队列。CPI 只提交 `prices/cpi_yoy`。市场水位仅支持手动更新。full_market 读取理杏仁 A股全指1000002，计入本机理杏仁基本面端点累计尝试次数，无本机次数上限。
+3. 明确更新时用 `market_data_sources()` 读取具体指标和最新观测日期，将返回的精确 resource 与稳定 request_id 提交到统一队列。CPI 只提交 `prices/cpi_yoy`。沪深两融余额和 A股全指样本成交额分属 `margin_balances` 与 `market_turnover`，金额用 CNY 元，两者均不计分。市场水位仅手动更新，full_market 与 market_turnover 计入理杏仁基本面端点累计尝试次数。
 4. 冻结提交原analysis_id、method、asof与expected_research_revision，回读snapshot_id后下载离线报告。409不强行覆盖或自动重试。规则摘要与模型解释分开，未接入的转债、市值/GDP以及具体来源缺口不能替代或虚构。
 5. 详细来源、评分及迁移边界见[市场水位说明](../../../docs/waterlevel.md)。

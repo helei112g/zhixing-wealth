@@ -13,7 +13,8 @@ import requests
 
 from ..common import DomainError, day, dec, ds, json_dumps, now
 from ..research import lixinger
-from .catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, FULL_MARKET_START, GROUPS, SERIES, SPLIT_GROUPS
+from .catalog import (FULL_MARKET_CODE, FULL_MARKET_START, GROUPS, LIXINGER_FIELDS,
+                      MARGIN_FIELDS, MAX_MARKET_AMOUNT, SERIES, SPLIT_GROUPS)
 
 HOSTS = {'datacenter-web.eastmoney.com', 'www.chinamoney.com.cn', 'yield.chinabond.com.cn',
          'home.treasury.gov', 'www.pbc.gov.cn', 'www.stats.gov.cn', 'money.finance.sina.com.cn'}
@@ -113,29 +114,25 @@ class Reader:
         return Document(text_body(self.get(url)))
 
 
-def full_market(reader, asof, previous, access):
-    """Read all eight independently supplied A-share market valuation series."""
+def lixinger_market(reader, fields, start, asof, access):
+    """Read independently supplied A-share all-index fields."""
     if access is None:
-        raise DomainError('全市场估值需要本机理杏仁访问配置')
+        raise DomainError('A股全指数据需要本机理杏仁访问配置')
     endpoint = 'cn/index/fundamental'
-    start = FULL_MARKET_START
-    if previous and FULL_MARKET_FIELDS.keys() <= previous['series'].keys():
-        last = min(rows[-1]['date'] for rows in previous['series'].values())
-        start = max(start, str(day(last) - timedelta(days=30)))
-    result = {key: [] for key in FULL_MARKET_FIELDS}
+    result = {key: [] for key in fields}
     for first, last in lixinger.ranges(start, asof):
         if reader.cancelled():
             raise DomainError('市场数据更新已中断')
         params = dict(stockCodes=[FULL_MARKET_CODE], startDate=first, endDate=last,
-                      metricsList=list(FULL_MARKET_FIELDS.values()))
+                      metricsList=list(fields.values()))
         raw = access.request(endpoint, params)
         rows = lixinger.normalize(dict(kind='fundamental', params=params), raw, {'code': FULL_MARKET_CODE})
         reader.evidence.append(dict(url='https://www.lixinger.com/api/open-api/html-doc/' + endpoint,
                                     fetched_at=now(), sha256=hashlib.sha256(json_dumps(rows).encode()).hexdigest(),
                                     stock_code=FULL_MARKET_CODE, start=first, end=last))
-        for key, field in FULL_MARKET_FIELDS.items():
+        for key, field in fields.items():
             result[key].extend(dict(date=row['date'], value=row[field], field=field) for row in rows if row[field] is not None)
-    reader.notes.append('理杏仁 A股全指（1000002）。PE TTM、PB各口径独立保存。首次采集按历史范围分片，之后从已有日期回溯30天。')
+    reader.notes.append('理杏仁 A股全指（1000002）。首次采集按历史范围分片，之后从已有日期回溯30天。')
     return result
 
 
@@ -154,9 +151,10 @@ def composites(reader, series=None):
     return result
 
 
-def em_series(reader, report, fields, date_field, start, end):
+def em_series(reader, report, fields, date_field, start, end, *, limit=10000):
     series = {key: [] for key in fields}
-    pages = 1
+    pages = count = None
+    read = 0
     for page in range(1, 31):
         params = dict(reportName=report, columns=','.join([date_field, *fields.values()]),
                       pageSize=1000, pageNumber=page, sortColumns=date_field, sortTypes=-1,
@@ -165,9 +163,12 @@ def em_series(reader, report, fields, date_field, start, end):
         result = value.get('result')
         if value.get('success') is not True or not isinstance(result, dict) or not result.get('data'):
             raise DomainError('东方财富未返回可核验数据')
-        pages = result.get('pages')
-        if type(pages) is not int or not 1 <= pages <= 30:
+        if page == 1:
+            pages, count = result.get('pages'), result.get('count')
+        if (type(pages) is not int or not 1 <= pages <= 30 or
+                pages != result.get('pages') or count != result.get('count')):
             raise DomainError('东方财富分页规模无效')
+        read += len(result['data'])
         for row in result['data']:
             stamp = str(day(row[date_field][:10]))
             if any(field not in row for field in fields.values()):
@@ -177,12 +178,25 @@ def em_series(reader, report, fields, date_field, start, end):
             if not start <= stamp <= end:
                 raise DomainError('东方财富返回日期超出请求范围')
             for key, field in fields.items():
-                if field not in row:
-                    raise DomainError('东方财富指标字段变化，未替换历史')
-                series[key].append(dict(date=stamp, value=number(row[field]), published_at=None))
+                series[key].append(dict(date=stamp, value=number(row[field], limit=limit), published_at=None))
         if page == pages:
+            if count is not None and read != count:
+                raise DomainError('东方财富分页未取得完整记录')
             return series
     raise DomainError('东方财富分页未完成')
+
+
+def margin_balances(reader, start, end):
+    result = em_series(reader, 'RPTA_RZRQ_LSDB', MARGIN_FIELDS, 'DIM_DATE', start, end, limit=MAX_MARKET_AMOUNT)
+    complete = [(sh, sz) for sh, sz in zip(*result.values(), strict=True)
+                if sh['value'] is not None and sz['value'] is not None]
+    result = {key: [pair[index] for pair in complete] for index, key in enumerate(MARGIN_FIELDS)}
+    result['margin_balance'] = [
+        dict(date=left['date'], value=ds(dec(left['value']) + dec(right['value'])), published_at=None)
+        for left, right in complete
+    ]
+    reader.notes.append('沪深两融余额为东方财富所列沪市与深市两融余额的同日合计，不含北交所。')
+    return result
 
 
 def treasury(reader, start, end):
@@ -319,8 +333,12 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None,
         raise DomainError('市场数据组无效')
     reader = Reader(cancelled)
     earliest = f'{int(asof[:4]) - 11}-01-01'
-    if group in ('full_market', 'composites', 'china_rates'):
+    if group in ('composites', 'china_rates'):
         earliest = '1990-01-01'
+    elif group in LIXINGER_FIELDS:
+        earliest = FULL_MARKET_START
+    elif group == 'margin_balances':
+        earliest = '2010-03-31'
     old_series = (previous or {}).get('series', {})
     required = SPLIT_GROUPS.get(group, ())
     selected = {series: old_series.get(series, [])} if series else old_series
@@ -335,8 +353,14 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None,
                   checked_at=now(), requested_asof=asof, published_at=None, series={})
     if group == 'calendar':
         return dict(common, calendar=calendar(reader, int(asof[:4])))
-    if group == 'full_market':
-        result = full_market(reader, asof, None if full else previous, access)
+    if group in LIXINGER_FIELDS:
+        fields = LIXINGER_FIELDS[group]
+        # Old full-market snapshots may lack newer valuation methods.
+        result = lixinger_market(reader, fields, start if fields.keys() <= old_series.keys() else earliest, asof, access)
+        if group == 'market_turnover':
+            result['a_share_turnover'] = [row for row in result['a_share_turnover'] if dec(row['value']) != 0]
+    elif group == 'margin_balances':
+        result = margin_balances(reader, start, asof)
     elif group == 'composites':
         result = composites(reader, series) if series else composites(reader)
     elif group == 'china_rates':
@@ -364,7 +388,7 @@ def collect(group, asof, previous=None, cancelled=lambda: False, *, access=None,
         raise DomainError('返回的市场指标与请求不符')
     difference = dict(added=0, revised=0, missing=0)
     for key, rows in result.items():
-        label = FULL_MARKET_FIELDS[key] if group == 'full_market' else SERIES[key][1]
+        label = LIXINGER_FIELDS['full_market'][key] if group == 'full_market' else SERIES[key][1]
         rows = [row for row in rows if earliest <= row['date'] <= asof]
         if not any(row['value'] is not None for row in rows):
             raise DomainError(f'{label}没有有效观测，保留原数据')

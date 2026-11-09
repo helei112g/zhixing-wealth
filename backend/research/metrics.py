@@ -3,6 +3,7 @@ import calendar
 from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
+from ..trading_calendar import no_expected_session
 
 METHOD_VERSION = 'index-studio-6'
 WINDOWS = (3, 5, 10)
@@ -115,22 +116,46 @@ def quantiles(values):
     return result
 
 
-def price_changes(rows,asof):
+def price_changes(rows, asof, *, missing_dates=(), annual=False):
     """Calendar week/month/YTD anchors use the last close before the boundary."""
-    if not rows:return {k:None for k in ('daily','weekly','monthly','ytd')}
-    latest=rows[-1];end=day(latest['date']);at=day(asof)
+    at = day(asof)
+    years = range(at.year - 1, at.year - 4, -1) if annual else ()
+    result = dict.fromkeys(('daily', 'weekly', 'monthly', 'ytd'))
+    if annual:
+        result['annual'] = {str(year): None for year in years}
+    if not rows:
+        return result
+    latest=rows[-1];end=day(latest['date'])
     monday=at-timedelta(days=at.weekday());year=at.replace(month=1,day=1)
     month = at.replace(day=1)
-    def change(base):
+    def change(base, close=latest):
         if not base:return None
-        return dict(ratio=ds(dec(latest['close'])/dec(base['close'])-1),from_date=base['date'],to_date=latest['date'])
+        return dict(ratio=ds(dec(close['close'])/dec(base['close'])-1),from_date=base['date'],to_date=close['date'])
     previous=rows[-2] if len(rows)>1 and (end-day(rows[-2]['date'])).days<=15 else None
     def anchor(boundary):
         before=[r for r in rows if day(r['date'])<boundary]
-        return before[-1] if before and (boundary-day(before[-1]['date'])).days<=15 else None
-    return dict(daily=change(previous),weekly=change(anchor(monday)) if end>=monday else None,
-                monthly=change(anchor(month)) if end>=month else None,
-                ytd=change(anchor(year)) if end>=year else None)
+        if not before or (boundary - day(before[-1]['date'])).days > 15:
+            return None
+        last = before[-1]
+        return None if any(last['date'] < missing < str(boundary) for missing in missing_dates) else last
+
+    if previous and any(previous['date'] < missing < latest['date'] for missing in missing_dates):
+        previous = None
+    result.update(daily=change(previous), weekly=change(anchor(monday)) if end >= monday else None,
+                  monthly=change(anchor(month)) if end >= month else None,
+                  ytd=change(anchor(year)) if end >= year else None)
+    for completed_year in years:
+        close = anchor(date(completed_year + 1, 1, 1))
+        if not close:
+            continue
+        year_end = date(completed_year, 12, 31)
+        # A cache last refreshed before year-end cannot stand in for a completed year.
+        if end < year_end and not no_expected_session('CN', latest['date'], str(year_end)):
+            tail = (end + timedelta(days=n) for n in range(1, (year_end - end).days + 1))
+            if any(stamp.weekday() < 5 for stamp in tail):
+                continue
+        result['annual'][str(completed_year)] = change(anchor(date(completed_year, 1, 1)), close)
+    return result
 
 
 def moving_averages(rows,window,missing_dates=()):

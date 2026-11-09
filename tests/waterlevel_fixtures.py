@@ -5,7 +5,7 @@ from math import sin
 
 from backend.common import json_dumps
 from backend.research import providers
-from backend.waterlevel.catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, GROUPS, SERIES
+from backend.waterlevel.catalog import FULL_MARKET_CODE, FULL_MARKET_FIELDS, GROUPS, LIXINGER_FIELDS, SERIES
 
 ASOF = '2026-10-30'
 
@@ -23,7 +23,9 @@ def history(value='10', monthly=False, start=date(2014, 1, 1)):
 def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=None, full=False, series=None):
     target = series
     values = {'cn_2y':'1', 'cn_10y':'2', 'aaa_3y':'3', 'gov_3y':'2', 'fr007':'2.2', 'fdr007':'1.8',
-              'm1_yoy':'4', 'm2_yoy':'7', 'pmi':'51', 'nonmanufacturing_pmi':'52', 'sf_stock_yoy':'8'}
+              'm1_yoy':'4', 'm2_yoy':'7', 'pmi':'51', 'nonmanufacturing_pmi':'52', 'sf_stock_yoy':'8',
+              'margin_balance':'200000000000', 'sh_margin_balance':'110000000000',
+              'sz_margin_balance':'90000000000', 'a_share_turnover':'800000000000'}
     series = {key: history(values.get(key, '1'), frequency == 'monthly')
               for key, (owner, _, _, frequency) in SERIES.items() if owner == group}
     if group == 'full_market':
@@ -46,13 +48,18 @@ def payload(group, asof=ASOF, previous=None, cancelled=lambda: False, *, access=
         for row in rows:
             if group == 'social_financing':
                 row['source_url'] = 'https://www.pbc.gov.cn/synthetic-test.html'
+    if group == 'market_turnover':
+        for row in series['a_share_turnover']:
+            row['field'] = 'ta'
     if target:
         series = {**(previous or {}).get('series', {}), target: series[target]}
     value = dict(group=group, publisher=GROUPS[group]['publisher'], series=series, checked_at=ASOF+'T19:00:00+08:00',
                  requested_asof=asof, published_at=None, evidence=[dict(url='https://www.pbc.gov.cn/synthetic-test.html',
                  fetched_at=ASOF+'T19:00:00+08:00', sha256='a'*64)])
-    if group == 'full_market':
+    if group in LIXINGER_FIELDS:
         value['evidence'][0].update(url='https://www.lixinger.com/api/open-api/html-doc/cn/index/fundamental',stock_code=FULL_MARKET_CODE)
+    if group == 'margin_balances':
+        value['evidence'][0]['url'] = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPTA_RZRQ_LSDB'
     if group == 'calendar':
         value['calendar'] = dict(year=2026, events=[dict(group='pmi', date='2026-10-31', period='2026-10'),
                                                   dict(group='prices', date='2026-11-09', period='2026-10')])

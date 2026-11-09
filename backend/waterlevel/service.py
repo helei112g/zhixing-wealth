@@ -8,7 +8,7 @@ from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, 
 from ..research.collection import subscription
 from ..research.snapshots import encode, decode
 from . import sources, validation
-from .catalog import FULL_MARKET_FIELDS, FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, SERIES, SPLIT_GROUPS
+from .catalog import FULL_MARKET_FIELDS, FULL_MARKET_ID, GROUPS, INDICES, LIMITATIONS, LIXINGER_FIELDS, SERIES, SPLIT_GROUPS
 from .metrics import METHODS, METHOD_VERSION, analyze, comparison, difference, earnings_spread, score
 
 
@@ -31,7 +31,7 @@ class WaterlevelService:
 
     def collect(self, group, asof, *, full=False, series=None):
         previous = self.source(group)
-        options = {'access': self.research.access} if group == 'full_market' else {}
+        options = {'access': self.research.access} if group in LIXINGER_FIELDS else {}
         if full:
             options['full'] = True
         if series:

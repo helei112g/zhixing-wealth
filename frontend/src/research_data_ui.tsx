@@ -208,10 +208,6 @@ export function ResearchDataPage({initialTarget}: {initialTarget:string}){
   {dialog&&catalog&&<CollectionDialog catalog={catalog} profile={dialog}
    onClose={()=>setDialog(null)} onSaved={(value:Obj)=>{
     setSelected(value.id);setDialog(null);setRevision(value.research_revision);setRefresh(n=>n+1);
-    localStorage.setItem('research-selected',value.id);
-    const url=new URL(location.href);
-    url.searchParams.set('index',value.id);
-    history.replaceState(null,'',url);
    }}/>}
  </div>;
 }

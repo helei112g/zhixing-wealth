@@ -153,6 +153,12 @@ class Client:
     def research_studio(self,index_id,**options):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/studio?'+urllib.parse.urlencode(options))
 
+    def research_indices(self, page=1, method='mcw', kind=None):
+        params = dict(page=page, method=method)
+        if kind is not None:
+            params['kind'] = kind
+        return self.request('/api/research/indices?' + urllib.parse.urlencode(params))
+
     def market_waterlevel(self, method='mcw', asof=None, facts=False):
         params = dict(method=method)
         if asof is not None:

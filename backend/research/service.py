@@ -157,7 +157,7 @@ class ResearchService:
     def detail(self, iid, basis='price', method='overall', window=3, *, summary=False):
         if basis not in ('price','total_return') or method not in ('overall','median','arithmetic','mcw','ew','ewpvo') or window not in (*WINDOWS,0): raise DomainError('指数口径、估值方法或窗口无效')
         with self.store.lock:
-            p=self.profile(iid); revision=self.revision();calculation_date=providers.cutoff()
+            p=self.profile(iid); revision=self.revision();calculation_date=str(today()) if summary else providers.cutoff()
             recent=[] if summary else self.updates.jobs()
             coverage_key=json_dumps([item for job in recent for item in job.get('items',[]) if item.get('target')==iid])
             key=(iid,basis,method,window,revision,calculation_date,coverage_key,summary)
@@ -184,7 +184,9 @@ class ResearchService:
         for entry in dd.values():entry.pop('curve',None)
         if summary:
             result=wire(dict(id=iid,profile=p,latest=prices[-1] if prices else None,asof=asof,valuation=valuations,drawdown=dd,
-                             changes=price_changes(prices,calculation_date),status='available' if prices else 'missing'))
+                             changes=price_changes(prices, calculation_date,
+                                                   missing_dates=(price or {}).get('missing_dates', ()), annual=True),
+                             status='available' if prices else 'missing'))
             return self._remember(key,result,revision)
         company_vals={r['code']:r for r in (stocks or {}).get('rows',[])}
         companies=[dict(r,industry=r.get('industry') or (company_vals.get(r['code']) or {}).get('industry') or '',valuation=company_vals.get(r['code'])) for r in (members or {}).get('rows',[])]
@@ -267,13 +269,16 @@ class ResearchService:
             value=dict(summary=d['financials'],items=rows[(page-1)*page_size:page*page_size],total=len(rows),page=page,page_size=page_size)
         return dict(value,analysis_id=d['analysis_id'],research_revision=d['research_revision'],series_code=d['series_code'],basis=basis)
 
-    def listing(self, kind=None, page=1):
-        profiles=[p for p in self.profiles() if not kind or p['kind']==kind]
+    def listing(self, kind=None, page=1, method='overall'):
         if page<1:raise DomainError('页码无效')
-        rows=[]
-        for p in profiles[(page-1)*20:page*20]:
-            d=self.detail(p['id'],summary=True);rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')})
-        return dict(items=rows,total=len(profiles),page=page,page_size=20,research_revision=self.revision())
+        with self.store.lock:
+            profiles=[p for p in self.profiles() if not kind or p['kind']==kind]
+            rows=[]
+            for p in profiles[(page-1)*20:page*20]:
+                d=self.detail(p['id'], method=method, summary=True)
+                rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')})
+            return dict(items=rows,total=len(profiles),page=page,page_size=20,research_revision=self.revision(),
+                        method=method, calendar_year=today().year)
 
     def settings(self):
         with self.store.connection() as db:

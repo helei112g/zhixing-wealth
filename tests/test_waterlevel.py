@@ -282,6 +282,21 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(self.market.settings()['automatic'])
         fetch.assert_not_called()
 
+    def test_activity_reads_daily_history_at_cutoff_without_writes(self):
+        with patch.object(sources, 'collect', side_effect=payload):
+            for group in ('margin_balances', 'market_turnover'):
+                self.market.collect(group, ASOF)
+        before = capture(self.store.directory)
+        with patch.object(sources, 'collect') as fetch:
+            activity = self.market.activity('2026-10-29')
+        fetch.assert_not_called()
+        self.assertEqual(capture(self.store.directory), before)
+        self.assertEqual(activity['research_revision'], self.research.revision())
+        self.assertEqual(set(activity['series']), {'margin_balance', 'sh_margin_balance', 'sz_margin_balance', 'a_share_turnover'})
+        for rows in activity['series'].values():
+            self.assertEqual([row['date'] for row in rows[-2:]], ['2026-10-28', '2026-10-29'])
+        self.assertEqual(activity['series']['a_share_turnover'][-1], dict(date='2026-10-29', value='800000000000'))
+
     def test_incremental_market_request_replays_legacy_receipt(self):
         body = dict(scopes=['market'], resources=[dict(scope='market', group='pmi')], request_id='legacy')
         previous = self.research.run(body)
@@ -574,6 +589,10 @@ class ApiTests(unittest.TestCase):
                 schedule=client.get('/api/market-waterlevel/sources').json()['schedule']
                 self.assertEqual(schedule, dict(weekday=5, time='18:00', timezone='Asia/Shanghai', enabled=False))
                 self.assertEqual(client.get('/api/capabilities').json()['market_waterlevel']['schedule'], schedule)
+                activity = client.get('/api/market-waterlevel/activity?asof='+ASOF)
+                self.assertEqual(activity.status_code, 200)
+                self.assertEqual(activity.json()['series'], dict(margin_balance=[], sh_margin_balance=[], sz_margin_balance=[], a_share_turnover=[]))
+                self.assertEqual(client.get('/api/market-waterlevel/activity?asof=2999-01-01').status_code, 422)
                 value=client.get('/api/market-waterlevel?asof='+ASOF).json()
                 body=dict(analysis_id=value['analysis_id'],method='mcw',asof=ASOF,expected_research_revision=value['research_revision'])
                 self.assertEqual(client.post('/api/market-waterlevel/snapshots',json=body).status_code,403)

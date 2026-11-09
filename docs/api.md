@@ -381,7 +381,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 | POST `/api/research/indices/resolve` | `{code}`，本地查询已保存档案或内置代码配对。目录外新指数通过采集预览在线核验。 |
 | POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。新指数联网验证理杏仁身份及所选范围内有效日线，返回 verified_price_date、预计调用量、依赖缺项和原 research_revision。已保存指数的预览只用本地数据。 |
 | PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。新指数重新核验后，在同一事务保存订阅并排队全量同步，返回 job_id。修改既有订阅返回 job_id=null。 |
-| GET `/api/research/indices` | 已建档指数的本地摘要，每页20条。支持kind、page、method。旧调用默认overall，首页显式mcw。返回calendar_year与changes.annual（前三个完整自然年）、ytd、monthly、daily，涨跌幅含ratio、from_date、to_date，缺取价为null。 |
+| GET `/api/research/indices` | 已建档指数的本地摘要，每页20条。支持kind、page、method。旧调用默认overall，首页显式mcw。PE/PB 的 5/10 年分位见 `valuation.<metric>.windows.<years>.rank`，使用 0–1 比例，历史不足为 null。返回calendar_year与changes.annual（前三个完整自然年）、ytd、monthly、daily，涨跌幅含ratio、from_date、to_date，缺取价为null。 |
 | GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/ewpvo/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
 | GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield。返回日频估值均值、分位、资金观察、波动率和集中度；收益回测、成分重叠、区间收益比较已退役，含同一analysis_id。 |
 | GET `.../{id}/{part}` | series/constituents/financials/sources；analysis_id 防混版本，page/page_size 分页。 |
@@ -427,6 +427,7 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 |---|---|
 | GET `/api/market-waterlevel` | method、asof；返回analysis_id、research_revision、method_version、indices、series、comparisons、scores、sources、groups、limitations、规则commentary。 |
 | GET `/api/market-waterlevel/facts` | 同参数和分析版本；省略统计项及comparisons的chart，其他事实与页面一致，不请求模型。 |
+| GET `/api/market-waterlevel/activity` | 可选 asof。返回 asof、research_revision 和按指标 ID 索引的 series，逐交易日按日期升序返回 {date,value}，金额为 CNY 元的 Decimal 字符串，未采集为空数组。只读已发布快照。 |
 | GET `/api/market-waterlevel/revision` | 轻量research_revision、updating和errors_version；失败不发布数据也会改变错误版本，页面据此刷新覆盖与状态。 |
 | GET/PUT `/api/market-waterlevel/settings` | 旧版可写字段保留 automatic=false 与原设置版本。实际每周排程状态通过只读 schedule 返回。 |
 | GET `/api/market-waterlevel/sources` | 读取市场指标、精确更新资源、实际观测日期与 schedule。schedule.weekday=5 使用 ISO 周序，time=18:00，timezone=Asia/Shanghai，enabled 取决于实例自动更新和写入状态。 |

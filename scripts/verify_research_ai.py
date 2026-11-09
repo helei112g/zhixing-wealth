@@ -33,9 +33,12 @@ def main():
           'index list shares the same valuation and provides three completed years')
     activity=cap['market_waterlevel']['market_activity']
     market_sources=c.market_data_sources()
-    check(set(activity['series']) <= {row['id'] for row in c.market_waterlevel(facts=True)['series']} and
+    daily = c.market_activity()
+    check(set(activity['series']) == set(daily['series']) and
+          activity['history'] == '/api/market-waterlevel/activity' and activity['frequency'] == 'daily' and
+          set(activity['series']) <= {row['id'] for row in c.market_waterlevel(facts=True)['series']} and
           set(activity['groups']) <= {row['id'] for row in market_sources['items']},
-          'market facts and source discovery expose both activity groups')
+          'market facts, daily history and source discovery expose both activity groups')
     check(market_sources['schedule']==cap['market_waterlevel']['schedule'] and
           market_sources['schedule']==dict(weekday=5, time='18:00', timezone='Asia/Shanghai', enabled=False),
           'AI sees the Friday market update schedule and current instance state')

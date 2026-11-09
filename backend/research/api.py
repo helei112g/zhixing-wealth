@@ -191,7 +191,7 @@ def router(service):
     @api.get('/api/research/revision')
     def revision():
         with service.store.lock:return dict(research_revision=service.revision(),updating=service.updating())
-    @api.get('/api/research/indices', summary='已建档指数、最新估值、价格涨跌幅与实际取价日期')
+    @api.get('/api/research/indices', summary='已建档指数、最新估值与历史分位、价格涨跌幅与实际取价日期')
     def listing(kind:str|None=None, page:int=Query(1,ge=1), method:Method='overall'):
         return service.listing(kind, page, method)
     @api.post('/api/research/indices/resolve')

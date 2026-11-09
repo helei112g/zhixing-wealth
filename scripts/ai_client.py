@@ -169,6 +169,11 @@ class Client:
         """Market update resources, observation dates and the instance's weekly schedule."""
         return self.request('/api/market-waterlevel/sources')
 
+    def market_activity(self, asof=None):
+        """Daily margin balances and turnover from the currently published local snapshots."""
+        query = '?' + urllib.parse.urlencode({'asof': asof}) if asof is not None else ''
+        return self.request('/api/market-waterlevel/activity' + query)
+
     def research_index(self,index_id,basis='price',window=3,method='mcw'):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'?'+urllib.parse.urlencode({'basis':basis,'window':window,'method':method}))
 

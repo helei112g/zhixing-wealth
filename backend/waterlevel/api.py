@@ -42,6 +42,10 @@ def router(service, *, auto_sync):
     def dashboard(method: Method = 'mcw', asof: str | None = None):
         return service.dashboard(method, asof)
 
+    @api.get('/activity', summary='只读沪深两融余额和 A 股全指成交额的逐交易日历史')
+    def activity(asof: str | None = None):
+        return service.activity(asof)
+
     @api.get('/revision', summary='只读轻量版本；失败状态变化独立于成功发布的数据修订')
     def revision():
         return service.status()

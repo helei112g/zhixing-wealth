@@ -72,29 +72,55 @@ const marginLines:ValuationLine[] = [
 ];
 const turnoverLines:ValuationLine[] = [{key:'a_share_turnover',label:'成交额',color:'#365f91'}];
 
-function MarketAmountCard({data, lines, title, children}: {
-  data:Obj; lines:ValuationLine[]; title:string; children:React.ReactNode;
+function MarketActivity({data}: {data:Obj}) {
+  const {asof, research_revision} = data;
+  const [history, setHistory] = useState<Obj|null>(null);
+  const [error, setError] = useState('');
+  useEffect(()=>{
+    let active = true;
+    setError('');
+    api('/market-waterlevel/activity?'+query({asof})).then(value=>{
+      if(active)setHistory(value);
+    }).catch(error=>{if(active)setError(error.message);});
+    return()=>{active=false;};
+  },[asof,research_revision]);
+
+  if(error)return <ErrorBox error={error}/>;
+  if(!history || history.asof!==asof || history.research_revision!==research_revision)
+    return <p className="muted small" role="status">正在读取市场日线…</p>;
+  return <>
+    <MarketAmountCard data={data} history={history.series} title="沪深两融余额" lines={marginLines}>来源为东方财富，合计同日沪市与深市的融资融券余额，范围为沪深两市。</MarketAmountCard>
+    <MarketAmountCard data={data} history={history.series} title="A股全指当日成交额" lines={turnoverLines}>来源为理杏仁 A股全指（1000002），按指数样本统计已收盘交易日成交额。</MarketAmountCard>
+  </>;
+}
+
+function MarketAmountCard({data, history, lines, title, children}: {
+  data:Obj; history:Record<string,Obj[]>; lines:ValuationLine[]; title:string; children:React.ReactNode;
 }) {
-  const [window, setWindow] = useState(0);
-  const series = lines.map(line=>data.series.find((item:Obj)=>item.id===line.key).statistics);
-  const current = series[0];
-  const monthly = new Map<string,Obj>();
-  for (const [index, line] of lines.entries()) {
-    for (const row of visibleRows(series[index].chart, window, data.asof)) {
-      const date = row.date.slice(0,7);
-      if(!monthly.has(date))monthly.set(date,{date});
-      monthly.get(date)![line.key] = row.value==null?null:Number(row.value)/1e8;
+  const [window, setWindow] = useState(1);
+  const current = data.series.find((item:Obj)=>item.id===lines[0].key).statistics;
+  const [year, month, day] = data.asof.split('-').map(Number);
+  const startYear = year - window;
+  const startDay = Math.min(day, new Date(Date.UTC(startYear, month, 0)).getUTCDate());
+  const start = new Date(Date.UTC(startYear, month-1, startDay)).toISOString().slice(0,10);
+  const daily = new Map<string,Obj>();
+  for (const line of lines) {
+    for (const {date,value} of history[line.key]) {
+      if(window && date<start)continue;
+      if(!daily.has(date))daily.set(date,{date});
+      daily.get(date)![line.key] = value==null?null:Number(value)/1e8;
     }
   }
   return <Panel title={title} className="studio-valuation-panel"
-    right={<HistoryWindow label={title+'曲线窗口'} value={window} onChange={setWindow} windows={[5,10,0]}/>}>
+    right={<HistoryWindow label={title+'曲线窗口'} value={window} onChange={setWindow} windows={[1,5,10,0]}/>}>
     <div className="waterlevel-current">
       <strong>{current.current==null?'—':number(Number(current.current)/1e8)}</strong><span>亿元</span>
       <small>{current.date||'尚无观测'} · {states[current.status]}</small>
     </div>
     {current.current==null?<Notice>尚无有效观测，可在数据管理的市场指标中更新。</Notice>
-      :<ValuationTrend rows={[...monthly.values()]} label={title+'历史曲线'} lines={lines} preserveBounds unit="亿元"/>}
-    <p className="muted small">{children} 曲线按月末最后观测展示，当月取最新已发布交易日。</p>
+      :!daily.size?<Notice>此窗口暂无日线观测，可切换至更长窗口。</Notice>
+      :<ValuationTrend rows={[...daily.values()]} label={title+'历史曲线'} lines={lines} preserveBounds unit="亿元"/>}
+    <p className="muted small">{children} 曲线逐交易日展示，悬停查看日期与金额。</p>
   </Panel>;
 }
 
@@ -275,12 +301,11 @@ export function WaterlevelPage({today,onData}: Obj) {
     {loading&&!data&&<p role="status" className="muted small">正在读取本地市场数据…</p>}
     {!data?<Empty title="市场水位尚未就绪">{error?'读取失败，请核对错误信息。':'正在读取本地资料。'}</Empty>:<>
       <div className="instrument-tabs" role="tablist" aria-label="市场水位栏目">{[['overview','水位总览'],['equity','股票估值'],['bonds','债券与资金'],['macro','宏观背景'],['reports','报告存档']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} onClick={()=>setTab(key)}>{label}</button>)}</div>
-      {tab!=='reports'&&<p className="muted small waterlevel-view-options">截至 {data.asof} · 各指标实际日期独立显示 · 月末采样，当月显示最新观测</p>}
+      {tab!=='reports'&&<p className="muted small waterlevel-view-options">截至 {data.asof} · 各指标实际日期独立显示{tab==='equity'?' · 两融余额与成交额按交易日展示':' · 月末采样，当月显示最新观测'}</p>}
       {tab==='overview'&&<><ScoreOverview data={data}/><ComparisonCard data={data} metric={fullMetric} setMetric={setFullMetric} setMethod={selectMethod} window={overviewWindow} setWindow={setOverviewWindow} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/><div className="waterlevel-grid">{lines(['erp','bond_inverse'],overviewWindow)}</div><details className="waterlevel-boundaries"><summary>当前覆盖与计算边界</summary><ul>{data.limitations.map((text:string)=><li key={text}>{text}</li>)}</ul></details></>}
       {tab==='equity'&&<>
         <BroadCard data={data} window={equityWindow} setWindow={setEquityWindow} setMethod={selectMethod} loading={loading} selectedMethod={selectedMethod} methodStatus={methodStatus}/>
-        <MarketAmountCard data={data} title="沪深两融余额" lines={marginLines}>来源为东方财富，合计同日沪市与深市的融资融券余额，范围为沪深两市。</MarketAmountCard>
-        <MarketAmountCard data={data} title="A股全指当日成交额" lines={turnoverLines}>来源为理杏仁 A股全指（1000002），按指数样本统计已收盘交易日成交额。</MarketAmountCard>
+        <MarketActivity data={data}/>
       </>}
       {tab==='bonds'&&<><p className="muted small">信用利差按同日AAA 3Y中票减3Y国债；FR007/FDR007是定盘利率，不是R007/DR007。1个百分点=100 BP。</p><div className="waterlevel-grid">{lines(['cn_10y','cn_2y','cn_30y','us_10y','us_2y','us_30y','cn_term','us_term','credit_spread','aaa_3y','gov_3y','fr007','fdr007','repo_spread'],0,true)}</div></>}
       {tab==='macro'&&<><Notice>日期为统计月份，不能当作发布日期。社融使用人民银行直接公布的存量同比；M2−M1为同月同比之差，跨M1统计口径的历史仅供参考。</Notice><div className="waterlevel-grid">{lines(['pmi','nonmanufacturing_pmi','cpi_yoy','ppi_yoy','m1_yoy','m2_yoy','money_gap','sf_stock_yoy'],0,true)}</div><p className="muted small">本批来源未统一提供原始发布日期；未知日期保留为空，抓取时间见来源记录。</p></>}

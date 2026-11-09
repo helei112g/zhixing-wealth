@@ -212,6 +212,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                     'methods': ['mcw', 'ew', 'ewpvo', 'median'], 'windows': [5, 10], 'chart_windows': [5, 10, 'all'],
                     'comparisons': 'Lixinger A-share all index 1000002 PE/PB by selected method, complete-month means, normalized SSE/SZSE composites; bond inverse on PE',
                     'market_activity': {'groups':['margin_balances','market_turnover'], 'unit':'CNY',
+                                        'history':'/api/market-waterlevel/activity', 'frequency':'daily',
                                         'series':['margin_balance','sh_margin_balance','sz_margin_balance','a_share_turnover'],
                                         'scored':False},
                     'settings': '/api/market-waterlevel/settings', 'settings_revision': 'expected_settings_revision',

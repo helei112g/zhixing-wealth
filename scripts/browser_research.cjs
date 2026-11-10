@@ -123,6 +123,26 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
    check(valuation.field.endsWith('.mcw') && [5,10].every(years=>valuation.windows[years].rank!=null) &&
     valuationCells[2*i+1]===expected, metric+' renders the 5/10-year market-cap weighted ranks');
   }
+  const returnHeaders=[
+   [(year-1)+'年','annual_1'],[(year-2)+'年','annual_2'],[(year-3)+'年','annual_3'],
+   ['今年','ytd'],['本月','monthly'],['上一个交易日','daily'],
+  ];
+  const sortResponse=(key,direction)=>page.waitForResponse(response=>{
+   const url=new URL(response.url());
+   return url.pathname==='/api/research/indices'&&url.searchParams.get('page')==='1'&&
+    url.searchParams.get('sort_by')===key&&url.searchParams.get('sort_direction')===direction&&response.ok();
+  });
+  for(const [label,key] of returnHeaders){
+   const header=listing.getByRole('columnheader',{name:label,exact:true});
+   await Promise.all([sortResponse(key,'desc'),header.getByRole('button',{name:label,exact:true}).click()]);
+   await header.and(listing.locator('[aria-sort=descending]')).waitFor();
+  }
+  const dailyHeader=listing.getByRole('columnheader',{name:'上一个交易日',exact:true});
+  const dailySort=dailyHeader.getByRole('button');
+  await Promise.all([sortResponse('daily','asc'),dailySort.press('Enter')]);
+  await dailyHeader.and(listing.locator('[aria-sort=ascending]')).waitFor();
+  check(await listing.locator('th[aria-sort]').count()===1&&await dailySort.evaluate(node=>node===document.activeElement),
+   'all six return columns sort descending, and keyboard activation reverses the selected column');
   await shot('index-library-list');
   await indexLink.click();
   await ready();

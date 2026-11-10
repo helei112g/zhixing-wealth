@@ -31,6 +31,11 @@ def main():
     check(listing['method']=='mcw' and row['valuation']['pe']==d['valuation']['pe'] and
           set(row['changes']['annual'])=={str(listing['calendar_year']-n) for n in (1,2,3)},
           'index list shares the same valuation and provides three completed years')
+    index_list=cap['research']['index_list']
+    check(set(index_list['sort_by'])=={'annual_1','annual_2','annual_3','ytd','monthly','daily'} and
+          index_list['sort_direction']==['asc','desc'] and index_list['sort_missing']=='last' and
+          c.research_indices(sort_by='daily',sort_direction='asc')['items']==listing['items'],
+          'AI discovers and requests the same return sort as the index list')
     activity=cap['market_waterlevel']['market_activity']
     market_sources=c.market_data_sources()
     daily = c.market_activity()

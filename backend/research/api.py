@@ -13,6 +13,8 @@ PolicyScope=Literal['quotes','fx','index_prices','memberships','valuations','fin
 Basis=Literal['price','total_return']
 Method=Literal['overall','median','arithmetic','mcw','ew','ewpvo']
 Part=Literal['series','constituents','financials','sources']
+IndexReturnSort=Literal['annual_1','annual_2','annual_3','ytd','monthly','daily']
+SortDirection=Literal['asc','desc']
 
 
 class FxResource(BaseModel):
@@ -192,8 +194,9 @@ def router(service):
     def revision():
         with service.store.lock:return dict(research_revision=service.revision(),updating=service.updating())
     @api.get('/api/research/indices', summary='已建档指数、最新估值与历史分位、价格涨跌幅与实际取价日期')
-    def listing(kind:str|None=None, page:int=Query(1,ge=1), method:Method='overall'):
-        return service.listing(kind, page, method)
+    def listing(kind:str|None=None, page:int=Query(1,ge=1), method:Method='overall',
+                sort_by:IndexReturnSort|None=None, sort_direction:SortDirection='desc'):
+        return service.listing(kind, page, method, sort_by=sort_by, sort_direction=sort_direction)
     @api.post('/api/research/indices/resolve')
     def resolve(body:ResolveRequest):return service.resolve(body.code)
     @api.post('/api/research/indices/valuation-preview', deprecated=True)

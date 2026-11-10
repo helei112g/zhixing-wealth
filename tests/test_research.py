@@ -183,6 +183,44 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual({k:v for k,v in summary['changes'].items() if k!='annual'},full['changes'])
         self.assertEqual(len(summary['changes']['annual']),3)
 
+    def test_return_sort_orders_all_indices_before_paging_with_stable_ties_and_missing_last(self):
+        ids=[f'csi:synthetic-{n:02d}' for n in range(23)]
+        with self.r.transaction(bump=True) as db:
+            db.executemany('INSERT INTO research_indices VALUES (?,?)',
+                           [(iid,json_dumps(dict(id=iid,kind='synthetic'))) for iid in ids])
+        dates=['2022-12-30','2023-12-29','2024-12-31','2025-12-31','2026-01-30','2026-02-03','2026-02-04']
+        closes={
+            1:[100,105,100,120,110,100,101],
+            2:[100,100,100,100,100,100,100],
+            3:[100,110,100,110,100,110,100],
+            21:[100,90,100,90,110,100,120],
+            22:[100,105,100,120,110,100,101],
+        }
+        for n, prices in closes.items():
+            rows=[dict(date=stamp,close=str(close)) for stamp,close in zip(dates,prices)]
+            self.r.publish(ids[n],'price',dict(rows=rows,effective_date=dates[-1]))
+        missing=[iid for n,iid in enumerate(ids) if n not in closes]
+        expected={
+            'annual_1':([21,2,3,1,22],[1,22,3,2,21]),
+            'annual_2':([3,1,22,2,21],[21,2,1,22,3]),
+            'annual_3':([21,2,1,22,3],[3,1,22,2,21]),
+            'ytd':([1,22,3,2,21],[21,2,3,1,22]),
+            'monthly':([1,22,2,3,21],[21,2,3,1,22]),
+            'daily':([3,2,1,22,21],[21,1,22,2,3]),
+        }
+        with patch('backend.research.service.today',return_value=date.fromisoformat(dates[-1])):
+            self.assertEqual([row['id'] for row in self.r.listing()['items']],ids[:20])
+            for period, orders in expected.items():
+                for direction, order in zip(('asc','desc'),orders):
+                    with self.subTest(period=period,direction=direction):
+                        first, second=[
+                            self.r.listing(page=page,sort_by=period,sort_direction=direction)
+                            for page in (1,2)
+                        ]
+                        self.assertEqual((len(first['items']),len(second['items'])),(20,3))
+                        self.assertEqual([row['id'] for row in first['items']+second['items']],
+                                         [ids[n] for n in order]+missing)
+
     def test_update_history_collapses_active_children_and_limits_total_to_five(self):
         added,_=self.add()
         job=self.r.updates.get(added['job_id'])

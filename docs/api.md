@@ -104,7 +104,7 @@ macOS 排程计算未来366天候选，每次仅登记最近一条，到期事�
 
 返回 `{decision, event, revision}`：event 与原记录一致，不新增或更新任何流水字段；decision 保存 mode、event_id、event_date、核对依据、原流水 fingerprint、说明、时间和 review_revision，审计位于 `GET /api/revisions/dividend_decision/{decision.id}`。提交后回读候选的 confirmed/manual_recorded 与 `/api/reminders`。required expected_revision 必须是非负整数；旧 revision 返回409；未找到待核对原记录、原记录已不是本标的的分红/再投、作用域/事件/依据不匹配及无说明返回422；均不写入。超时先回读，不自动重试。
 
-仅 Yahoo 每份参考值同时满足相对变化 ≤0.01% 且绝对变化 ≤0.005 派息币种/份，才视为微调；基准固定为最近核对值，不逐次滚动。estimated_gross 是派生参考值，不单独用完整字典比较。权益份额、有效日期、币种、拆分还原因子仍精确比较，其他来源的每份变化仍需核对。旧依据未记录来源时，变化先提示核对，不推定旧来源为 Yahoo。来源日期/因子缺失不清空已核对依据或原流水，来源补全或实质修正仍可提醒。计算权益由已知变为未知仍需核对，null不当作无变化或零；旧依据缺少币种时按原已确认流水的币种比较，币种修正仍提醒。读取或升级不自动完成历史核对。核对决定通过 event_id 在同组合、同标的、有效分红/再投事件内保持关联，不因手工流水或来源除息日更正而转成新增候选。只改备注、税费等原流水事实不会让最近接受的权益依据回退；只有显式分红确认/复核推进该依据。原流水发生日期变化单独提示复核；fingerprint保留审计用途，不用它使权益依据失效。
+港股已有明确保留原流水的核对结论且前后均为 Yahoo HKD 参考值时，单独的每股参考值变化不重开核对。其他 Yahoo 参考值须同时满足相对变化 ≤0.01% 且绝对变化 ≤0.005 派息币种/份才视为微调，固定与最近核对值比较。estimated_gross 是派生参考值，不单独用完整字典比较。权益份额、有效日期、币种、拆分还原因子仍精确比较，其他来源的每份变化仍需核对。旧依据未记录来源时，变化先提示核对，不推定旧来源为 Yahoo。来源日期/因子缺失不清空已核对依据或原流水，来源补全或实质修正仍可提醒。计算权益由已知变为未知仍需核对，null不当作无变化或零；旧依据缺少币种时按原已确认流水的币种比较，币种修正仍提醒。读取或升级不自动完成历史核对。核对决定通过 event_id 在同组合、同标的、有效分红/再投事件内保持关联，不因手工流水或来源除息日更正而转成新增候选。只改备注、税费等原流水事实不会让最近接受的权益依据回退；只有显式分红确认/复核推进该依据。原流水发生日期变化单独提示复核；fingerprint保留审计用途，不用它使权益依据失效。
 
 同一未完成事项按公告、组合、权益、固定来源参考基准与最近核对版本去重，Yahoo参考微调、抓取时间和说明刷新不重复派发；金额变化仍更新核对页。来源基准只在实质变化时更新，实质金额修正即使尚未完成核对也会重新通知。完成后撤销对应通知，后续实质变化产生新事项版本。系统通知状态与业务核对状态分开，不声称通知已被用户看见。
 
@@ -184,7 +184,7 @@ UI选择红利再投后自动填入估算，日期/金额/标的变化立即撤�
 
 ## 其他能力
 
-- `POST /api/sync`：`{instrument_id?: string, full?: boolean}`，启动/排队后台更新；用 `/api/jobs` 查看逐项结果，失败可重试。此操作只更新行情/公告缓存，不自动确认分红。天天基金分红页的标题须包含与请求一致的基金代码。缺失或不匹配时，该标的的分红子项记录失败并保留本地公告。
+- `POST /api/sync`：`{instrument_id?: string, full?: boolean}`，启动/排队后台更新；用 `/api/jobs` 查看逐项结果，失败可重试。此操作只更新行情/公告缓存，不自动确认分红。天天基金分红页标题须包含匹配代码。场内 ETF、LOF 还须在同代码的历史单位净值数据中有除息日现金分红标记。未取得标记的行暂不写入，已到除息日的未通过行按日期记入分红同步子项，已通过行正常更新。现行分红表已无某条旧记录且同日净值明确没有标记时，撤下没有关联或同日分红流水的缓存并保留审计。来源失败或净值日缺失时保留既有缓存。
 - `POST /api/dividends/{notice_id}/ignore`：portfolio_id；仅隐藏候选，不计收益。
 - `POST /api/csv/preview`：text、category=`events/fx`、portfolio_id。只读校验。`POST /api/csv/import` 同参数整批写入；根据 event_id/指纹查重。没有 expected_revision 保护，AI 客户端不暴露此写入；导入前重新预览并确认整个批次。
 - `POST /api/fx`：currency、date、mode=`daily/manual/auto`，非auto时提供 rate；人工估值汇率，不回写交易锁定率。该接口不提供 expected_revision 保护。
@@ -469,6 +469,6 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 - 更新当前指数仍用 `POST /api/data-updates/run`，携带稳定 request_id、`targets:["FROM_INDEX_READ"]` 和 `scopes:["index_prices","memberships","valuations","financials"]`，省略 resources 即更新当前指数的已启用模块。full=true按配置范围全量校准。指数详情 `collection.resources` 提供已订阅的精确资源，可选其中一个来源对应的模块提交。
 - `GET /api/market-waterlevel/sources` 只读返回 `items` 和 `research_revision`。每项含 `id`、`label`、`publisher`、实际观测 `dates`、`resource`、`updatable`、`error` 及最新快照引用。向统一任务提交该 `resource`，每项 `full:true` 表示全量校准。带 `series` 的市场资源仅更新对应指标，例如 `{"scope":"market","group":"prices","series":"cpi_yoy"}`。旧的来源组请求保持兼容。
 - 接受返回202与job_id，随后读取 `/api/data-updates/jobs/{job_id}`；受理不等于采集完成。任务记录 market_cutoff（价格、指数/公司估值及资金数据的完整交易日）与 information_cutoff（当前公告资料查询日），恢复任务沿用原截止日。每项 date 是实际来源日期，未发布、失败与不支持分别保留。
-- Yahoo 参考每股值仅在相对差≤0.01%且绝对差≤0.005币种单位时视为微调；始终与最后一次明确确认的固定依据比较。此规则不舍入或改写实际金额、税费、份额及汇率，也不豁免权益、日期、币种与拆分变化。
+- 港股明确保留原流水后，单独的 Yahoo HKD 每股参考值变化不重开核对。其他 Yahoo 参考微调仍按固定核对依据及双重容差比较。权益、日期、币种与拆分变化仍需核对。
 
 标的详情新增 `price_history_start`：本组合首次购买前六个自然月。行情同步按各组合最早购买日补齐该区间并记录 `quote_history_requested_start`；后续增量更新不重复全量请求。成立/上市晚于起点时保留实际覆盖。

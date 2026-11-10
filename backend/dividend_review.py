@@ -45,7 +45,7 @@ def minor_yahoo_change(before, after):
     return old > 0 and delta <= YAHOO_PER_SHARE_TOLERANCE and delta <= old * YAHOO_RELATIVE_TOLERANCE
 
 
-def review_changes(before, after):
+def review_changes(before, after, *, keep_yahoo_hkd=False):
     if not before or 'eligible_quantity' not in before or before.get('per_share') is None:
         return ['missing_basis']
     changes = []
@@ -61,6 +61,10 @@ def review_changes(before, after):
             equal = old == new
         if not equal:
             changes.append(key)
-    if dec(before['per_share']) != dec(after['per_share']) and not minor_yahoo_change(before, after):
+    yahoo_hkd_reference = keep_yahoo_hkd and all(
+        basis.get('currency') == 'HKD' and basis.get('source', '').startswith('Yahoo')
+        for basis in (before, after)
+    )
+    if dec(before['per_share']) != dec(after['per_share']) and not yahoo_hkd_reference and not minor_yahoo_change(before, after):
         changes.append('per_share')
     return changes

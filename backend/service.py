@@ -659,7 +659,30 @@ class Service:
                      'trade_results': profit_rows, 'note_count': self.notes.count(portfolio_id, instrument_id),
                      'market_changes': instrument_market_changes(state, holding['instrument'], snap['date'], market=market_data)})
 
-    def cache_dividends(self,instrument_id,rows):
+    def withdraw_fund_notices(self, db, state, instrument_id, dates):
+        receipts = [e for e in state['events'] if e.get('instrument_id') == instrument_id
+                    and e['kind'] in ('DIVIDEND', 'REINVEST')]
+        recorded_ids = {e.get('source_dividend_id') for e in receipts}
+        recorded_dates = {e['date'] for e in receipts}
+        receipt_ids = {e['id'] for e in receipts}
+        recorded_ids.update(a.get('notice_id') for a in state['corporate_actions']
+                            if a.get('kind') == 'dividend_decision' and a.get('event_id') in receipt_ids)
+
+        withdrawn = []
+        for notice in state['corporate_actions']:
+            if (notice.get('kind') != 'dividend_notice' or notice['instrument_id'] != instrument_id
+                    or notice.get('source') != '天天基金·分红送配' or notice.get('status') == 'withdrawn'
+                    or notice['ex_date'] not in dates or notice['id'] in recorded_ids
+                    or notice['ex_date'] in recorded_dates):
+                continue
+            item = dict(notice, status='withdrawn')
+            db.execute('UPDATE corporate_actions SET data=? WHERE id=?', (json_dumps(item), notice['id']))
+            self.store.audit(db, 'dividend_notice', notice['id'], notice, item,
+                             '现行分红表已无该行，且同代码除息日净值无分红标记，撤下未入账公告')
+            withdrawn.append(notice['ex_date'])
+        return withdrawn
+
+    def cache_dividends(self,instrument_id,rows,*,withdrawn_fund_dates=()):
         with self.store.transaction() as db:
             state=self.store.state(db)
             inst=next((i for i in state['instruments'] if i['id']==instrument_id),None)
@@ -685,6 +708,33 @@ class Service:
                 old={k:v for k,v in (before or {}).items() if k!='fetched_at'}
                 current={k:v for k,v in item.items() if k!='fetched_at'}
                 if old!=current:self.store.audit(db,'dividend_notice',notice_id,before,item,'更新公开分红公告，待本人核对，不自动入账')
+            return self.withdraw_fund_notices(db, state, instrument_id, withdrawn_fund_dates) if withdrawn_fund_dates else []
+
+    def sync_dividend_notices(self, inst, notices):
+        notes = ['公告只进入待核对列表，不自动记收益']
+        missing = []
+        withdrawn_dates = set()
+        if inst['market'] in ('SH', 'SZ') and inst['type'] in ('etf', 'lof'):
+            hints = market.fund_dividend_hints(inst)
+            published_dates = {row['ex_date'] for row in notices}
+            checked = [row for row in notices if hints.get(row['ex_date'])]
+            unverified = published_dates - {row['ex_date'] for row in checked}
+            as_of = str(today())
+            missing = sorted(date for date in unverified if date <= as_of)
+            if unverified - set(missing):
+                notes.append('未到除息日的记录等待当日净值分红标记')
+            withdrawn_dates = {date for date, cash in hints.items() if not cash} - published_dates
+            notices = checked
+
+        withdrawn = self.cache_dividends(inst['id'], notices, withdrawn_fund_dates=withdrawn_dates)
+        if withdrawn:
+            notes.append('已撤下未入账的分红缓存：' + '、'.join(sorted(withdrawn)))
+        item = dict(status='error' if missing else 'ok', count=len(notices),
+                    date=max((row['ex_date'] for row in notices), default='—'),
+                    source=notices[0]['source'] if notices else '公开分红表', notes=notes)
+        if missing:
+            item['message'] = '同代码净值缺少现金分红标记，未同步：' + '、'.join(missing)
+        return item
 
     def cache_actions(self,instrument_id,actions):
         if not actions:return
@@ -730,7 +780,7 @@ class Service:
         attached={a['instrument_id'] for a in state['allocations'] if a['portfolio_id']==portfolio_id}
         instruments={i['id']:i for i in state['instruments']};result=[]
         for notice in state['corporate_actions']:
-            if notice.get('kind')!='dividend_notice' or notice['instrument_id'] not in attached:continue
+            if notice.get('kind')!='dividend_notice' or notice.get('status')=='withdrawn' or notice['instrument_id'] not in attached:continue
             if instrument_id and notice['instrument_id']!=instrument_id:continue
             if notice['ex_date']<p['start_date']:continue
             inst=instruments[notice['instrument_id']]
@@ -770,7 +820,11 @@ class Service:
             pending_date=notice['ex_date']>str(today())
             basis=reference_basis(notice,ds(qty) if qty is not None else None,cutoff,baseline)
             basis['estimated_gross']=ds(gross) if gross is not None else None
-            changes=review_changes(baseline,basis) if recorded and (baseline or existing) else ['missing_basis'] if manual and gross is not None and dec(manual['gross_amount'])!=gross else []
+            changes = []
+            if recorded and (baseline or existing):
+                changes = review_changes(baseline, basis, keep_yahoo_hkd=reviewed and inst['market'] == 'HK')
+            elif manual and gross is not None and dec(manual['gross_amount']) != gross:
+                changes = ['missing_basis']
             if reviewed and recorded['date']!=decision.get('event_date',baseline.get('ex_date',recorded['date'])):
                 changes.append('event_date')
             changed=bool(changes)
@@ -1295,8 +1349,9 @@ class Service:
                             if notices is None:
                                 job['items'].append({'source_kind':'dividends','instrument_id':inst['id'],'name':inst['code']+' 分红','status':'manual','message':'暂未提供适用的分红源，可手工核对录入'})
                             else:
-                                self.cache_dividends(inst['id'],notices)
-                                job['items'].append({'source_kind':'dividends','instrument_id':inst['id'],'name':inst['code']+' 分红','status':'ok','count':len(notices),'date':max((r['ex_date'] for r in notices),default='—'),'source':notices[0]['source'] if notices else '公开分红表','notes':['公告只进入待核对列表，不自动记收益']})
+                                item = self.sync_dividend_notices(inst, notices)
+                                job['items'].append(dict(item, source_kind='dividends', instrument_id=inst['id'],
+                                                         name=inst['code']+' 分红'))
                         except Exception as exc:
                             job['items'].append({'source_kind':'dividends','instrument_id':inst['id'],'name':inst['code']+' 分红','status':'error','message':str(exc)[:500]})
                     self.store.save_job(job)

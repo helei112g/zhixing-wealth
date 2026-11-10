@@ -11,10 +11,10 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
  const api=async(url,body,method=body===undefined?'GET':'POST')=>{const response=await page.request.fetch(base+'/api'+url,{method,data:body,headers:{'x-csrf-token':csrf,origin:base}});const value=await response.json();assert.ok(response.ok(),JSON.stringify(value));return value;};
  const dialog=()=>page.getByRole('dialog',{name:'分红确认与历史重算'});
  const keep=()=>dialog().getByRole('button',{name:'保留实际到账金额并完成核对',exact:true});
- function fixture(id,per_share,code='00700'){
+ function fixture(id,per_share,code='00700',source='Yahoo现金分派参考'){
   const result=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',
-   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');p=json.load(sys.stdin);Service(Store(d)).cache_dividends(p['id'],[dict(code=p['code'],source_ref='synthetic-browser-review',record_date=None,ex_date='2024-01-11',pay_date=None,per_share=p['per_share'],currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')])"],
-   {cwd:root,encoding:'utf8',input:JSON.stringify({id,per_share,code})});assert.equal(result.status,0,result.stderr);
+   "import json,sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');p=json.load(sys.stdin);Service(Store(d)).cache_dividends(p['id'],[dict(code=p['code'],source_ref='synthetic-browser-review',record_date=None,ex_date='2024-01-11',pay_date=None,per_share=p['per_share'],currency='HKD',source=p['source'],split_restore_factor='1')])"],
+   {cwd:root,encoding:'utf8',input:JSON.stringify({id,per_share,code,source})});assert.equal(result.status,0,result.stderr);
  }
  try{
   const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
@@ -43,12 +43,17 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
   candidate=(await candidates())[0];
   check(candidate.status==='confirmed'&&candidate.recorded_event.id===saved.id&&JSON.stringify(await events())===JSON.stringify(original),'confirm completes review under original event with every event field preserved');
   check(!(await api('/reminders')).items.some(r=>r.kind==='dividend'),'completed review disappears from shared reminder center');
-  fixture(buy.instrument_id,'1.01005');check((await candidates())[0].status==='confirmed','refresh after explicit review keeps actual amount confirmed');
-  fixture(buy.instrument_id,'1.02');await dialog().getByRole('button',{name:'关闭',exact:true}).click();await page.reload();
+  fixture(buy.instrument_id,'1.015');check((await candidates())[0].status==='confirmed','Yahoo HKD refresh beyond the ordinary tolerance keeps explicit review complete');
+  await dialog().getByRole('button',{name:'关闭',exact:true}).click();
+  await page.goto(base+'/?reminders=1');
+  await page.getByLabel('提醒来源').selectOption('dividend');
+  await page.getByText('当前没有这类提醒', {exact:true}).waitFor();
+  check(!await page.getByRole('button',{name:'核对分红',exact:true}).count(),'reminder center has no dividend to review after a Yahoo HKD refresh');
+  fixture(buy.instrument_id,'1.02','00700','合成官方公告');await page.reload();
   await page.getByRole('button',{name:'核对分红',exact:true}).click();await keep().click();
   const clock=(await api('/bootstrap')).revision;
   await page.route('**/api/family/revision',route=>route.fulfill({json:{revision:clock}}));
-  fixture(buy.instrument_id,'1.02001');await dialog().getByRole('button',{name:'确认保留并完成核对',exact:true}).click();
+  fixture(buy.instrument_id,'1.02001','00700','合成官方公告');await dialog().getByRole('button',{name:'确认保留并完成核对',exact:true}).click();
   await dialog().getByRole('alert').getByText(/账本已变化/).waitFor();
   check((await candidates())[0].status==='needs_review'&&JSON.stringify(await events())===JSON.stringify(original),'stale UI submission is rejected and leaves receipt unchanged');
   await dialog().getByRole('button',{name:'重新读取待核对分红',exact:true}).click();await keep().click();

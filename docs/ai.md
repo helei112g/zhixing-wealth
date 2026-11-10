@@ -58,7 +58,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 
 标的更名先从 `capabilities.instrument_name` 定位写入口，再读 `/api/bootstrap`，按市场、代码与 ID 核对标的和原名称。展示全局显示名的变更，使用原 `expected_revision` 提交 `write PUT /api/instruments/ID/name REQUEST.json --confirm-write`。没有独立预览接口。提交后按同一 ID 回读 bootstrap 和 instrument 审计，409 或超时先回读。更名独立于交易和组合关联。
 
-分红出现 needs_review 时，先读候选的 recorded_event、review_basis、review_changes 和 revision，展示实际金额、日期、税费与锁定汇率。用户明确要求保留实际到账并结束核对时，用 `write POST /api/dividends/NOTICE_ID/review REQUEST.json --confirm-write`，传 portfolio_id、event_id、mode=keep_recorded、原样 review_basis、原 expected_revision 及 reason。无独立服务端预览，展示上述原值与仅保存结论的影响即可；不经 events 接口重存流水。手工分红完成核对后按 decision.event_id 保持关联；更正日期后仍核对同一流水，不新增分红。只更正备注或税费不回退最近已接受的权益基准；已知权益变为未知仍需核对，null不补0。提交后回读候选、reminders 和 dividend_decision 审计；409或超时不自动重试。参考值微调规则见 [API 文档](api.md#分红核对保留实际到账)。通知已读、关闭弹窗及刷新来源都不构成业务核对授权。
+分红出现 needs_review 时，先读候选的 recorded_event、review_basis、review_changes 和 revision，展示实际金额、日期、税费与锁定汇率。用户明确要求保留实际到账并结束核对时，用 `write POST /api/dividends/NOTICE_ID/review REQUEST.json --confirm-write`，传 portfolio_id、event_id、mode=keep_recorded、原样 review_basis、原 expected_revision 及 reason。无独立服务端预览，展示上述原值与仅保存结论的影响即可；不经 events 接口重存流水。手工分红完成核对后按 decision.event_id 保持关联；更正日期后仍核对同一流水，不新增分红。只更正备注或税费不回退最近已接受的权益基准；已知权益变为未知仍需核对，null不补0。提交后回读候选、reminders 和 dividend_decision 审计；409或超时不自动重试。港股明确保留原流水后，单独的 Yahoo HKD 参考值变化不重开核对。场内基金分红须通过同代码除息日净值标记的校验，异常日期查 jobs 的 dividends 子项。参考值微调规则见 [API 文档](api.md#分红核对保留实际到账)。通知已读、关闭弹窗及刷新来源都不构成业务核对授权。
 
 ## 近期功能与 AI 入口
 

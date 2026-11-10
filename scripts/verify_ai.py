@@ -273,6 +273,8 @@ def main():
     client.write('/api/events/'+sale_saved['id'],dict(reason='合成取消补录',expected_revision=revision()),'DELETE')
     check(client.request(split_path)['facts']['split']['quantity_after']=='480','AI cancellation replays split without rewriting confirmation')
     check(cap['dividend_review']['mode']=='keep_recorded' and not cap['dividend_review']['event_write'],'AI discovers review without event writes')
+    check(cap['dividend_review']['reviewed_hk_yahoo_hkd_rate'] and cap['listed_fund_dividend_sync']['row_check'],
+          'AI discovers Hong Kong reference and listed fund row validation policies')
     check('/api/dividends/{notice_id}/review' in client.request(cap['openapi'])['paths'],'AI discovers dividend review contract')
     holding=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'HK','code':'02800','name':'AI合成分红核对'},quantity='100',gross_amount='1000',fx_rate='.9',expected_revision=revision()),'POST')
     dividend_source=dict(code='02800',source_ref='synthetic-review',record_date=None,ex_date='2024-06-03',pay_date=None,per_share='1',currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')
@@ -294,8 +296,10 @@ def main():
     try:client.write('/api/dividends/'+candidate['notice']['id']+'/review',body,'POST')
     except RuntimeError as error:check('HTTP 409' in str(error),'AI stale review cannot create duplicate event or decision')
     else:raise AssertionError('stale dividend review accepted')
-    cache_dividend('1.01005')
-    check(client.request(candidates)[0]['status']=='confirmed','AI Yahoo micro refresh leaves review complete')
+    cache_dividend('1.015')
+    check(client.request(candidates)[0]['status']=='confirmed' and
+          not any(r.get('event_id')==confirmed['id'] for r in client.request('/api/reminders')['items']),
+          'AI Yahoo HKD rate refresh leaves explicit review complete')
     client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-03',instrument_id=holding['instrument_id'],quantity='1',gross_amount='10',fx_rate='.9',expected_revision=revision()),'POST')
     check(client.request(candidates)[0]['status']=='needs_review','AI real entitlement change reopens review')
     # New plans and monthly cashflow use the same revision-guarded client, without a browser.

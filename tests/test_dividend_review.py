@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import create_app
 from backend.common import ConflictError, DomainError
+from backend.dividend_review import review_changes
 from backend.environment import claim_environment
 from backend.family_notifications import FamilyNotifications
 from backend.family_service import FamilyService
@@ -106,24 +107,22 @@ class DividendReviewTests(unittest.TestCase):
         self.assertEqual(self.store.state()['events'], before)
         self.keep(row)
         self.assertEqual(self.notice(per_share='1.00016')['status'], 'confirmed')
-        self.assertEqual(self.notice(per_share='1.00022')['status'], 'needs_review')
+        self.assertEqual(self.notice(per_share='1.00022')['status'], 'confirmed')
 
     def test_relative_and_absolute_caps_and_other_providers(self):
-        self.confirm()
-        self.keep(self.notice(per_share='.01'))
-        self.assertEqual(self.notice(per_share='.010002')['status'], 'needs_review', 'relative cap required')
-        self.keep(self.notice(per_share='100'))
-        self.assertEqual(self.notice(per_share='100.005')['status'], 'confirmed')
-        self.assertEqual(self.notice(per_share='100.00501')['status'], 'needs_review', 'absolute cap required')
-        self.keep(self.notice(per_share='1', source='合成官方公告'))
-        self.assertEqual(self.notice(per_share='1.000001')['status'], 'needs_review', 'no tolerance for official source')
+        baseline = dict(source='Yahoo现金分派参考', currency='USD', eligible_quantity='1', per_share='.01')
+        self.assertEqual(review_changes(baseline, dict(baseline, per_share='.010002')), ['per_share'])
+        baseline['per_share'] = '100'
+        self.assertEqual(review_changes(baseline, dict(baseline, per_share='100.005')), [])
+        self.assertEqual(review_changes(baseline, dict(baseline, per_share='100.00501')), ['per_share'])
+        official = dict(baseline, currency='HKD', source='合成官方公告')
+        self.assertEqual(review_changes(official, dict(official, per_share='100.000001'), keep_yahoo_hkd=True), ['per_share'])
 
-    def test_subcent_yahoo_rate_refresh_survives_restart_without_changing_receipt(self):
-        # Synthetic values exercise the interaction of relative and absolute caps.
+    def test_reviewed_yahoo_hkd_reference_can_vary_without_changing_receipt(self):
         event=self.confirm()
         self.keep(self.notice(per_share='4'))
         anchor=self.candidate()['previous_basis']
-        for rate in ('3.9998','4.0002','3.9997','4.0004'):
+        for rate in ('3.9998','4.0006','3.995','4.01'):
             self.notice(per_share=rate)
             self.service=Service(Store(self.directory))
             row=self.candidate()
@@ -131,7 +130,7 @@ class DividendReviewTests(unittest.TestCase):
             self.assertEqual(row['previous_basis'],anchor)
             self.assertEqual(row['recorded_event'],event)
             self.assertEqual(self.reminders(),[])
-        row=self.notice(per_share='4.00041')
+        row=self.notice(per_share='4.02', source='合成官方公告')
         self.assertEqual(row['status'],'needs_review')
         self.assertIn('每份分红实质变化',row['review_changes'])
 
@@ -243,7 +242,7 @@ class DividendReviewTests(unittest.TestCase):
     def test_recalculation_after_keep_still_updates_only_original_event(self):
         event = self.confirm()
         self.keep(self.notice(per_share='1.01'))
-        row = self.notice(per_share='1.02')
+        row = self.notice(per_share='1.02', source='合成官方公告')
         before = self.store.state()['events']
         preview = self.service.preview_event(row['suggested_event'],event['id'])
         self.assertEqual(self.store.state()['events'],before)
@@ -280,7 +279,7 @@ class DividendReviewTests(unittest.TestCase):
         self.keep()
         self.assertEqual(self.notifications.dividend_rows(self.store.state()), [])
         self.assertFalse(any(r['kind']=='dividend' for r in self.center.read()['items']))
-        self.notice(per_share='1.03')
+        self.notice(per_share='1.03', source='合成官方公告')
         self.assertNotEqual(self.reminders()[0]['fingerprint'], first)
 
     def test_native_reconcile_reuses_dispatch_and_removes_completed_review(self):

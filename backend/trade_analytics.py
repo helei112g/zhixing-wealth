@@ -108,7 +108,8 @@ def dividend_entitlement(state, portfolio, event):
     """The same registry-day lots for profit attribution and deletion planning."""
     ledger = Ledger(state, portfolio)
     inst = ledger.instruments[event['instrument_id']]
-    notices = [n for n in state['corporate_actions'] if n.get('kind') == 'dividend_notice']
+    notices = [n for n in state['corporate_actions']
+               if n.get('kind') == 'dividend_notice' and n.get('status') != 'withdrawn']
     notice = next((n for n in notices if n['id'] == event.get('source_dividend_id')), None)
     notice = notice or next((n for n in notices if n['instrument_id'] == inst['id'] and n['ex_date'] == event['date']), None)
     cutoff = event.get('record_date') or (notice or {}).get('record_date')

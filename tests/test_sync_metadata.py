@@ -1,3 +1,4 @@
+import json
 import tempfile
 import threading
 import time
@@ -6,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 from backend.app import create_app
+from backend.common import ZONE
+from backend.reminders import dividend_reminders
 from backend.service import Service
 from backend.store import Store
 
@@ -21,6 +24,65 @@ class SyncMetadataTests(unittest.TestCase):
             if len(jobs)>=count and all(j['status']!='running' for j in jobs) and not self.s.syncing:return jobs
             time.sleep(.01)
         self.fail('Sync did not finish')
+
+    def test_listed_fund_sync_checks_each_row_and_withdraws_only_unrecorded_stale_notice(self):
+        from datetime import datetime
+        p = self.s.save_portfolio(dict(name='合成场内基金', start_date='2024-01-01', planned_amount='1000'))
+        buy = self.s.save_event(dict(portfolio_id=p['id'], kind='BUY', date='2024-01-02',
+            instrument=dict(market='SH', code='510987', name='合成ETF'), quantity='10', gross_amount='10', fx_rate='1'))
+        iid = buy['instrument_id']
+        valid, mismatched, recorded = '2024-01-08', '2024-01-09', '2024-01-10'
+        source = dict(code='510987', per_share='0.02', currency='CNY', source='天天基金·分红送配', status='published')
+        self.s.cache_dividends(iid, [dict(source, source_ref='fund:510987:' + d, ex_date=d, record_date=d)
+                                     for d in (mismatched, recorded)])
+        legacy = {r['notice']['ex_date']: r for r in self.s.dividend_candidates(p['id'])}
+        receipt = self.s.confirm_dividend(legacy[recorded]['notice']['id'], legacy[recorded]['suggested_event'])
+        before = self.store.state()['events']
+
+        def nav_row(date, hint):
+            return {'x': int(datetime.fromisoformat(date).replace(tzinfo=ZONE).timestamp() * 1000),
+                    'y': 1, 'unitMoney': hint}
+
+        def fetch(url, _):
+            if 'pingzhongdata' in url:
+                return 'var fS_code="510987";var Data_netWorthTrend=' + json.dumps([
+                    nav_row(valid, '分红：每10份派现金元'), nav_row(mismatched, ''), nav_row(recorded, ''),
+                ], ensure_ascii=False) + ';'
+            dates = (valid, mismatched) if include_mismatch else (valid,)
+            rows = ''.join(f'<tr><td>{d}</td><td>{d}</td><td>0.20元</td><td>--</td></tr>' for d in dates)
+            return ('<title>合成ETF(510987)基金分红送配</title><table><tr><th>权益登记日</th>'
+                    '<th>除息日</th><th>每10份分红</th><th>分红发放日</th></tr>' + rows + '</table>')
+
+        quote = dict(date=valid, price='1', source='synthetic', kind='raw')
+        with (patch('backend.market.quotes', return_value=dict(rows=[quote], source='synthetic', notes=[])),
+              patch('backend.dividends._NOTICE_CACHE', {}), patch('backend.market.fetch', side_effect=fetch)):
+            include_mismatch = False
+            self.s.start_sync(iid, scopes={'quotes'})
+            job = self.wait_for_jobs(1)[0]
+            result = next(item for item in job['items'] if item['source_kind'] == 'dividends')
+            self.assertEqual(result['status'], 'ok')
+            self.assertIn(mismatched, ' '.join(result['notes']))
+            state = self.store.state()
+            self.assertEqual({r['date'] for r in dividend_reminders(self.store, state)}, {valid})
+            audit = self.s.revisions('dividend_notice', legacy[mismatched]['notice']['id'])
+            self.assertEqual(audit[0]['after_data']['status'], 'withdrawn')
+            self.assertEqual(audit[0]['before_data']['status'], 'published')
+
+            include_mismatch = True
+            with patch('backend.dividends._NOTICE_CACHE', {}):
+                self.s.start_sync(iid, scopes={'quotes'})
+                jobs = self.wait_for_jobs(2)
+            job = next(j for j in jobs if j['id'] != job['id'])
+            result = next(item for item in job['items'] if item['source_kind'] == 'dividends')
+            self.assertEqual(result['status'], 'error')
+            self.assertEqual(result['count'], 1)
+            self.assertIn(mismatched, result['message'])
+        final = self.store.state()
+        self.assertEqual(final['events'], before)
+        self.assertEqual({r['date'] for r in dividend_reminders(self.store, final)}, {valid})
+        statuses = {r['notice']['ex_date']: r['status'] for r in self.s.dividend_candidates(p['id'])}
+        self.assertEqual(statuses, {valid: 'pending', recorded: 'confirmed'})
+        self.assertEqual(before[-1], receipt)
     def test_quotes_backfill_six_calendar_months_and_then_resume_incrementally(self):
         from datetime import date
         p=self.s.save_portfolio({'name':'合成趋势','planned_amount':'1000','start_date':'2025-01-01'})

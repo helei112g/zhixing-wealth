@@ -22,7 +22,7 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 - 删除未买入计划先读 `GET /api/portfolios/P/purchase-plans/I/deletion-preview`，核对组合、标的、计划金额和将移除的标签。获授权后以原 `expected_revision` 用 `write DELETE /api/portfolios/P/purchase-plans/I REQUEST.json --confirm-write` 提交，按返回的组合和标的 ID 回读关联是否移除。若被账务历史保护，可按用户授权调整投入目标。409或超时先回读，不自动重试。
 - 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理不代表行情更新成功，应看jobs逐项状态。
 - jobs只返回最近20条，后台默认最多保存20条（含运行中），不清理运行中任务，不当作完整业务审计。价格子项saved/unchanged表示新增变化版本/跳过重复；交易锁定汇率不随同步改变。部署和文件清理须另有授权。
-- 基金分红页面代码缺失或不匹配时，分红同步子项失败并保留本地公告。查 jobs 和实际来源后再处理待办。
+- 基金分红页面代码缺失或不匹配时，分红同步子项失败并保留本地公告。场内基金还须通过同代码除息日净值分红标记校验，异常日期查看 jobs 的 dividends 子项。表内缺失且同日净值明确无标记的未入账缓存撤下并保留审计。
 - 企业行动数据的同步失败不代表存在送转计划。纯现金方案可含中小股东／大股东差异化金额；金额差异见jobs子项notes与分红候选note，按公告和实际到账核对，基础金额不保证适用于特定股东。获授权重试后核对同标的最新corporate_actions子项及reminders；成功自动消除旧同步失败提醒，不删除历史、不为消除提醒创建SPLIT。
 - 分红 needs_review 可按明确授权保留实际到账并完成核对：读取 recorded_event、review_basis、review_changes、revision，展示金额/税费/日期/锁定汇率；用 `write POST /api/dividends/NOTICE_ID/review` 传 portfolio_id、event_id、mode=keep_recorded、原样 review_basis、原 expected_revision 和 reason。此操作只保存可审计结论，不重存或新增流水；手工流水改期后仍按原event_id核对，权益未知不视作完成。无独立预览接口，不声称已做服务端预览。回读候选与reminders；409、超时先查证，不自动换版本或重复提交。权益和实质公告修正仍提醒，不能以消除提示为由自动操作。
 - 待核对分红和其他事项统一从`/api/reminders`进入，再到对应组合查看原事实；不能将通知已读等同于分红已记账。未完成复核不自动确认、忽略或更正。
@@ -45,6 +45,6 @@ description: 查询或维护知行财富的投资组合、买卖分红流水和�
 计划买入使用purchase_plan_preview(P,payload)后原revision POST /api/portfolios/P/purchase-plans，回读dashboard和labels；仅建立标的计划，不写BUY、预留或扣现金。target_pct是全组合预算百分数，路径可含scope/direction/detail。已有标的按ID或精确代码复用，不修改全局名称。实际买入转持有中，清仓后需明确意图才重新计划；目标归零取消。allocation_analysis(P,level=scope|direction|detail|instrument,...)按完整标签路径汇总，筛选仍以全组合预算/资产作分母；required_amount与over_amount分别保留，不相抵。当前持仓收益率读取holding_return，基于剩余含费税成本，不用累计买入成本或已实现收益替代。
 
 
-持仓分析顺序为配置进度、持仓分布、收益排行榜，默认配置进度；API使用同一后端统计。分红参考与到账事实分开：Yahoo微调以最后确认依据为固定基准，不滚动推进；只有相对差≤0.01%且绝对差≤0.005币种单位才可豁免参考率变化，其他权益／日期／币种／拆分变化仍要核对。不要按新参考率自动修改已确认金额，也不要删除旧决定消除提醒。
+持仓分析顺序为配置进度、持仓分布、收益排行榜，默认配置进度；API使用同一后端统计。分红参考与到账事实分开：港股明确保留原流水后，单独的 Yahoo HKD 参考值变化不重开核对。其他 Yahoo 参考值同时满足相对差≤0.01%且绝对差≤0.005币种单位才视为微调，固定与最近核对依据比较。权益、日期、币种和拆分变化仍要核对。不要按新参考率自动修改已确认金额，也不要删除旧决定消除提醒。
 
 - 标的详情的 `price_history_start` 为本组合首次购买前六个自然月；行情更新按跨组合最早购买补齐，后续增量。该段行情仅用于观察走势，不代表购买前已有持仓或投资收益；成立较晚的基金保留实际数据起点。

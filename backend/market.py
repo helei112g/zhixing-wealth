@@ -97,7 +97,7 @@ def tencent(instrument, start, end):
     return list(rows.values()), name
 
 
-def fund(instrument, start, end):
+def fund_nav_rows(instrument):
     text = fetch('https://fund.eastmoney.com/pingzhongdata/' + instrument['code'] + '.js',
                  'https://fund.eastmoney.com/')
     code = re.search(r'\bfS_code\s*=\s*["\'](\d+)["\']', text)
@@ -107,7 +107,30 @@ def fund(instrument, start, end):
     if not match:
         raise ProviderError('基金单位净值数据结构已变化')
     # Remote JavaScript is treated as text; it is never executed.
-    raw = parse_json(match.group(1)); rows = []
+    raw = parse_json(match.group(1))
+    name = re.search(r'\bfS_name\s*=\s*["\']([^"\']+)["\']', text)
+    return raw, name.group(1) if name else None
+
+
+def fund_dividend_hints(instrument):
+    raw, _ = fund_nav_rows(instrument)
+    hints = {}
+    for row in raw:
+        hint = row.get('unitMoney')
+        if not isinstance(hint, str) or row.get('y') is None or dec(row['y']) <= 0:
+            continue
+        date = datetime.fromtimestamp(int(row['x']) / 1000, ZONE).date().isoformat()
+        hint = hint.strip()
+        if not hint or hint.startswith('分红'):
+            hints[date] = bool(hint)
+    if not hints:
+        raise ProviderError('基金净值未提供可核对的现金分红标记')
+    return hints
+
+
+def fund(instrument, start, end):
+    raw, name = fund_nav_rows(instrument)
+    rows = []
     for row in raw:
         if row.get('y') is None:
             continue
@@ -117,8 +140,7 @@ def fund(instrument, start, end):
                                      dividend_hint=str(row.get('unitMoney') or '')[:300]))
     if not rows:
         raise ProviderError('基金所选区间无单位净值，可能尚未公布')
-    name = re.search(r'\bfS_name\s*=\s*["\']([^"\']+)["\']', text)
-    return rows, name.group(1) if name else None
+    return rows, name
 
 
 def quotes(instrument, start, end, include_adjusted=True, adjusted_start=None):

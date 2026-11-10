@@ -331,9 +331,13 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                     'basis_lifetime': 'last explicit notice confirm/review; receipt edits never revert it',
                                     'unknown_entitlement': 'a known quantity becoming null requires review',
                                     'audit': '/api/revisions/dividend_decision/{decision_id}',
-                                    'yahoo_reference_tolerance': {'relative': '0.0001', 'per_share_absolute': '0.0001',
+                                    'reviewed_hk_yahoo_hkd_rate': 'two Yahoo HKD references do not reopen an explicitly kept receipt on rate alone',
+                                    'yahoo_reference_tolerance': {'relative': '0.0001', 'per_share_absolute': '0.005',
                                                                  'both_required': True, 'anchor': 'last reviewed basis'},
                                     'entitlement_tolerance': 'none; quantity, dates, currency and split factors compare exactly'},
+                'listed_fund_dividend_sync': {'markets': ['SH', 'SZ'], 'types': ['etf', 'lof'],
+                                              'row_check': 'same fund code and exact ex-date cash dividend marker in NAV history',
+                                              'withdrawal': 'notice absent from current dividend table and exact-day NAV explicitly has no marker; preserve receipts and audit'},
                 'storage': {'schema': SCHEMA, 'prices': 'skip identical latest automatic quote; preserve changed versions',
                             'jobs_visible': 5, 'jobs_total_retained': 20, 'jobs_finished_retained': 20, 'jobs_running_retained': True,
                             'automatic_backup_dates_retained': 30},
@@ -518,7 +522,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def sale_lots(portfolio_id:str,instrument_id:str,date:str,exclude_event_id:str|None=None,sequence:str|None=None):
         return reply(service.sale_lots(portfolio_id,instrument_id,date,exclude_event_id,sequence))
 
-    @app.get('/api/portfolios/{portfolio_id}/dividends')
+    @app.get('/api/portfolios/{portfolio_id}/dividends', description='返回有效公告及核对状态。已明确保留原流水的港股，Yahoo 港币参考值单独波动不重开核对；已撤下的场内基金缓存不进入候选。')
     def dividend_candidates(portfolio_id:str,instrument_id:str|None=None):return reply(service.dividend_candidates(portfolio_id,instrument_id))
 
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/reinvestment-estimate',
@@ -545,7 +549,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.post('/api/fx')
     def fx(payload: dict): return reply(service.save_fx(payload))
 
-    @app.post('/api/sync', description='更新行情和公告缓存，不自动记账。corporate_actions 子项核验企业行动数据，失败不代表存在送转计划；纯现金方案的金额差异保留在 notes 和分红核对说明中。按同标的最新子项状态消除已恢复的同步提醒。')
+    @app.post('/api/sync', description='更新行情和公告缓存，不自动记账。场内基金分红按同代码、同除息日净值分红标记逐行校验。corporate_actions 子项核验企业行动数据，失败不代表存在送转计划；纯现金方案的金额差异保留在 notes 和分红核对说明中。按同标的最新子项状态消除已恢复的同步提醒。')
     def sync(payload: SyncRequest): return reply(service.start_sync(payload.instrument_id, full=payload.full, trigger=payload.trigger))
 
     @app.get('/api/jobs', summary='最近20条同步任务', description='按启动时间倒序返回最多20条，界面展示最近5条；默认最多保存20条（含运行中），运行中任务不会被清理。启动时将上次中断任务标记失败。价格项saved/unchanged统计本次全部返回序列，count为标的主序列点数。')

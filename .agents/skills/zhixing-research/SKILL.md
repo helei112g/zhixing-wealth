@@ -5,7 +5,7 @@ description: 在知行财富本机系统读取指数资料和市场水位事实�
 
 # 指数观察台
 
-1. 读取 `/api/capabilities` 和 `/api/research/catalog`，内置目录提供常用代码。用 `research_indices(page, method='mcw')` 查看已建档列表、PE/PB 当前值与 5/10 年分位和价格涨跌幅，核对各观测日和取价端点。新指数用理杏仁代码走在线预览。
+1. 读取 `/api/capabilities` 和 `/api/research/catalog`，内置目录提供常用代码。用 `research_indices(page, method='mcw')` 查看已建档列表、PE/PB 当前值与 5/10 年分位和价格涨跌幅，核对各观测日和取价端点。需要按涨跌幅排列时，按 capabilities 的 `index_list` 传入 `sort_by` 和 `sort_direction`，排序后分页，缺失值置后。新指数用理杏仁代码走在线预览。
 2. 用 `collection_preview(code, modules, history_start)` 展示核验日线日期、范围、逐端点预计调用量和原研究revision。依据用户授权提交 `PUT /api/research/collection`，保留expected_research_revision，按id回读；409不自动重试。首次保存同时提交全量同步，回读返回的 job_id。后续编辑既有订阅没有首次同步任务。
 3. 明确更新时提交原有公共数据任务，稳定request_id，结果未知先查job_id。按来源更新使用指数详情返回的 `collection.resources`，精确重试只提交失败项原resource；暂停保留历史。本机不设调用次数上限，保留累计尝试计数，不自动解除供应商权限或额度阻断。
 4. Token由用户在本机「研究工具 → 数据管理」输入并保存本地文件。禁止读取Token文件或令牌内容，禁止发到聊天、请求文件、日志、云端或仓库。仅可读取配置状态和非敏感计数。

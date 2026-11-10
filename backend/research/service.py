@@ -269,16 +269,33 @@ class ResearchService:
             value=dict(summary=d['financials'],items=rows[(page-1)*page_size:page*page_size],total=len(rows),page=page,page_size=page_size)
         return dict(value,analysis_id=d['analysis_id'],research_revision=d['research_revision'],series_code=d['series_code'],basis=basis)
 
-    def listing(self, kind=None, page=1, method='overall'):
+    def listing(self, kind=None, page=1, method='overall', *, sort_by=None, sort_direction='desc'):
         if page<1:raise DomainError('页码无效')
         with self.store.lock:
             profiles=[p for p in self.profiles() if not kind or p['kind']==kind]
+            calendar_year=today().year
+            page_slice=slice((page-1)*20,page*20)
             rows=[]
-            for p in profiles[(page-1)*20:page*20]:
+            for p in (profiles if sort_by else profiles[page_slice]):
                 d=self.detail(p['id'], method=method, summary=True)
                 rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')})
+
+            if sort_by:
+                annual_year=str(calendar_year-int(sort_by[-1])) if sort_by.startswith('annual_') else None
+
+                def return_key(row):
+                    changes=row['changes']
+                    change=changes['annual'].get(annual_year) if annual_year else changes[sort_by]
+                    if change is None:
+                        return (True, 0)
+                    ratio=dec(change['ratio'])
+                    return (False, -ratio if sort_direction=='desc' else ratio)
+
+                rows.sort(key=return_key)
+                rows=rows[page_slice]
+
             return dict(items=rows,total=len(profiles),page=page,page_size=20,research_revision=self.revision(),
-                        method=method, calendar_year=today().year)
+                        method=method,calendar_year=calendar_year)
 
     def settings(self):
         with self.store.connection() as db:

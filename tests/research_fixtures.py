@@ -56,6 +56,7 @@ def historical_memberships(profile,asof=ASOF):
 def browser_prices(profile,basis,asof=ASOF,start_date=None):
     value=price_payload(profile,basis,asof)
     if profile['code']=='000819':value['rows']=value['rows'][-1000:]
+    if profile['code']=='H11136':value['source']='中证指数'
     return value
 
 

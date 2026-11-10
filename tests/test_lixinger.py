@@ -15,7 +15,7 @@ from backend.app import create_app
 from backend.common import ConflictError,DomainError
 from backend.research.lixinger_access import LocalAccess
 from backend.research.collection import merge
-from backend.research import lixinger
+from backend.research import lixinger, providers
 from backend.research.analytics import ranks,flow_months,valuation_curve
 from backend.research.metrics import moving_averages,full_window,years_before
 from backend.research.service import ResearchService,validate_backup
@@ -149,6 +149,20 @@ class CollectionTests(unittest.TestCase):
         with self.assertRaises(ConflictError):self.r.collection.save('000905',['price'],None,True,0)
         self.assertEqual(iid,self.add());self.assertEqual(len(self.r.profiles()),n);self.assertFalse(self.calls)
         self.assertEqual(len(self.r.updates.jobs()), 1)
+
+    def test_catalog_overseas_requires_an_official_session_in_the_selected_range(self):
+        start, end = '2026-10-30', '2026-10-30'
+        revision = self.r.revision()
+        data = dict(source='中证指数', rows=[dict(date='2026-10-29', close='100')])
+        with patch.object(providers, 'cutoff', return_value=end), patch.object(providers, 'prices', return_value=data) as prices:
+            with self.assertRaisesRegex(DomainError, '请求范围内的有效日线'):
+                self.r.collection.save('H11136', ['price'], start, True, revision)
+            self.assertEqual(prices.call_args.args[1:], ('price', end))
+            self.assertEqual(prices.call_args.kwargs, {'start_date': '2026-10-29'})
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.r.profiles(), [])
+        self.assertEqual(self.r.updates.jobs(), [])
+        self.assertEqual(self.r.revision(), revision)
 
     def test_custom_index_requires_identity_and_data_then_saves_with_one_full_job(self):
         revision = self.r.revision()

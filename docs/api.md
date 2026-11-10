@@ -379,7 +379,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 |---|---|
 | GET `/api/research/catalog` | 本地已核验目录、已添加订阅、模块、默认全选的default_modules、module_sources来源说明及研究版本；不采集目录中的全部指数。 |
 | POST `/api/research/indices/resolve` | `{code}`，本地查询已保存档案或内置代码配对。目录外新指数通过采集预览在线核验。 |
-| POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示发布日期后范围。新指数联网验证理杏仁身份及所选范围内有效日线，返回 verified_price_date、预计调用量、依赖缺项和原 research_revision。已保存指数的预览只用本地数据。 |
+| POST `/api/research/collection/preview` | `{code, modules, history_start}`；history_start 为 null 表示从发布日期起。新指数核验身份及所选范围内的有效日线，返回 `verified_price_date`、`verified_price_source`、预计调用量、依赖缺项和原 `research_revision`。目录内跨市场指数以目录的官方配对核验官方价格日线，`modules` 只含支持的模块，`unsupported_modules` 列出被排除项，`endpoint_budget` 为空。其他新指数通过理杏仁核验。已保存指数的预览只用本地数据。 |
 | PUT `/api/research/collection` | 提交上述三项、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。新指数重新核验后，在同一事务保存订阅并排队全量同步，返回 job_id。修改既有订阅返回 job_id=null。 |
 | GET `/api/research/indices` | 已建档指数的本地摘要，每页20条。支持kind、page、method。旧调用默认overall，首页显式mcw。PE/PB 的 5/10 年分位见 `valuation.<metric>.windows.<years>.rank`，使用 0–1 比例，历史不足为 null。返回calendar_year与changes.annual（前三个完整自然年）、ytd、monthly、daily，涨跌幅含ratio、from_date、to_date，缺取价为null。可按 `sort_by=annual_1/annual_2/annual_3/ytd/monthly/daily` 排序，其中 annual_1 对应最近一个完整自然年。传入 `sort_direction=asc/desc` 指定方向（默认 desc）。先排序再分页，空值置后，相同涨跌幅沿用默认顺序。 |
 | GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/ewpvo/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |

@@ -25,6 +25,17 @@ def collection_modules(profile, modules=None):
     return enabled
 
 
+def official_prices(profile, basis, start, end):
+    # The CSI endpoint includes an artificial start row, so request one extra day.
+    request_start = str(day(start) - timedelta(days=1)) if profile['provider'] == 'csi' else start
+    value = providers.prices(profile, basis, end, start_date=request_start)
+    value['rows'] = [row for row in value['rows'] if row['date'] >= start]
+    if not value['rows']:
+        raise DomainError('官方来源未返回请求范围内的有效日线')
+    value['effective_date'] = value['rows'][-1]['date']
+    return value
+
+
 class Collection:
     def __init__(self, research):
         self.research = research
@@ -39,11 +50,11 @@ class Collection:
         revision = self.research.revision()
         existing = next((p for p in self.research.profiles() if p['code'] == canonical), None)
         end = providers.cutoff()
-        price_date = None
-        if existing:
-            p = existing
-        else:
+        p = existing or known
+        price_date = price_source = None
+        if not existing and (not known or known.get('exposure') != 'overseas'):
             p, price_date = lixinger.verify_index(self.research.access, canonical, known, history_start, end)
+            price_source = lixinger.SOURCE
             if not known:
                 p['registration'] = dict(source='lixinger', price_date=price_date, checked_at=now())
         start = str(day(history_start)) if history_start else p['launch']
@@ -52,6 +63,10 @@ class Collection:
         unsupported=[m for m in modules if not providers.module_capabilities(p)[m]['supported']]
         chosen = [m for m in modules if m not in unsupported] if overseas else list(dict.fromkeys(['index_info', *modules]))
         if not chosen: raise DomainError('所选模块的跨市场身份与币种尚未核验')
+        if overseas and not existing:
+            verified = official_prices(p, 'price', start, end)
+            price_date, price_source = verified['effective_date'], verified['source']
+
         calls_by_endpoint = {}; pending = []
         for m in collection_modules(p, chosen):
             if overseas: continue
@@ -60,12 +75,14 @@ class Collection:
             for call in lixinger.request_plan(p, m, start, end):
                 e = call['endpoint']; calls_by_endpoint[e] = calls_by_endpoint.get(e, 0)+1
         state = self.research.access.status()
+        limitation = ('所选可采集模块使用编制机构官方数据，无需理杏仁 Token。' if overseas else
+                      '公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。')
         return dict(profile=p, modules=chosen, history_start=history_start, effective_start=start, end=end,
-                    verified_price_date=price_date, initial_sync=existing is None,
+                    verified_price_date=price_date, verified_price_source=price_source, initial_sync=existing is None,
                     research_revision=revision, endpoint_budget=[dict(endpoint=e, calls=n,
                     remaining=None) for e, n in sorted(calls_by_endpoint.items())],
                     dependencies_pending=pending, unsupported_modules=unsupported, configured=state['configured'], enabled=state['enabled'],
-                    limitation='公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。新订阅保存后立即启动一次全量同步。')
+                    limitation=limitation + '新订阅保存后立即启动一次全量同步。')
 
     def save(self, code, modules, history_start, enabled, expected):
         from .updates import index_resources
@@ -231,13 +248,7 @@ class Collection:
         elif module in ('price', 'total_return'):
             if not full and old and old.get('effective_date'):
                 start = max(start, str(day(old['effective_date']) - timedelta(days=15)))
-            # The CSI endpoint includes an artificial start row, so request one extra day.
-            request_start = str(day(start) - timedelta(days=1)) if profile['provider'] == 'csi' else start
-            value = providers.prices(profile, module, end, start_date=request_start)
-            value['rows'] = [row for row in value['rows'] if row['date'] >= start]
-            if not value['rows']:
-                raise DomainError('官方来源未返回请求范围内的有效日线，保留旧数据')
-            value['effective_date'] = value['rows'][-1]['date']
+            value = official_prices(profile, module, start, end)
             if old and old['effective_date'] > value['effective_date']:
                 raise DomainError('官方来源返回旧日期，保留有效历史')
             previous = old if (old or {}).get('source') == value.get('source') else None

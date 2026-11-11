@@ -16,6 +16,7 @@ import {HoldingAnalysisPage} from './holding_analysis_ui';
 import {DeletePurchasePlanModal,PurchasePlanForm} from './allocation_ui';
 import {HoldingsTable} from './holdings_ui';
 import {OverviewSummary,PortfolioIntroduction,CurveQuality} from './overview_ui';
+import {PortfolioOverview} from './portfolio_overview_ui';
 import {TransactionList} from './transaction_list';
 import {DeleteEventModal} from './deletion_ui';
 import {PerformanceCalendar} from './calendar_ui';
@@ -23,26 +24,34 @@ import {useReminders,RemindersBanner,ReminderCenter} from './reminders_ui';
 import {DividendInbox,DividendNotices} from './dividend_ui';
 import {CsvForm, EventForm, FxForm, PlanForm, PortfolioForm, RestoreForm} from './forms';
 
-const pageNames:Record<string,string>={family:'资产分析',reminders:'提醒中心',overview:'组合收益',holdings:'持仓标的',detail:'标的详情',ledger:'交易记录',holding_analysis:'持仓分析',settings:'全局设置',research:'指数研究',waterlevel:'市场水位',portfolio_data:'数据管理',research_data:'数据管理'};
-const standalonePages=['family','reminders','settings','research','waterlevel','portfolio_data','research_data'];
+const pageNames:Record<string,string>={family:'资产分析',reminders:'提醒中心',overview:'组合收益',portfolio:'组合详情',holdings:'持仓标的',detail:'标的详情',ledger:'交易记录',holding_analysis:'持仓分析',settings:'全局设置',research:'指数研究',waterlevel:'市场水位',portfolio_data:'数据管理',research_data:'数据管理'};
+const standalonePages=['family','reminders','settings','research','waterlevel','portfolio_data','research_data','overview'];
+const portfolioHeaderPages=['portfolio','holdings','holding_analysis','ledger'];
 const pageIcons:Record<string,React.ReactNode>={reminders:<Bell size={17}/>,overview:<LayoutDashboard size={17}/>,holdings:<PieChart size={17}/>,holding_analysis:<TrendingUp size={17}/>,ledger:<List size={17}/>,settings:<Settings2 size={17}/>};
 
 const familyPages:Record<string,string>={overview:'总览',analysis:'趋势分析',insurance:'保险',income:'收入/开支',assets:'资产更新'};
 const familyIcons:Record<string,React.ReactNode>={overview:<Home size={17}/>,analysis:<TrendingUp size={17}/>,insurance:<ShieldCheck size={17}/>,income:<CircleDollarSign size={17}/>};
 
 export default function App(){
- const [boot,Boot]=useState<Obj|null>(null),[pid,Pid]=useState(new URLSearchParams(location.search).get('dividend')||localStorage.getItem('portfolio.selected')||''),[page,Page]=useState(new URLSearchParams(location.search).has('reminders')||new URLSearchParams(location.search).get('family')==='reminders'?'reminders':new URLSearchParams(location.search).has('family')?'family':new URLSearchParams(location.search).has('dividend')||new URLSearchParams(location.search).get('page')==='overview'?'overview':'family'),[inst,Inst]=useState(''),[version,V]=useState(0),[modal,M]=useState<Obj|null>(null),[toast,T]=useState(''),[error,E]=useState('');
+ const [initialRoute]=useState(()=>new URLSearchParams(location.search));
+ const [page,Page]=useState(()=>{
+  if(initialRoute.has('reminders')||initialRoute.get('family')==='reminders')return 'reminders';
+  if(initialRoute.has('family'))return 'family';
+  if(initialRoute.has('dividend')||initialRoute.get('page')==='portfolio')return 'portfolio';
+  return initialRoute.get('page')==='overview'?'overview':'family';
+ });
+ const [boot,Boot]=useState<Obj|null>(null),[pid,Pid]=useState(()=>initialRoute.get('dividend')||initialRoute.get('portfolio')||localStorage.getItem('portfolio.selected')||''),[inst,Inst]=useState(''),[version,V]=useState(0),[modal,M]=useState<Obj|null>(null),[toast,T]=useState(''),[error,E]=useState('');
  const reloadFlight=useRef<Promise<Obj|undefined>|null>(null);
  const reloadSequence=useRef(0),[bootLoading,BootLoading]=useState(true);
  const [familyLedger,SetFamilyLedger]=useState({filter:'all',selected:''}),[returnToLedger,ReturnToLedger]=useState(false);
  const [familyTab,FamilyTab]=useState(new URLSearchParams(location.search).get('family')==='reminders'?'overview':new URLSearchParams(location.search).get('family')||'overview');
  const notificationOpened=useRef(false);
- useEffect(()=>{const target=new URLSearchParams(location.search).get('dividend');if(boot&&target&&!notificationOpened.current&&boot.portfolios.some((p:Obj)=>p.id===target)){notificationOpened.current=true;Pid(target);Page('overview');M({kind:'dividends'});}},[boot]);
+ useEffect(()=>{const target=initialRoute.get('dividend');if(boot&&target&&!notificationOpened.current&&boot.portfolios.some((p:Obj)=>p.id===target)){notificationOpened.current=true;Pid(target);Page('portfolio');M({kind:'dividends'});}},[boot,initialRoute]);
  const [tradeId,TradeId]=useState(''),[tradeOpen,TradeOpen]=useState(false);
  const [dashboard,D]=useState<Obj|null>(null),[detail,Detail]=useState<Obj|null>(null),[loading,L]=useState(false),[polling,Polling]=useState(false),[jobs,Jobs]=useState<Obj[]>([]);
  const [grain,Grain]=useState('month'),[range,Range]=useState('all'),[start,Start]=useState(''),[end,End]=useState('');
  const reminders=useReminders(version+':'+JSON.stringify(jobs));
- const overviewScope=page==='overview';const p=boot?.portfolios.find((p:Obj)=>p.id===pid);const expectedScope=overviewScope?'overview':'latest';const dash=dashboard?.portfolio?.id===pid&&dashboard.scope===expectedScope?dashboard:null;const currentDetail=detail?.portfolio?.id===pid&&detail?.holding?.instrument_id===inst?detail:null;
+ const overviewScope=page==='portfolio';const p=boot?.portfolios.find((p:Obj)=>p.id===pid);const expectedScope=overviewScope?'overview':'latest';const dash=dashboard?.portfolio?.id===pid&&dashboard.scope===expectedScope?dashboard:null;const currentDetail=detail?.portfolio?.id===pid&&detail?.holding?.instrument_id===inst?detail:null;
  function reload(force=false):Promise<Obj|undefined>{if(reloadFlight.current){if(force)return reloadFlight.current.catch(()=>{}).then(()=>reload());return reloadFlight.current;}const run=async()=>{const sequence=++reloadSequence.current;BootLoading(true);try{const value=await api('/bootstrap');if(sequence!==reloadSequence.current)return;Boot(value);Jobs(value.jobs||[]);Polling(value.syncing);Pid(old=>value.portfolios.some((p:Obj)=>p.id===old)?old:(value.portfolios.find((p:Obj)=>!p.archived)||value.portfolios[0])?.id||'');E('');V(v=>v+1);return value;}finally{if(sequence===reloadSequence.current)BootLoading(false);}};const promise=run().finally(()=>{if(reloadFlight.current===promise)reloadFlight.current=null;});reloadFlight.current=promise;return promise;}
  useEffect(()=>{reload().catch(e=>E(e.message));},[]);
  useEffect(()=>{localStorage.setItem('portfolio.selected',pid);},[pid]);
@@ -52,9 +61,18 @@ export default function App(){
  useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>T(''),4500);return()=>clearTimeout(timer);},[toast]);
  useEffect(()=>{TradeId('');TradeOpen(false);},[pid]);
  useEffect(()=>{if(!boot)return;let alive=true,busy=false;const refresh=async()=>{if(document.hidden||busy)return;busy=true;try{const r=await api('/family/revision');if(alive&&(r.revision!==boot.revision||(r.today&&r.today!==boot.today)))await reload();}catch{}finally{busy=false;}};const timer=setInterval(refresh,2000);window.addEventListener('focus',refresh);return()=>{alive=false;clearInterval(timer);window.removeEventListener('focus',refresh);};},[boot?.revision,boot?.today]);
- function navigate(next:string,target=''){DataTarget(target);Page(next);TradeOpen(false);E('');}
+ function navigate(next:string,target=''){
+  DataTarget(target);Page(next);TradeOpen(false);E('');
+ }
+ function selectPortfolio(id:string){
+  if(id!==pid){Pid(id);Inst('');Range('all');Start('');End('');}
+ }
+ function openPortfolio(id:string){
+  selectPortfolio(id);
+  navigate('portfolio');
+ }
  function openDetail(id:string){Inst(id);Page('detail');}
- async function saved(value?:any){const creating=modal?.kind==='portfolio'&&!modal?.entity;M(null);await reload(true);if(creating&&value?.id){Pid(value.id);Page('overview');}T(value?.imported!==undefined?'已导入'+value.imported+'行，重复跳过'+value.skipped_duplicates+'行':value?.restored?'备份已恢复，原账本已保留快照':'已保存，账本已重新计算');}
+ async function saved(value?:any){const creating=modal?.kind==='portfolio'&&!modal?.entity;M(null);await reload(true);if(creating&&value?.id){if(page==='overview')selectPortfolio(value.id);else openPortfolio(value.id);}T(value?.imported!==undefined?'已导入'+value.imported+'行，重复跳过'+value.skipped_duplicates+'行':value?.restored?'备份已恢复，原账本已保留快照':'已保存，账本已重新计算');}
  async function purchasePlanDeleted(result:Obj){
   const refreshed = await reload(true);
   if(!refreshed || refreshed.revision < result.revision ||
@@ -72,10 +90,51 @@ export default function App(){
  const showEnvironment=boot?.environment==='dev';
  useEffect(()=>{document.title='知行财富'+(showEnvironment?' · '+boot?.environment_label:'');},[showEnvironment,boot?.environment_label]);
  return <div className="app-shell"><Sidebar page={page} familyTab={familyTab} setFamilyTab={FamilyTab} navigate={navigate} hasPortfolio={!!p} environment={showEnvironment?boot?.environment:null} environmentLabel={boot?.environment_label}/>
- <main className="main-content"><header className={'page-header'+(page==='detail'?' detail-page-header':'')+(p&&['overview','holdings','holding_analysis','ledger'].includes(page)?' portfolio-page-header':'')}><div className="portfolio-heading"><div className="page-heading-title"><div className="eyebrow">{['research','waterlevel','research_data'].includes(page)?'研究工具':page==='portfolio_data'?'投资组合':page==='family'?'资产分析':['settings','reminders'].includes(page)?'适用于整个系统':p?.name||'个人投资账本'}{p&&!standalonePages.includes(page)&&<span className="running-days" title={'始于'+p.start_date+'，起始日计第1天'}>运行 {p.running_days} 天</span>}</div><div className="page-heading-meta"><h1>{page==='family'?(familyPages[familyTab]||'总览'):pageNames[page]}</h1>{page==='family'&&boot&&<PageCaption>资产 · 统一换算为人民币 · 截至 {boot.today}</PageCaption>}{page==='waterlevel'&&<PageCaption>历史相对位置 · 股票、利率债与信用债 · 各指标日期独立</PageCaption>}{['settings','reminders'].includes(page)&&<PageCaption>{page==='settings'?'本机账本 · 汇率与备份':'全局待办 · 按来源核对'}</PageCaption>}{dash&&['overview','holdings','holding_analysis','ledger'].includes(page)&&<ValuationCaption dash={dash}/>}</div></div>{boot&&p&&['overview','holdings','holding_analysis','ledger'].includes(page)&&<div className="portfolio-header-controls"><label htmlFor="portfolio"><select id="portfolio" aria-label="投资组合" value={pid} onChange={e=>{Pid(e.target.value);Inst('');Range('all');Start('');End('');}}>{boot.portfolios.map((entry:Obj)=><option key={entry.id} value={entry.id}>{entry.name}{entry.archived?' · 已归档':''}</option>)}</select></label><Button onClick={()=>action('portfolio')}><Plus size={15}/>创建组合</Button></div>}</div><div className="header-actions">{p&&!standalonePages.includes(page)&&<><Button small onClick={()=>action('portfolio',{entity:p})}><Edit3 size={14}/>编辑组合</Button><Button onClick={()=>sync()} disabled={polling}>{polling?<LoaderCircle size={15} className="spin"/>:<RefreshCw size={15}/>}更新数据</Button>{page==='holdings'&&<Button disabled={p.archived} onClick={()=>action('purchase-plan')}>添加计划买入</Button>}<Button primary disabled={p.archived} onClick={()=>action('event')}><Plus size={16}/>记录一笔</Button></>}</div></header>
- {returnToLedger&&['overview','holdings','holding_analysis','ledger','detail'].includes(page)&&<button className="text-button back-link" onClick={()=>{FamilyTab('assets');navigate('family');ReturnToLedger(false);}}><ArrowLeft size={14}/>返回资产台账</button>}
- <ErrorBox error={error}/>{boot&&page!=='reminders'&&<RemindersBanner {...reminders} quality={['overview','holdings','holding_analysis','ledger'].includes(page)?dash:null} onOpen={()=>navigate('reminders')}/>}
- {p?.archived&&!standalonePages.includes(page)&&<Notice>当前组合已归档，历史仍可查看；编辑组合可恢复记账。</Notice>}
+ <main className="main-content">
+ <header className={'page-header'+(page==='detail'?' detail-page-header':'')+(p&&portfolioHeaderPages.includes(page)?' portfolio-page-header':'')}>
+  <div className="portfolio-heading">
+   <div className="page-heading-title">
+    <div className="eyebrow">
+     {['research','waterlevel','research_data'].includes(page)?'研究工具':
+      ['overview','portfolio_data'].includes(page)?'投资组合':
+      page==='family'?'资产分析':['settings','reminders'].includes(page)?'适用于整个系统':p?.name||'个人投资账本'}
+     {p&&!standalonePages.includes(page)&&<span className="running-days" title={'始于'+p.start_date+'，起始日计第1天'}>运行 {p.running_days} 天</span>}
+    </div>
+    <div className="page-heading-meta">
+     <h1>{page==='family'?(familyPages[familyTab]||'总览'):pageNames[page]}</h1>
+     {page==='family'&&boot&&<PageCaption>资产 · 统一换算为人民币 · 截至 {boot.today}</PageCaption>}
+     {page==='overview'&&boot&&<PageCaption>估值截至 {boot.today} · 金额统一为CNY</PageCaption>}
+     {page==='waterlevel'&&<PageCaption>历史相对位置 · 股票、利率债与信用债 · 各指标日期独立</PageCaption>}
+     {['settings','reminders'].includes(page)&&<PageCaption>{page==='settings'?'本机账本 · 汇率与备份':'全局待办 · 按来源核对'}</PageCaption>}
+     {dash&&portfolioHeaderPages.includes(page)&&<ValuationCaption dash={dash}/>}
+    </div>
+   </div>
+   {boot&&p&&portfolioHeaderPages.includes(page)&&<div className="portfolio-header-controls">
+    <label htmlFor="portfolio"><select id="portfolio" aria-label="投资组合" value={pid} onChange={e=>selectPortfolio(e.target.value)}>
+     {boot.portfolios.map((entry:Obj)=><option key={entry.id} value={entry.id}>{entry.name}{entry.archived?' · 已归档':''}</option>)}
+    </select></label>
+    {!overviewScope&&<Button onClick={()=>action('portfolio')}><Plus size={15}/>创建组合</Button>}
+   </div>}
+  </div>
+  <div className="header-actions">
+   {page==='overview'&&!!boot?.portfolios.length&&<>
+    <Button onClick={()=>sync()} disabled={polling}>{polling?<LoaderCircle size={15} className="spin"/>:<RefreshCw size={15}/>}更新数据</Button>
+    <Button primary onClick={()=>action('portfolio')}><Plus size={15}/>创建组合</Button>
+   </>}
+   {p&&!standalonePages.includes(page)&&<>
+    {!overviewScope&&<>
+     <Button small onClick={()=>action('portfolio',{entity:p})}><Edit3 size={14}/>编辑组合</Button>
+     <Button onClick={()=>sync()} disabled={polling}>{polling?<LoaderCircle size={15} className="spin"/>:<RefreshCw size={15}/>}更新数据</Button>
+    </>}
+    {page==='holdings'&&<Button disabled={p.archived} onClick={()=>action('purchase-plan')}>添加计划买入</Button>}
+    <Button primary disabled={p.archived} onClick={()=>action('event')}><Plus size={16}/>记录一笔</Button>
+   </>}
+  </div>
+ </header>
+ {returnToLedger&&['portfolio','holdings','holding_analysis','ledger','detail'].includes(page)&&<button className="text-button back-link" onClick={()=>{FamilyTab('assets');navigate('family');ReturnToLedger(false);}}><ArrowLeft size={14}/>返回资产台账</button>}
+ {overviewScope&&p&&<button className="text-button back-link" onClick={()=>{ReturnToLedger(false);navigate('overview');}}><ArrowLeft size={14}/>返回组合收益</button>}
+ <ErrorBox error={error}/>{boot&&page!=='reminders'&&<RemindersBanner {...reminders} quality={portfolioHeaderPages.includes(page)?dash:null} onOpen={()=>navigate('reminders')}/>}
+ {p?.archived&&!standalonePages.includes(page)&&<Notice>当前组合已归档，历史仍可查看；{overviewScope?'可在组合收益首页编辑组合并恢复记账。':'编辑组合可恢复记账。'}</Notice>}
  {!boot?loadingView:!p&&!standalonePages.includes(page)?<Panel><Empty title="从第一个组合开始" action={<Button primary onClick={()=>action('portfolio')}><Plus size={16}/>创建第一个组合</Button>}>设置组合预算，直接录入买入。你的持仓、交易与投资笔记只保存在这台机器上。</Empty><div className="onboarding-steps"><div><span>1</span><b>设置组合计划</b><small>买入和费税直接抵扣预算</small></div><div><span>2</span><b>直接记录买卖</b><small>交易确认时锁定折算汇率</small></div><div><span>3</span><b>查看收益与记录笔记</b><small>行情日频更新，数据日期可核对</small></div></div></Panel>:<>
  {page==='research'&&<ResearchPage onData={openResearchData}/>}
  {page==='waterlevel'&&<WaterlevelPage today={boot.today} onData={()=>openResearchData('market')}/>}
@@ -86,9 +145,11 @@ export default function App(){
   <SettingsPriceCache boot={boot} syncing={polling} sync={sync}/>
   <UpdateHistory area="portfolio"/>
  </>}
- {page==='reminders'&&<><NotificationSettings version={version} onOpenPlan={(row:Obj)=>action('notification-plan',row)}/><ReminderCenter {...reminders} busy={polling} onAction={(target:Obj)=>{if(target.type==='settings'){navigate('settings');return;}if(target.type==='sync'){sync(target.instrument_id,true,'retry');return;}if(target.portfolio_id)Pid(target.portfolio_id);navigate('overview');if(target.type==='dividend')action('dividends');if(target.type==='portfolio_todo'){const t=target.todo;t.type==='confirm_split'?action('event',{initialKind:'SPLIT',instrumentId:t.instrument_id,prefill:t.prefill,splitNotice:t.notice}):action('event',{entity:t.event,splitNotice:t.notice});}}}/></>}
- {page==='family'&&<FamilyPage version={version} today={boot.today} tab={familyTab} setTab={FamilyTab} ledgerState={familyLedger} setLedgerState={SetFamilyLedger} onReload={()=>reload(true)} openPortfolio={(id:string)=>{ReturnToLedger(true);Pid(id);navigate('overview');}}/>}
- {page==='overview'&&(dash?<Overview dash={dash} portfolio={p} grain={grain} setGrain={Grain} range={range} setRange={Range} start={start} end={end} setStart={Start} setEnd={End} today={boot.today} action={action} openDetail={openDetail} />:loadingView)}
+ {page==='reminders'&&<><NotificationSettings version={version} onOpenPlan={(row:Obj)=>action('notification-plan',row)}/><ReminderCenter {...reminders} busy={polling} onAction={(target:Obj)=>{if(target.type==='settings'){navigate('settings');return;}if(target.type==='sync'){sync(target.instrument_id,true,'retry');return;}if(target.portfolio_id)openPortfolio(target.portfolio_id);if(target.type==='dividend')action('dividends');if(target.type==='portfolio_todo'){const t=target.todo;t.type==='confirm_split'?action('event',{initialKind:'SPLIT',instrumentId:t.instrument_id,prefill:t.prefill,splitNotice:t.notice}):action('event',{entity:t.event,splitNotice:t.notice});}}}/></>}
+ {page==='family'&&<FamilyPage version={version} today={boot.today} tab={familyTab} setTab={FamilyTab} ledgerState={familyLedger} setLedgerState={SetFamilyLedger} onReload={()=>reload(true)} openPortfolio={(id:string)=>{ReturnToLedger(true);openPortfolio(id);}}/>}
+ {page==='overview'&&<PortfolioOverview boot={boot} version={version} onCreate={()=>action('portfolio')}
+  onEdit={(portfolio:Obj)=>action('portfolio',{entity:portfolio})} onOpen={(id:string)=>{ReturnToLedger(false);openPortfolio(id);}}/>}
+ {overviewScope&&(dash?<Overview dash={dash} portfolio={p} grain={grain} setGrain={Grain} range={range} setRange={Range} start={start} end={end} setStart={Start} setEnd={End} today={boot.today} action={action} openDetail={openDetail} />:loadingView)}
  {page==='holdings'&&(dash?<Holdings dash={dash} action={action} openDetail={openDetail} onLabelsSaved={async()=>{await reload();T('持仓标签已保存');}}/>:loadingView)}
  {page==='detail'&&(currentDetail?<InstrumentDetail key={pid+':'+inst} data={currentDetail} refreshing={bootLoading||currentDetail._clientVersion!==version} action={action} back={()=>navigate('holdings')} sync={()=>sync(inst)} onEvent={(e:Obj)=>action('event',{entity:e})} onReload={()=>reload(true)}/>:loadingView)}
  {page==='ledger'&&(dash?<LedgerPage version={version} refreshing={bootLoading} dash={dash} boot={boot} action={action} openDetail={openDetail} onReload={()=>reload(true)}/>:loadingView)}
@@ -108,9 +169,9 @@ function ValuationCaption({dash}:Obj){return <PageCaption>估值截至 {dash.dat
 
 function Overview({dash,portfolio,grain,setGrain,range,setRange,start,end,setStart,setEnd,today,action,openDetail}:Obj){const b=dash.benchmark;
 
- return <><PortfolioIntroduction key={portfolio.id} portfolio={portfolio} onEdit={()=>action('portfolio',{entity:portfolio})}/><OverviewSummary dash={dash}/>
+ return <><PortfolioIntroduction key={portfolio.id} portfolio={portfolio}/><OverviewSummary dash={dash}/>
 
- <Panel title="收益表现" right={<div className="segmented">{[['all','记账以来'],['year','本年'],['quarter','近90天'],['custom','自定义']].map(([v,l])=><button key={v} className={range===v?'active':''} onClick={()=>setRange(v)}>{l}</button>)}</div>}>{range==='custom'&&<div className="date-range"><label>从<input type="date" value={start||dash.portfolio.start_date} min={dash.portfolio.start_date} max={end||today} onChange={e=>setStart(e.target.value)}/></label><label>至<input type="date" value={end||today} min={start||dash.portfolio.start_date} max={today} onChange={e=>setEnd(e.target.value)}/></label></div>}<div className="chart-legend"><span><i/>组合 {dash.selected_segment_count>1?"跨区段不合并":percent(dash.selected_return,true)}</span>{b?<span><i className="reference"/>{b.instrument.name} {percent(b.return,true)} · {b.label}</span>:<button className="text-button" onClick={()=>action('portfolio',{entity:dash.portfolio})}>设置比较基准 →</button>}{dash.target&&<span className="goal-legend"><i/>目标年化收益率 {percent(dash.target.annual_rate)} · 本区间 {percent(dash.target.return,true)}</span>}</div><CurveQuality quality={dash.curve_quality} hasTodos={dash.todos?.length>0} onReminders={()=>action('reminders')} onSettings={()=>action('settings')}/><PerformanceChart curve={dash.curve} benchmark={b} target={dash.target}/><small className="muted">{b?.note||'累计收益率以累计买入成本为分母，排除闲置预算。'} 目标线按目标年化收益率复利折算为区间参考走势；不代表实际现金流收益。</small></Panel>
+ <Panel title="收益表现" right={<div className="segmented">{[['all','记账以来'],['year','本年'],['quarter','近90天'],['custom','自定义']].map(([v,l])=><button key={v} className={range===v?'active':''} onClick={()=>setRange(v)}>{l}</button>)}</div>}>{range==='custom'&&<div className="date-range"><label>从<input type="date" value={start||dash.portfolio.start_date} min={dash.portfolio.start_date} max={end||today} onChange={e=>setStart(e.target.value)}/></label><label>至<input type="date" value={end||today} min={start||dash.portfolio.start_date} max={today} onChange={e=>setEnd(e.target.value)}/></label></div>}<div className="chart-legend"><span><i/>组合 {dash.selected_segment_count>1?"跨区段不合并":percent(dash.selected_return,true)}</span>{b?<span><i className="reference"/>{b.instrument.name} {percent(b.return,true)} · {b.label}</span>:<span>未设置比较基准</span>}{dash.target&&<span className="goal-legend"><i/>目标年化收益率 {percent(dash.target.annual_rate)} · 本区间 {percent(dash.target.return,true)}</span>}</div><CurveQuality quality={dash.curve_quality} hasTodos={dash.todos?.length>0} onReminders={()=>action('reminders')} onSettings={()=>action('settings')}/><PerformanceChart curve={dash.curve} benchmark={b} target={dash.target}/><small className="muted">{b?.note||'累计收益率以累计买入成本为分母，排除闲置预算。'} 目标线按目标年化收益率复利折算为区间参考走势；不代表实际现金流收益。</small></Panel>
 
  <div className="overview-analysis"><Panel title="区间收益从哪里来" right={<small className="muted">CNY · {dash.estimated?'含暂估':'按所选区间'}</small>}><div className="breakdown">{[['price','价格损益'],['dividends','分红收入（税前）'],['fx','汇率影响'],['costs','手续费及税费'],['other','利息 / 其他收入']].filter(([k])=>k!=='other'||Number(dash.selected_components[k])!==0).map(([k,label])=><div key={k}><span>{label}</span><b className={tone(k==='costs'?-(Number(dash.selected_components.fees||0)+Number(dash.selected_components.taxes||0)):dash.selected_components[k])}>{k==='costs'?(dash.selected_components.fees===null||dash.selected_components.taxes===null?'—':signedMoney(-(Number(dash.selected_components.fees)+Number(dash.selected_components.taxes)))):dash.selected_components[k]===null?'—':signedMoney(dash.selected_components[k])}</b></div>)}</div><div className="panel-total"><b>区间总收益</b><b className={tone(dash.selected_profit)}>{signedMoney(dash.selected_profit)}</b></div></Panel>
  <PerformanceCalendar dash={dash}/></div>

@@ -1,3 +1,4 @@
+const {openPortfolio}=require('./browser_portfolio_nav.cjs');
 /* Only explicitly marked synthetic test data; no requests may mutate a real ledger. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright'),root=path.resolve(__dirname,'..');
@@ -22,14 +23,20 @@ const base=process.env.PORTFOLIO_TEST_URL,out=path.join(process.env.PORTFOLIO_TE
   // Insert provider-shaped quotes only in the isolated test database, never expose a manual-price API.
   const seeded=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,sys;from pathlib import Path;from backend.service import Service;from backend.store import Store;p=json.load(sys.stdin);assert Path(p['dir']).resolve()==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();Service(Store(Path(p['dir']))).cache_prices(p['id'],p['rows'])"],{cwd:root,encoding:'utf8',input:JSON.stringify({dir:health.data_directory,id:a.instrument_id,rows:[{date:'2024-01-31',price:'10',source:'合成行情'},{date:'2024-02-29',price:'12',source:'合成行情'},{date:'2024-04-30',price:'9',source:'合成行情'}]})});assert.equal(seeded.status,0,seeded.stderr);
   const original=(await api('/portfolios/'+p.id+'/dashboard')).events;
-  await page.goto(new URL('/?page=overview',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await nav('持仓标的');
+  await page.goto(new URL('/?page=portfolio',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await nav('持仓标的');
   await row('计划待投入标的').getByRole('button',{name:'设置计划',exact:true}).click();await target().fill('40');await waitText('计划资金缺口 50,000.00 CNY');
   check((await dialog().innerText()).includes('150,000.00')&&(await dialog().innerText()).includes('100,000.00'),'preview compares remaining need 150000 with available 100000');
   check(await dialog().getByRole('button',{name:'保存计划',exact:true}).isEnabled(),'shortfall does not disable save');
   await page.screenshot({path:path.join(out,'plan-warning.png'),fullPage:true});
-  await dialog().getByRole('button',{name:'保存计划',exact:true}).click();await dialog().waitFor({state:'hidden'});await nav('组合收益');await page.locator('.summary-facts .plan-funding').getByText('计划资金缺口 50,000.00 CNY',{exact:true}).waitFor();
+  await dialog().getByRole('button',{name:'保存计划',exact:true}).click();await dialog().waitFor({state:'hidden'});await nav('组合收益');await openPortfolio(page,p.id);await page.locator('.summary-facts .plan-funding').getByText('计划资金缺口 50,000.00 CNY',{exact:true}).waitFor();
   const saved=await api('/portfolios/'+p.id+'/dashboard');check(saved.plan_funding.total_target_pct==='110'&&saved.plan_funding.shortfall==='50000','combined 110 percent plan persists with exact shortage');
-  for(const name of ['组合收益','交易记录','持仓标的']){await nav(name);if(name==='组合收益')check((await page.locator('.summary-facts').innerText()).includes('计划资金缺口 50,000.00 CNY'),'overview summary shows the canonical plan gap');else check(await page.locator('.overview-summary').count()===0,'list page keeps its statistics card removed: '+name);}
+  for(const name of ['组合收益','交易记录','持仓标的']){
+   await nav(name);
+   if(name==='组合收益'){
+    await openPortfolio(page,p.id);
+    check((await page.locator('.summary-facts').innerText()).includes('计划资金缺口 50,000.00 CNY'),'portfolio detail shows the canonical plan gap');
+   }else check(await page.locator('.overview-summary').count()===0,'list page keeps its statistics card removed: '+name);
+  }
   // Overinvested A cannot fund the still-unfilled B, even with total plans below 100%.
   await row('计划已投入标的').getByRole('button',{name:'设置计划',exact:true}).click();await target().fill('50');await waitText('计划资金缺口 50,000.00 CNY');check((await dialog().innerText()).includes('90.00%')&&(await dialog().locator('.plan-allocation').innerText()).includes('50,000.00 CNY')&&(await dialog().locator('.plan-allocation').innerText()).includes('尚可分配'),'unallocated budget can coexist with a cash shortfall at 90 percent total plans');await dialog().getByRole('button',{name:'取消',exact:true}).click();
   await row('计划待投入标的').getByRole('button',{name:'设置计划',exact:true}).click();await target().fill('30');await waitText('剩余计划与可投金额匹配');check(true,'balanced plan is identified');await target().fill('20');await waitText('计划后余量 50,000.00 CNY');check(true,'surplus plan is identified');

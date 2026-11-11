@@ -1,3 +1,4 @@
+const {openPortfolio}=require('./browser_portfolio_nav.cjs');
 /* Financial presentation regression. All writes require the synthetic QA ledger. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
@@ -20,7 +21,7 @@ fs.mkdirSync(out,{recursive:true});
   await api('/fx',{currency:'HKD',date:'2023-01-01',rate:'1',mode:'daily'});
   const buy=await api('/events',{portfolio_id:p.id,kind:'BUY',date:'2023-01-02',instrument:{market:'HK',code:'02800',name:'合成分红标的'},quantity:'100',gross_amount:'1000',transaction_costs:'10',fx_rate:'.9'});
   quote(buy.instrument_id,'12',boot.today);
-  await page.goto(new URL('/?page=overview',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.locator('.page-header .eyebrow').filter({hasText:'合成收益分解验收'}).waitFor();await page.locator('.summary-cumulative').waitFor();
+  await page.goto(new URL('/?page=portfolio',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.locator('.page-header .eyebrow').filter({hasText:'合成收益分解验收'}).waitFor();await page.locator('.summary-cumulative').waitFor();
   const expected=['总资产 · CNY','持仓市值 · CNY','累计收益 · CNY','累计收益率'];
   check(JSON.stringify(await page.locator('.summary-main .summary-label').allTextContents())===JSON.stringify(expected),'profit amount is a separate top metric');check(await page.locator('.summary-returns .annual-return').isVisible(),'annual rate remains visible in the merged column');
   await page.getByRole('button',{name:'记录一笔',exact:true}).click();const dialog=page.getByRole('dialog');
@@ -66,7 +67,7 @@ fs.mkdirSync(out,{recursive:true});
   check(await page.locator('[data-instrument-event="'+buy.id+'"] .transaction-return').innerText()===returnText,'detail and ledger show identical two-line return values');
   await page.screenshot({path:path.join(out,'instrument.png'),fullPage:true});
   for(const width of [1024,390,320]){await page.setViewportSize({width,height:1000});await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'detail profit layout fits '+width);await page.screenshot({path:path.join(out,'detail-'+width+'.png'),fullPage:true});}
-  quote(buy.instrument_id,'8',boot.today);await page.reload();await nav('组合收益');await page.locator('.summary-cumulative>strong').waitFor();
+  quote(buy.instrument_id,'8',boot.today);await page.reload();await nav('组合收益');await openPortfolio(page,p.id);await page.locator('.summary-cumulative>strong').waitFor();
   check(await page.locator('.summary-cumulative>strong').evaluate(e=>getComputedStyle(e).color==='rgb(41, 123, 110)'),'negative total profit is green');
   await nav('交易记录');await page.locator('[data-ledger-event="'+div.id+'"]').getByRole('button',{name:'更正',exact:true}).click();
   check(await page.getByRole('dialog').getByLabel(/^净分红收益（自动计算） · HKD/).inputValue()==='9.5678','editing preserves original tax and net precision');
@@ -91,7 +92,7 @@ fs.mkdirSync(out,{recursive:true});
   await record({kind:'DIVIDEND',date:boot.today,net_amount:'20',tax:'0',pay_date:tomorrow,pay_fx_rate:'1'});
   quote(acquisition.instrument_id,'12',boot.today);const pending=await capital();values=pending.capital_summary;
   check(values.available_amount==='9625'&&values.invested_amount==='375'&&values.profit_breakdown.cash_dividends_net==='110'&&values.profit_breakdown.reinvested_dividends_net==='100','unpaid dividend is recognized income and receivable without cash recovery');
-  await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(capitalPortfolio.id);await nav('组合收益');
+  await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(capitalPortfolio.id);await nav('组合收益');await openPortfolio(page,capitalPortfolio.id);
   await page.waitForFunction(expected=>document.querySelector('.summary-cost dd')?.textContent===expected,money(values.cost));
   check(await page.locator('.summary-facts>div').count()===5&&await page.locator('.summary-cost dd').innerText()===money(values.cost),'overview adds cumulative input from canonical cost');
   check(await page.locator('.summary-facts>div').evaluateAll(rows=>rows.every(row=>row.querySelector('dd')&&row.querySelector('small')?.textContent.trim())),'each capital metric has a concise explanation below its value');

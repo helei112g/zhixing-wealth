@@ -149,7 +149,7 @@ class Client:
         return self.preview({'code':code},'/api/research/indices/resolve')
 
     def collection_preview(self,code,modules,history_start=None):
-        """Check a new index against Lixinger and estimate the selected collection."""
+        """Preview collection and its verification source (official for catalog overseas indices)."""
         return self.preview(dict(code=code,modules=modules,history_start=history_start),'/api/research/collection/preview')
 
     def research_studio(self,index_id,**options):

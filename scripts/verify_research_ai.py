@@ -78,4 +78,34 @@ def main():
     except ValueError:check(True,'AI client does not accept credential mutation')
     else:raise AssertionError('AI credential mutation accepted')
 
+    check(cap['research']['collection']['validate_new_catalog_overseas']=='official_identity_and_price',
+          'AI discovers official verification for catalog overseas indices')
+    counts = c.request('/api/settings/lixinger')['counts']
+    modules = ['price', 'total_return', 'memberships']
+    p = c.collection_preview('H01136', [*modules, 'valuations', 'financials'], '2026-10-01')
+    check(p['profile']['code']=='H11136' and p['verified_price_source']=='中证指数' and p['verified_price_date']
+          and p['modules']==modules and p['unsupported_modules']==['valuations', 'financials']
+          and not p['endpoint_budget'], 'official return-code alias previews only supported modules')
+    check(all(row['code']!='H11136' for row in c.request('/api/research/catalog')['subscriptions']),
+          'official preview leaves subscriptions unchanged')
+    body = dict(code='H11136', modules=p['modules'], history_start=p['history_start'], enabled=True,
+                expected_research_revision=p['research_revision'])
+    saved = c.write('/api/research/collection', body, 'PUT')
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        job = c.request('/api/data-updates/jobs/' + saved['job_id'])
+        if job['state'] not in ('pending', 'running'):
+            break
+        time.sleep(.05)
+    check(job['state']=='complete' and job['trigger']=='index_create' and
+          [r['module'] for r in job['resources'] if r['full'] and r['target']==saved['id']]==modules,
+          'official subscription completes its first full sync')
+    d = c.research_index(saved['id'])
+    tr = c.research_index(saved['id'], basis='total_return')
+    check(d['series_code']=='H11136' and tr['series_code']=='H01136' and d['latest'] and tr['latest'] and
+          {row['market'] for row in d['companies']}=={'HK', 'US'} and
+          d['module_status']['valuations']['status']=='unsupported', 'official snapshots read back with distinct series and cross-market constituents')
+    check(c.request('/api/settings/lixinger')['counts']==counts and c.connect()['revision']==before,
+          'official collection leaves Lixinger counts and ledger revision unchanged')
+
 if __name__=='__main__':main()

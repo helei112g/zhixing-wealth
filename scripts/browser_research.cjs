@@ -38,6 +38,20 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===1,'index library has one add entry');
   check(await page.getByRole('button',{name:'本机Token与预算',exact:true}).count()===0,'credential controls removed from index page');
 
+  await page.getByRole('button',{name:'添加采集',exact:true}).click();
+  const officialDialog = page.getByRole('dialog',{name:'添加指数采集'});
+  await officialDialog.getByLabel('采集指数代码',{exact:true}).fill('H11136');
+  await officialDialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  const officialPreview = officialDialog.locator('.collection-preview');
+  await officialPreview.getByText(/^已核验中证指数价格日线/).waitFor();
+  check(await officialPreview.getByText('采集模块 · 价格日线、全收益日线、当前成分与权重',{exact:true}).isVisible() &&
+   (await officialPreview.innerText()).includes('无需理杏仁 Token') &&
+   (await officialPreview.innerText()).includes('未纳入采集'), 'cross-market preview shows verified official modules before any token is configured');
+  await officialPreview.scrollIntoViewIfNeeded();
+  await shot('h11136-official-collection-preview');
+  await page.keyboard.press('Escape');
+  await officialDialog.waitFor({state:'hidden'});
+
   await navigate('数据管理','研究工具');
   check(await page.getByRole('button',{name:'添加采集',exact:true}).count()===0,'research data management has no add entry');
   check(await page.getByRole('button',{name:'更新全部指数',exact:true}).isDisabled(),'batch update is disabled with no enabled indices');

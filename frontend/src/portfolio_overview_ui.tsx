@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react';
-import {ChevronRight, Edit3, LoaderCircle, Plus, Wallet} from 'lucide-react';
+import {ChevronRight, Edit3, LoaderCircle, Plus} from 'lucide-react';
 import {api, money, Obj, percent, signedMoney, tone} from './api';
 import {Button, Empty, ErrorBox, Panel} from './components';
 import './portfolio_overview.css';
@@ -45,10 +45,9 @@ export function PortfolioOverview({boot, version, onCreate, onEdit, onOpen}: Obj
    <Button onClick={() => setRetry(retry + 1)}>重新读取汇总</Button></div>}
   {summary ? <section className="panel portfolio-overview-summary" aria-label="全部组合汇总">
    <div className="portfolio-overview-total">
-    <span><Wallet size={16}/> 全部组合总资产 · CNY</span>
+    <span>全部组合总资产 · CNY</span>
     <strong>{money(summary.total_assets)}</strong>
-    <span className="running-days">运行 {summary.running_days} 天</span>
-    <small>始于 {summary.start_date} · {summary.portfolios.length} 个组合</small>
+    <small>{summary.portfolios.length} 个组合</small>
     {(summary.incomplete || summary.estimated) && <small role="status">{summary.incomplete?'部分数据待补齐':'部分收益含暂估'}</small>}
    </div>
    <div className="portfolio-overview-returns">

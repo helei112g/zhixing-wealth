@@ -65,8 +65,12 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
   const aggregate=await api('/portfolios/overview');
   check(await overview().locator('.portfolio-overview-total strong').innerText()===Number(aggregate.total_assets).toLocaleString('zh-CN',{minimumFractionDigits:2}),
    'homepage displays the server total assets');
-  check(await overview().locator('.portfolio-return-metric').count()===5&&await overview().locator('.running-days').isVisible(),
-   'homepage displays all five return pairs and the running time');
+  check(await overview().locator('.portfolio-return-metric').count()===5&&await overview().getByText(/运行|始于/).count()===0,
+   'homepage summary displays the five return pairs without aggregate running dates');
+  for(const portfolio of aggregate.portfolios){
+   check(await row(portfolio.id).getByText('运行 '+portfolio.running_days+' 天 · 始于 '+portfolio.start_date,{exact:true}).isVisible(),
+    'the individual portfolio row displays its own running time');
+  }
   check((await overview().locator('.portfolio-return-metric').last().innerText()).includes(aggregate.latest_trading_day.end_date),
    'latest trading day displays its actual observation date');
   const syncs=[];

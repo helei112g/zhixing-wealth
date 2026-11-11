@@ -73,11 +73,14 @@ const linkedPortfolio=page.getByRole('link',{name:'合成关联乙',exact:true})
 await linkedPortfolio.waitFor();
 check(await page.locator('.page-header').getByRole('button',{name:'创建组合',exact:true}).isVisible(),'portfolio homepage provides creation');
 const detailHref=await linkedPortfolio.getAttribute('href');
+const portfolioTitle=page.locator('.page-header .eyebrow').filter({hasText:p2.name});
 await linkedPortfolio.click();
-check(await page.getByLabel('投资组合',{exact:true}).inputValue()===p2.id,'the row opens the selected portfolio detail');
+await portfolioTitle.waitFor();
+check(await page.getByRole('heading',{name:'组合详情',exact:true}).isVisible(),'the row opens the selected portfolio detail');
 await page.goto(new URL(detailHref,base).href);
 await page.reload();
-check(await page.getByLabel('投资组合',{exact:true}).inputValue()===p2.id,'portfolio detail link persists after reload');
+await portfolioTitle.waitFor();
+check(await page.getByRole('heading',{name:'组合详情',exact:true}).isVisible(),'portfolio detail link persists after reload');
 await page.getByRole('button',{name:'返回组合收益',exact:true}).click();await linkedPortfolio.waitFor();await shot('portfolio-overview-controls');
 await page.getByRole('navigation',{name:'资产分析',exact:true}).getByRole('button',{name:'总览',exact:true}).click();await page.getByRole('button',{name:'关联投资组合',exact:true}).click();
 await dialog.getByRole('checkbox',{name:/合成关联甲/}).check();await dialog.getByRole('checkbox',{name:/合成关联乙/}).check();check(await dialog.locator('input[type=date]').count()===0,'association no longer asks for dates');await save();

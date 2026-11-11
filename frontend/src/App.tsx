@@ -109,11 +109,11 @@ export default function App(){
      {dash&&portfolioHeaderPages.includes(page)&&<ValuationCaption dash={dash}/>}
     </div>
    </div>
-   {boot&&p&&portfolioHeaderPages.includes(page)&&<div className="portfolio-header-controls">
+   {boot&&p&&!overviewScope&&portfolioHeaderPages.includes(page)&&<div className="portfolio-header-controls">
     <label htmlFor="portfolio"><select id="portfolio" aria-label="投资组合" value={pid} onChange={e=>selectPortfolio(e.target.value)}>
      {boot.portfolios.map((entry:Obj)=><option key={entry.id} value={entry.id}>{entry.name}{entry.archived?' · 已归档':''}</option>)}
     </select></label>
-    {!overviewScope&&<Button onClick={()=>action('portfolio')}><Plus size={15}/>创建组合</Button>}
+    <Button onClick={()=>action('portfolio')}><Plus size={15}/>创建组合</Button>
    </div>}
   </div>
   <div className="header-actions">

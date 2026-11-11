@@ -32,6 +32,8 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
   await openPortfolio(page,p.id);
   check(await page.getByRole('button',{name:/^(创建组合|编辑组合|更新数据|设置比较基准)/}).count()===0,
    'portfolio details show the existing return content and no portfolio management entries');
+  check(await page.getByRole('combobox',{name:'投资组合',exact:true}).count()===0,
+   'portfolio details omit the portfolio switcher');
   await page.locator('.portfolio-introduction summary').click();
   check(await page.locator('.portfolio-introduction p').textContent()===description&&await page.locator('.portfolio-introduction p b').count()===0,'overview preserves line breaks and renders markup as plain text');
   await edit(p.id);
@@ -95,7 +97,8 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
   await page.setViewportSize({width:1600,height:1000});
   await openPortfolio(page,other.id);await page.locator('.portfolio-introduction summary').getByText('暂未填写',{exact:true}).waitFor();
   check(!await page.locator('.portfolio-introduction').getAttribute('open'),'changing portfolio resets the introduction fold');
-  await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.locator('.portfolio-introduction summary').getByText('查看背景与策略',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'返回组合收益',exact:true}).click();await openPortfolio(page,p.id);
+  await page.locator('.portfolio-introduction summary').getByText('查看背景与策略',{exact:true}).waitFor();
   for(const width of [1600,390,320]){
    await page.setViewportSize({width,height:1000});await nav('持仓标的');await page.locator('.holding-row').waitFor();
    const controls=page.locator('.page-header .portfolio-header-controls');
@@ -130,6 +133,8 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'instrument confines horizontal overflow to the table at '+width);await shot('instrument-records-'+width);
    await page.getByRole('navigation',{name:'流水分页'}).getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('[data-instrument-event]').length===7);check(true,'instrument pagination remains usable at '+width);
    await nav('组合收益');await openPortfolio(page,p.id);await page.locator('.overview-summary').waitFor();await page.locator('.portfolio-introduction summary').click();
+   check(await page.getByRole('combobox',{name:'投资组合',exact:true}).count()===0&&await page.getByRole('button',{name:'返回组合收益',exact:true}).isVisible(),
+    'portfolio detail uses the returns homepage for switching at '+width);
    check(await page.locator('.portfolio-introduction p').textContent()===updated&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'overview keeps statistics and readable introduction at '+width);
    await shot('introduction-'+width);
   }

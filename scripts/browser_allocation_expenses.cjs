@@ -32,7 +32,7 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'allocation-expenses-resul
   }
   const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,os;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;p=json.load(__import__('sys').stdin);d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');s=Service(Store(d));[s.cache_prices(i['instrument']['id'],[dict(date=p['today'],price=str(v),source='synthetic')]) for i,v in zip(p['plans'],[66,126,88,50,42])]"],{cwd:root,encoding:'utf8',input:JSON.stringify({plans,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
   const before=await api('/portfolios/'+p.id+'/dashboard?view=summary');
-  await page.goto(base+'/?page=portfolio');await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.locator('.holding-return-rate').waitFor();
+  await page.goto(new URL('/?page=portfolio&portfolio='+p.id,base).href);await page.locator('.holding-return-rate').waitFor();
   check((await page.locator('.holding-return-rate').innerText()).includes('%'),'current holding profit includes return on remaining cost');
   await shot('overview-return-desktop');await nav('持仓标的');await page.getByRole('button',{name:'添加计划买入',exact:true}).click();
   await field('代码').fill('000506');await field('名称').fill('合成科创50计划基金');await field('计划占总预算').fill('5');

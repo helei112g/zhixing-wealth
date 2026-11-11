@@ -23,7 +23,7 @@ const base=process.env.PORTFOLIO_TEST_URL,out=path.join(process.env.PORTFOLIO_TE
   // Insert provider-shaped quotes only in the isolated test database, never expose a manual-price API.
   const seeded=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import json,sys;from pathlib import Path;from backend.service import Service;from backend.store import Store;p=json.load(sys.stdin);assert Path(p['dir']).resolve()==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();Service(Store(Path(p['dir']))).cache_prices(p['id'],p['rows'])"],{cwd:root,encoding:'utf8',input:JSON.stringify({dir:health.data_directory,id:a.instrument_id,rows:[{date:'2024-01-31',price:'10',source:'合成行情'},{date:'2024-02-29',price:'12',source:'合成行情'},{date:'2024-04-30',price:'9',source:'合成行情'}]})});assert.equal(seeded.status,0,seeded.stderr);
   const original=(await api('/portfolios/'+p.id+'/dashboard')).events;
-  await page.goto(new URL('/?page=portfolio',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await nav('持仓标的');
+  await page.goto(new URL('/?page=portfolio&portfolio='+p.id,base).href);await nav('持仓标的');
   await row('计划待投入标的').getByRole('button',{name:'设置计划',exact:true}).click();await target().fill('40');await waitText('计划资金缺口 50,000.00 CNY');
   check((await dialog().innerText()).includes('150,000.00')&&(await dialog().innerText()).includes('100,000.00'),'preview compares remaining need 150000 with available 100000');
   check(await dialog().getByRole('button',{name:'保存计划',exact:true}).isEnabled(),'shortfall does not disable save');

@@ -75,12 +75,12 @@ export default function App(){
   if(next==='overview')replacePortfolioLink(next);
   DataTarget(target);Page(next);TradeOpen(false);E('');
  }
- function selectPortfolio(id:string){
+ function selectPortfolio(id:string,showDetail=false){
   if(id!==pid){Pid(id);Inst('');Range('all');Start('');End('');}
+  if(showDetail||new URLSearchParams(location.search).get('page')==='portfolio')replacePortfolioLink('portfolio',id);
  }
  function openPortfolio(id:string){
-  selectPortfolio(id);
-  replacePortfolioLink('portfolio',id);
+  selectPortfolio(id,true);
   navigate('portfolio');
  }
  function openDetail(id:string){Inst(id);Page('detail');}

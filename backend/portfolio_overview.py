@@ -35,6 +35,9 @@ def period_summary(snapshots, start, end, *, check_daily_close=False):
         if last < first:
             continue
         cost += history[last]['investment_cost']
+        if check_daily_close and first > 0:
+            prior = history[first - 1]
+            estimated |= prior['estimated'] or prior['pending_close']
         for row in history[first:last + 1]:
             estimated |= row['estimated'] or (check_daily_close and row['pending_close'])
             if row['incomplete'] or row['day_profit'] is None:

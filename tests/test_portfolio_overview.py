@@ -94,6 +94,20 @@ class PortfolioOverviewTests(TestCase):
             self.assertEqual(day_return['amount'], '150')
             self.assertFalse(day_return['estimated'])
 
+    def test_latest_session_flags_missing_previous_close(self):
+        with patch('backend.service.today', return_value=date(2026, 11, 12)):
+            a = self.service.save_portfolio(dict(name='组合甲', planned_amount='5000', start_date='2026-11-10'))
+            i = self.buy(a, '2026-11-10', '510300', '10', '1000')
+            self.quotes(i, [('2026-11-10', '100'), ('2026-11-12', '120')])
+
+            daily = self.overview()['latest_trading_day']
+            self.assertEqual(daily['amount'], '200')
+            self.assertTrue(daily['estimated'])
+            self.quotes(i, [('2026-11-11', '110')])
+            daily = self.overview()['latest_trading_day']
+            self.assertEqual(daily['amount'], '100')
+            self.assertFalse(daily['estimated'])
+
     def test_many_distinct_investment_cash_flow_dates_in_aggregate(self):
         start = self.as_of - timedelta(days=1050)
         projections = []

@@ -49,10 +49,11 @@ class Collection:
         canonical = known['code'] if known else code.strip().upper()
         if not providers.INDEX_CODE.fullmatch(canonical):
             raise DomainError('请输入理杏仁的指数代码（字母和数字）')
-        revision = self.research.revision()
-        existing = next((p for p in self.research.profiles() if p['code'] == canonical), None)
+        with self.research.store.lock:
+            revision = self.research.revision()
+            existing = next((p for p in self.research.profiles() if p['code'] == canonical), None)
         end = providers.cutoff()
-        p = existing or known
+        p = dict(existing, subscription=subscription(existing)) if existing else known
         price_date = price_source = None
         if not existing and (not known or known.get('exposure') != 'overseas'):
             p, price_date = lixinger.verify_index(self.research.access, canonical, known, history_start, end)

@@ -75,12 +75,31 @@ export function TokenSettings(){
  </Panel>;
 }
 
+function collectionSettings(profile:Obj){
+ const {enabled,history_start,modules}=profile.subscription;
+ return JSON.stringify([profile.id,profile.primary_valuation??null,enabled,history_start??null,[...modules].sort()]);
+}
+
 export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
  const [code,Code]=useState(profile?.code||''),[modules,Modules]=useState<string[]>(profile?.subscription?.modules||catalog.default_modules),[limited,Limited]=useState(Boolean(profile?.subscription?.history_start)),[start,Start]=useState(profile?.subscription?.history_start||new Date(Date.now()-30*86400000).toISOString().slice(0,10)),[enabled,Enabled]=useState(profile?.subscription?.enabled??true),[preview,P]=useState<Obj|null>(null),[busy,B]=useState(false),[error,E]=useState('');
  const [primary,Primary]=useState(profile?.primary_valuation||'');
  const generation=useRef(0);
+ const baseline=useRef(profile?collectionSettings(profile):null);
  function invalidate(){generation.current++;P(null);E('');}
- async function inspect(){B(true);E('');const turn=generation.current;try{const v=await api('/research/collection/preview',{code,modules,history_start:limited?start:null,primary_valuation:primary||null});if(turn===generation.current)P(v);}catch(e:any){E(e.message);}finally{B(false);}}
+ async function inspect(){
+  B(true);E('');P(null);
+  const turn=generation.current;
+  try{
+   const value=await api('/research/collection/preview',{code,modules,history_start:limited?start:null,primary_valuation:primary||null});
+   if(turn!==generation.current)return;
+   if(baseline.current!==null&&collectionSettings(value.profile)!==baseline.current){
+    E('该指数的分类或采集设置已变化，请关闭后重新打开并核对。');
+    return;
+   }
+   P(value);
+  }catch(e:any){if(turn===generation.current)E(e.message);}
+  finally{B(false);}
+ }
  async function save(){if(!preview)return;B(true);E('');try{const v=await api('/research/collection',{code:preview.profile.code,modules:preview.modules,history_start:preview.history_start,primary_valuation:preview.primary_valuation,enabled,expected_research_revision:preview.research_revision},'PUT');onSaved(v);}catch(e:any){E(e.message);P(null);}finally{B(false);}}
  const official=preview?.profile.exposure==='overseas';
  return <Modal title={profile?'管理指数采集':'添加指数采集'} onClose={onClose} busy={busy}>

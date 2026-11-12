@@ -68,19 +68,22 @@ export function ResearchPage({onData}:Obj){
 function IndexList({revision,running,page,onPage,onSelect,onData,group,onGroup,sort,onSort,onResetSort,job,setJob,onEdit}:Obj){
  const [listing,setListing]=useState<Obj|null>(null);
  const [error,setError]=useState('');
+ const [listError,setListError]=useState('');
+ const [retry,setRetry]=useState(0);
  const submission=useSubmission(()=>{});
  const pending=job&&activeJob(job);
 
  useEffect(()=>{
   let active=true;
+  setListError('');
   api('/research/indices?'+query({method:'mcw',page,valuation_group:group,sort_by:sort?.key,sort_direction:sort?.direction})).then(value=>{
    if(!active)return;
    const lastPage=Math.max(1,Math.ceil(value.total/value.page_size));
    if(page>lastPage)onPage(lastPage);
-   else{setListing({...value,sort});setError('');}
-  }).catch(error=>{if(active)setError(error.message);});
+   else setListing({...value,sort});
+  }).catch(error=>{if(active)setListError(error.message);});
   return()=>{active=false;};
- },[page,revision,sort,group]);
+ },[page,revision,sort,group,retry]);
 
  useEffect(()=>{
   if(!pending)return;
@@ -130,20 +133,21 @@ function IndexList({revision,running,page,onPage,onSelect,onData,group,onGroup,s
   <span className={Number(change?.ratio)>0?'positive':Number(change?.ratio)<0?'negative':''}>{percent(change?.ratio,true)}</span>
  </td>;
  return <>
-  <ErrorBox error={error||submission.error}/>
+  <ErrorBox error={listError||error||submission.error}/>
+  {listError&&<Button small onClick={()=>setRetry(value=>value+1)}>重试读取指数列表</Button>}
   {listing&&total>0&&<nav className="index-valuation-groups" aria-label="主估值指标分组">
    {[{key:'all',label:'全部'},...valuationGroups].map(option=><button key={option.key} type="button"
     aria-label={option.label} aria-pressed={group===option.key} onClick={()=>onGroup(option.key)}>
     <span>{option.label}</span><b>{option.key==='all'?total:counts[option.key]??0}</b>
    </button>)}
   </nav>}
-  {!current?<p className="muted small" role="status">正在读取本地指数列表…</p>
+  {!current?(listError?null:<p className="muted small" role="status">正在读取本地指数列表…</p>)
    :!rows.length?(group==='all'?<Empty title="还没有指数档案">选择要采集的指数和模块。添加后即可在此查看进度和数据。</Empty>:<Empty title="该分类暂无指数"/>)
    :<Panel title="指数列表" right={<div className="inline-actions"><small className="muted">{current.total} 个指数</small>
     {sort&&<Button small onClick={onResetSort}>{group==='all'?'恢复分组':'清除收益排序'}</Button>}</div>}>
     <ValuationLegend/>
     <p className="muted small">估值采用总市值加权。各指标列显示原始 5 年 / 10 年分位；主指标为股息率时，估值位置用 1 减原始分位。历史不足显示「—」。涨跌幅按价格指数收盘点位计算，年、月以上期末收盘为基准。</p>
-    <div className="table-wrap"><table className="index-library-table" aria-label="指数列表" aria-busy={loading&&!error}>
+    <div className="table-wrap"><table className="index-library-table" aria-label="指数列表" aria-busy={loading&&!listError}>
      <thead><tr>
       <th scope="col">指数</th><th scope="col">主指标估值位置</th>
       {primaryValuations.map(metric=><th key={metric.key} scope="col">{metric.short}</th>)}
@@ -178,9 +182,9 @@ function IndexList({revision,running,page,onPage,onSelect,onData,group,onGroup,s
      })}</tbody>
     </table></div>
     {current.total>current.page_size&&<div className="research-pagination">
-     <Button disabled={current.page===1||loading&&!error} onClick={()=>onPage(current.page-1)}>上一页</Button>
+     <Button disabled={current.page===1||loading&&!listError} onClick={()=>onPage(current.page-1)}>上一页</Button>
      <small>{current.page} / {Math.ceil(current.total/current.page_size)}</small>
-     <Button disabled={current.page*current.page_size>=current.total||loading&&!error} onClick={()=>onPage(current.page+1)}>下一页</Button>
+     <Button disabled={current.page*current.page_size>=current.total||loading&&!listError} onClick={()=>onPage(current.page+1)}>下一页</Button>
     </div>}
    </Panel>}
  </>;

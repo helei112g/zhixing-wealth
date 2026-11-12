@@ -160,7 +160,13 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
     await indexRow.locator('[data-valuation-metric="pe"] [data-metric-window="'+years+'"]').innerText()===years+'年 '+await band.locator('b').innerText()&&
     await band.locator('.valuation-grade').isVisible(),'primary PE and its metric column display the same '+years+'-year rank');
   }
+  await page.route(url=>url.pathname==='/api/research/indices'&&url.searchParams.get('valuation_group')==='pb',
+   route=>route.fulfill({status:503,json:{error:'合成列表读取失败'}}),{times:1});
   await groups.getByRole('button',{name:'PB 市净率',exact:true}).click();
+  const retryList=page.getByRole('button',{name:'重试读取指数列表',exact:true});
+  await retryList.waitFor();
+  check(await page.getByText('正在读取本地指数列表…',{exact:true}).count()===0,'failed classification switches show retry without a loading message');
+  await retryList.click();
   await page.getByRole('heading',{name:'该分类暂无指数',exact:true}).waitFor();
   const otherDate=new Date(Date.parse(detail.valuation.ps.date+'T12:00:00Z')-86400000).toISOString().slice(0,10);
   await page.route(url=>url.pathname==='/api/research/indices'&&url.searchParams.get('valuation_group')==='pe', async route=>{
@@ -179,6 +185,20 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await indexRow.getByRole('button',{name:'编辑分类',exact:true}).click();
   const classification=page.getByRole('dialog',{name:'管理指数采集'});
   check(await classification.getByLabel('主估值指标',{exact:true}).inputValue()==='pe','editor reads the saved primary metric');
+  const originalCatalog=await api('/research/catalog');
+  const original=originalCatalog.subscriptions.find(item=>item.id==='csi:000905');
+  const subscription={code:original.code,...original.subscription};
+  const paused=await api('/research/collection',{...subscription,enabled:false,history_start:'2026-01-01',
+   modules:['index_info','price'],expected_research_revision:originalCatalog.research_revision},'PUT');
+  await classification.getByLabel('主估值指标',{exact:true}).selectOption('dividend_yield');
+  await classification.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  await classification.getByText('该指数的分类或采集设置已变化，请关闭后重新打开并核对。',{exact:true}).waitFor();
+  check(await classification.getByRole('button',{name:'确认保存采集设置',exact:true}).count()===0&&
+   (await api('/research/catalog')).subscriptions.find(item=>item.id===original.id).subscription.enabled===false,
+   'stale classification draft cannot overwrite a concurrent pause and collection range change');
+  await classification.getByRole('button',{name:'关闭',exact:true}).click();
+  await api('/research/collection',{...subscription,expected_research_revision:paused.research_revision},'PUT');
+  await indexRow.getByRole('button',{name:'编辑分类',exact:true}).click();
   await classification.getByLabel('主估值指标',{exact:true}).selectOption('dividend_yield');
   await classification.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
   await classification.getByText('主估值指标 · DY 股息率',{exact:true}).waitFor();

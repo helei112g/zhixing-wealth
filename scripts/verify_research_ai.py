@@ -137,7 +137,16 @@ def main():
     d = c.research_index(saved['id'])
     check({k for k,v in d['valuation'].items() if v.get('current') is not None}=={'pe','pb'} and
           d['valuation']['pe']['source']==d['valuation']['pb']['source']=='理杏仁' and
-          not any(d['scenario_metrics'].values()), 'valuation reads show only Lixinger PE/PB without cross-source scenario')
+          not any(d['scenario_metrics'].values()) and '分母映射尚未核验' in d['scenario_unavailable_reason'],
+          'valuation reads show only Lixinger PE/PB and explain the disabled cross-source scenario')
+    try:
+        c.research_scenario(saved['id'], dict(analysis_id=d['analysis_id'], basis='price', method='mcw',
+                            metric='pe', target_multiple=d['valuation']['pe']['current'], change_ratio='0',
+                            accept_fixed_basket_assumption=True))
+    except RuntimeError as exc:
+        check('分母映射尚未核验' in str(exc), 'scenario API returns the same cross-source restriction')
+    else:
+        raise AssertionError('cross-source scenario was accepted')
     check({s['module']:s['snapshot_id'] for s in d['sources'] if s['module'] in official_heads}==official_heads and
           c.request('/api/settings/lixinger')['counts']==dict(counts, **{'cn/index/fundamental':counts.get('cn/index/fundamental',0)+2}),
           'valuation sync preserves official heads and only calls the fundamental endpoint')

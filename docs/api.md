@@ -396,7 +396,7 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 | GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield。返回日频估值均值、分位、资金观察、波动率和集中度；收益回测、成分重叠、区间收益比较已退役，含同一analysis_id。 |
 | GET `.../{id}/{part}` | series/constituents/financials/sources；analysis_id 防混版本，page/page_size 分页。 |
 | GET `.../{id}/versions`、`.../versions/{snapshot_id}` | 最近100个非检查点来源版本及精确版本回读；跨指数版本拒绝，旧来源历史不删除。 |
-| POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和整体法/mcw估值可在用户接受固定成分、股数、权重、除数及全部成分同比例变化假设后试算；读取scenario_metrics/ scenario_assumption；全收益/等权/中位数禁用。 |
+| POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和整体法/mcw估值可在用户接受固定成分、股数、权重、除数及全部成分同比例变化假设后试算；读取 scenario_metrics、scenario_assumption 和 scenario_unavailable_reason；全收益/等权/中位数禁用。 |
 | POST `/api/research/indices/{id}/source-check` | analysis_id绑定mcw价格快照；显式请求官方最近45天同日价格与可得PE参考，不消耗理杏仁额度，不合并历史。 |
 | GET `/api/settings/lixinger` | 已配置状态、本机文件路径、独立revision、每端点尝试次数；mode为unlimited，limit及endpoints[].limit/remaining固定null，表示无本机上限，不代表供应商余额；不返回Token或片段。 |
 | PUT `/api/settings/lixinger/token` | 仅用户本机页面提交 token 与 expected_revision；0600原子文件，保存不采集且关闭自动采集；显式手动更新不受本机次数限制，计数不重置。AI客户端不提供密钥读写命令。 |

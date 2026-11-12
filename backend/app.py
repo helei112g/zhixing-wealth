@@ -215,7 +215,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                           'basis': 'same-date positive price and overall/mcw valuation; explicit uniform price and earnings/book-value scaling, fixed constituents/shares/weights/divisor; no total-return mapping'},
                              'revision_field':'expected_research_revision','request_id_required':False,'scope':'verified index registry including cross-market families; consult module_status; no name or prefix guessing',
                              'windows':[0,3,5,10],'bases':['price','total_return'],'valuation_methods':['mcw','ew','ewpvo','median'],'legacy_read_methods':['overall','arithmetic'],
-                             'detail_fields':['scenario_metrics','scenario_assumption','module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources','collection','index_financials','market_activity'],
+                             'detail_fields':['scenario_metrics','scenario_assumption','scenario_unavailable_reason','module_status','changes','top10_weight','companies','financials','daily_series','valuation','drawdown','sources','collection','index_financials','market_activity'],
                              'moving_averages':[51,120,250,850],'scenario_reference_windows':[3,5,10],'high_date_policy':'latest_equal_high','method_version':'index-studio-4','missing':'null with status; UI -'},
                 'market_waterlevel': {
                     'read': '/api/market-waterlevel', 'facts': '/api/market-waterlevel/facts',

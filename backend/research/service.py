@@ -218,12 +218,16 @@ class ResearchService:
         volatility = {row['date']: row['value'] for row in (resources['volatility'] or {}).get('rows', [])}
         for row in daily_series:
             row['volatility'] = volatility.get(row['date'])
+        scenario_unavailable_reason = None
+        if providers.has_lixinger_pe_pb(p):
+            scenario_unavailable_reason = '理杏仁估值与中证官方点位的分母映射尚未核验，暂不提供点位试算。'
         result=wire(dict(module_status=module_status,id=iid,profile=p,basis=basis,series_code=series_code,asof=asof,latest=prices[-1] if prices else None,
             research_revision=revision,method=method,window=window,method_version=METHOD_VERSION,analysis_id=hashlib.sha256(json_dumps([m['snapshot_id'] if m else None for m in resources.values()]+[basis,method,METHOD_VERSION]).encode()).hexdigest(),
             valuation=valuations,valuation_methods=list((v or {}).get('series',{}).get('pe',{})),drawdown=dd,curve=chart,daily_series=daily_series,changes=price_changes(prices,calculation_date),top10_weight=ds(sum((dec(r['weight']) for r in companies[:10]),dec('0'))) if companies and all(r.get('weight') is not None for r in companies) else None,companies=companies,membership_date=(members or {}).get('effective_date'),stock_valuation_limitation=(stocks or {}).get('limitation'),
             financials=dict(main_period=main,summary=summary,periods=totals,current_years=annual,history_status=(finance or {}).get('history_status','unavailable'),history_reason=(finance or {}).get('history_reason','尚无已核验历史成分财务'),historical_years=(resources['historical_financials'] or {}).get('years',[])),
             sources=sources,status='available' if prices else 'missing',mapping_available=bool(prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('mapping_verified')) and all(valuations.get(m,{}).get('date')==asof for m in ('pe','pb'))),
-            scenario_metrics={m:bool(not providers.has_lixinger_pe_pb(p) and prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('provider_id')=='lixinger') and valuations.get(m,{}).get('date')==asof and dec(valuations.get(m,{}).get('current') or '0')>0) for m in ('pe','pb')},
+            scenario_metrics={m:bool(not scenario_unavailable_reason and prices and basis=='price' and (method=='overall' or method=='mcw' and (v or {}).get('provider_id')=='lixinger') and valuations.get(m,{}).get('date')==asof and dec(valuations.get(m,{}).get('current') or '0')>0) for m in ('pe','pb')},
+            scenario_unavailable_reason=scenario_unavailable_reason,
             scenario_assumption='固定成分、股数、权重和除数；假定所有成分价格同比例变化，所有成分盈利或净资产同比例变化。仅作条件敏感性推算，不代表估值与指数点位的实际映射或预测。',
             collection=self.collection.status(iid),official_reference=resources.get('official_reference'),source_coverage=(price or {}).get('coverage'),memberships_complete=(members or {}).get('weights_complete',True),
             historical_memberships=(resources.get('historical_memberships') or {}).get('baskets',[]),membership_comparison_coverage=(resources.get('historical_memberships') or {}).get('comparison_coverage',[]),index_info=(resources.get('index_info') or {}).get('info'),
@@ -244,7 +248,8 @@ class ResearchService:
         if metric not in ('pe','pb'):raise DomainError('试算指标无效')
         d=self.detail(iid,basis,body.get('method','overall'))
         if body.get('analysis_id')!=d['analysis_id']:raise ConflictError('分析版本已变化，请重新读取并核对假设')
-        if not d['scenario_metrics'][metric]:raise DomainError('条件试算须使用支持该试算的指数、价格口径及同日正数整体法或总市值加权估值')
+        if not d['scenario_metrics'][metric]:
+            raise DomainError(d['scenario_unavailable_reason'] or '条件试算须使用价格口径及同日正数整体法或总市值加权估值')
         if body.get('accept_fixed_basket_assumption') is not True:raise DomainError('请明确接受固定成分、权重及除数的条件假设')
         change=dec(body.get('change_ratio'));target=dec(body.get('target_multiple'),positive=True)
         if change<=-1:raise DomainError('分母变化须大于-100%')

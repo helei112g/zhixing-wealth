@@ -169,6 +169,27 @@ class CollectionTests(unittest.TestCase):
         self.assertFalse(self.calls)
         self.assertEqual(len(self.r.updates.jobs()), 1)
 
+    def test_legacy_overseas_index_keeps_official_only_subscription_until_opt_in(self):
+        profile = dict(providers.identity('H11136'), id='csi:H11136', valuation_code=None)
+        iid = profile['id']
+        with self.r.transaction() as db:
+            db.execute('INSERT INTO research_indices VALUES (?,?)', (iid, json.dumps(profile)))
+
+        official = ['price', 'total_return', 'memberships']
+        scopes = ['index_prices', 'memberships', 'valuations']
+        self.assertEqual(self.r.collection.status(iid)['subscription']['modules'], official)
+        plan = self.r.updates.plan(dict(scopes=scopes, targets=[iid]))
+        self.assertEqual([item['module'] for item in plan], official)
+        with self.assertRaisesRegex(DomainError, '没有可更新的对象'):
+            self.r.updates.plan(dict(scopes=['valuations'], targets=[iid]))
+
+        preview = self.r.collection.preview('H11136', [*official, 'valuations'], None)
+        saved = self.r.collection.save('H11136', preview['modules'], None, True, preview['research_revision'])
+        self.assertIsNone(saved['job_id'])
+        resource = dict(scope='valuations', target=iid, module='valuations')
+        self.assertEqual(self.r.updates.plan(dict(scopes=['valuations'], resources=[resource])), [resource])
+        self.assertEqual(self.calls, [])
+
     def test_catalog_overseas_requires_an_official_session_in_the_selected_range(self):
         start, end = '2026-10-30', '2026-10-30'
         revision = self.r.revision()

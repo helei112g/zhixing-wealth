@@ -12,7 +12,9 @@ def subscription(profile):
     # Only explicitly saved profiles are passed here, never the built-in catalog.
     saved = profile.get('subscription')
     if not saved:
-        return dict(enabled=True, modules=list(lixinger.DEFAULT_MODULES), history_start=None)
+        # Legacy overseas profiles only collected official data before module subscriptions.
+        modules = providers.OFFICIAL_COLLECTION_MODULES if profile.get('exposure') == 'overseas' else lixinger.DEFAULT_MODULES
+        return dict(enabled=True, modules=list(modules), history_start=None)
     return dict(saved, modules=[module for module in saved['modules'] if module != 'tracking_funds'])
 
 

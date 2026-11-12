@@ -135,12 +135,19 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
    await page.getByRole('heading',{name:'点位走势',exact:true}).count()===0,'index list and detail share the latest valuation snapshot');
   const indexRow = listing.getByRole('row').filter({has:page.getByRole('button',{name:'中证500',exact:true})});
   const asPercent = rank => (Number(rank)*100).toFixed(2)+'%';
+  const dates=indexRow.locator('.index-observation-dates');
+  check(await indexRow.locator('time').count()===1&&
+   await dates.getByText('行情与估值 '+detail.latest.date,{exact:true}).isVisible(),
+   'a shared quote and valuation date appears once under the index name');
+  check(await indexRow.getByRole('button',{name:'更新数据',exact:true}).evaluate(button=>button.matches('.text-button')),
+   'index update uses the shared text action style');
   for (const metric of ['pe','pb','dividend_yield','ps']) {
    const valuation = detail.valuation[metric];
-   const expected = [5,10].map(years=>Math.round(Number(valuation.windows[years].rank)*100)+'%').join(' / ');
    const cell = indexRow.locator('[data-valuation-metric="'+metric+'"]');
+   const expected=[5,10].map(years=>years+'年 '+asPercent(valuation.windows[years].rank));
    check(valuation.field.endsWith('.mcw') && [5,10].every(years=>valuation.windows[years].rank!=null) &&
-    await cell.getByText(expected,{exact:true}).isVisible(), metric+' renders its raw 5/10-year market-cap weighted ranks');
+    JSON.stringify(await cell.locator('[data-metric-window]').allTextContents())===JSON.stringify(expected),
+    metric+' renders raw 5/10-year ranks with two decimal places');
    if(metric==='dividend_yield')check(await cell.locator('b').innerText()===asPercent(valuation.current),'yield is formatted as a ratio');
   }
   const groups=page.getByRole('navigation',{name:'主估值指标分组'});
@@ -150,12 +157,24 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   for(const years of [5,10]){
    const band=indexRow.locator('[data-valuation-window="'+years+'"]');
    check(await band.locator('b').innerText()===asPercent(detail.valuation.pe.windows[years].rank)&&
-    await band.locator('.valuation-grade').isVisible(),'primary PE renders the '+years+'-year rank and grade');
+    await indexRow.locator('[data-valuation-metric="pe"] [data-metric-window="'+years+'"]').innerText()===years+'年 '+await band.locator('b').innerText()&&
+    await band.locator('.valuation-grade').isVisible(),'primary PE and its metric column display the same '+years+'-year rank');
   }
   await groups.getByRole('button',{name:'PB 市净率',exact:true}).click();
   await page.getByRole('heading',{name:'该分类暂无指数',exact:true}).waitFor();
+  const otherDate=new Date(Date.parse(detail.valuation.ps.date+'T12:00:00Z')-86400000).toISOString().slice(0,10);
+  await page.route(url=>url.pathname==='/api/research/indices'&&url.searchParams.get('valuation_group')==='pe', async route=>{
+   const response=await route.fetch();
+   const payload=await response.json();
+   payload.items[0].valuation.ps.date=otherDate;
+   await route.fulfill({response,json:payload});
+  },{times:1});
   await groups.getByRole('button',{name:'PE 市盈率',exact:true}).click();
   await indexLink.waitFor();
+  check(await indexRow.locator('time').count()===2&&
+   await dates.getByText('行情 / PE / PB / DY '+detail.latest.date,{exact:true}).isVisible()&&
+   await dates.getByText('PS '+otherDate,{exact:true}).isVisible(),
+   'staggered dates remain distinct and scoped to their metrics under the name');
   const beforeClassification=await api('/settings/lixinger');
   await indexRow.getByRole('button',{name:'编辑分类',exact:true}).click();
   const classification=page.getByRole('dialog',{name:'管理指数采集'});

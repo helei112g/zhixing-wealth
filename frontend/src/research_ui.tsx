@@ -4,7 +4,7 @@ import {api,money,Obj,percent,query} from './api';
 import {Button,Empty,ErrorBox,Notice,Panel} from './components';
 import {StudioOverview,CapitalFlows,CollectionDialog,IndexFinancials,moduleLabels} from './research_studio';
 import {activeJob,useSubmission} from './sync_ui';
-import {IndexValuationCell,IndexValuationPosition,primaryValuations,ValuationLegend,valuationGroups,valuationLabel} from './index_valuation';
+import {IndexObservationDates,IndexValuationCell,IndexValuationPosition,primaryValuations,ValuationLegend,valuationGroups,valuationLabel} from './index_valuation';
 import type {ValuationGroup} from './index_valuation';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d);
@@ -162,14 +162,14 @@ function IndexList({revision,running,page,onPage,onSelect,onData,group,onGroup,s
        <tr data-index-id={row.id}>
        <th scope="row"><button className="text-button" onClick={()=>onSelect(row.id)}>{row.profile.name}</button>
         <small>{row.profile.code}{paused?' · 已暂停':''}</small>
-        <small>行情 {row.latest?.date||'待采集'}</small>
+        <IndexObservationDates priceDate={row.latest?.date} valuations={row.valuation}/>
         <button className="text-button index-classification-edit" type="button" disabled={!onEdit} onClick={()=>onEdit(row)}>{category==='unclassified'?'设置分类':'编辑分类'}</button>
        </th>
        <td><IndexValuationPosition position={row.valuation_position} valuations={row.valuation}/></td>
        {primaryValuations.map(metric=><IndexValuationCell key={metric.key} metric={metric.key} value={row.valuation[metric.key]}/>)}
        {annualColumns.map(({year})=>ratioCell(year,row.changes.annual[year]))}
        {recentReturnColumns.map(({key})=>ratioCell(key,row.changes[key]))}
-       <td><Button small disabled={running||submission.busy||pending||paused} onClick={()=>update(row.id)}>更新数据</Button>
+       <td><button type="button" className="text-button" disabled={running||submission.busy||pending||paused} onClick={()=>update(row.id)}>更新数据</button>
         {rowJob&&<small role="status">{jobStates[rowJob.state]||rowJob.state}{['error','partial','interrupted'].includes(rowJob.state)&&
          <> · <button className="text-button" onClick={()=>onData(row.id)}>查看结果</button></>}</small>}
        </td>

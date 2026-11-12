@@ -45,6 +45,8 @@
 .index-library-table .index-valuation-group-row > td { background: var(--bg); color: var(--blue); text-align: left; }
 .index-valuation-group-row span { margin-left: 10px; color: var(--muted); font-size: 11px; }
 .index-library-table td[data-valuation-metric] > small { margin-top: 2px; }
+.index-observation-dates { max-width: 128px; white-space: normal; }
+.index-observation-dates time { white-space: nowrap; }
 .index-classification-edit { display: block; margin-top: 4px; }
 
 .index-valuation-position { min-width: 174px; }

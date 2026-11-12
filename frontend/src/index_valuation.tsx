@@ -56,12 +56,31 @@ export function IndexValuationPosition({position, valuations}: Obj) {
 }
 
 export function IndexValuationCell({metric, value}: Obj) {
- const ranks = windows.map(years=>value?.windows?.[years]?.rank);
  return <td data-valuation-metric={metric}>
   <b>{currentValue(metric,value?.current)}</b>
-  <small title={`原始指标分位 · 5 年 ${percent(ranks[0])} · 10 年 ${percent(ranks[1])}`}>
-   {ranks.map(rank=>rank==null?'—':money(Number(rank)*100,0)+'%').join(' / ')}
-  </small>
-  {value?.date&&<small><time dateTime={value.date}>{value.date}</time></small>}
+  {windows.map(years=><small key={years} data-metric-window={years}>
+   {years}年 {percent(value?.windows?.[years]?.rank)}
+  </small>)}
  </td>;
+}
+
+export function IndexObservationDates({priceDate, valuations}: {priceDate?:string;valuations:Obj}) {
+ const dates = new Map<string,string[]>();
+ for (const {key} of primaryValuations) {
+  const date = valuations[key]?.date;
+  if (!date) continue;
+  const label = key==='dividend_yield'?'DY':key.toUpperCase();
+  const metrics = dates.get(date);
+  if (metrics) metrics.push(label);
+  else dates.set(date,[label]);
+ }
+
+ const sameDayMetrics = priceDate ? dates.get(priceDate) : undefined;
+ const priceLabel = sameDayMetrics ? dates.size===1 ? '行情与估值' : ['行情',...sameDayMetrics].join(' / ') : '行情';
+ return <div className="index-observation-dates">
+  <small>{priceLabel} {priceDate?<time dateTime={priceDate}>{priceDate}</time>:'待采集'}</small>
+  {[...dates].filter(([date])=>date!==priceDate).map(([date,metrics])=><small key={date}>
+   {dates.size===1?'估值':metrics.join(' / ')} <time dateTime={date}>{date}</time>
+  </small>)}
+ </div>;
 }

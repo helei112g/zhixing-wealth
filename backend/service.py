@@ -13,6 +13,7 @@ import uuid
 import zipfile
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from functools import cache
 
 from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, month_after, now, ratio, classification, canonical_region, today, wire
 from .ledger import Ledger, Market, normalize_event, periods, split_notice_records, split_notice_confirmed
@@ -33,6 +34,7 @@ from .trade_windows import forward_performance
 from .market_changes import instrument_market_changes
 from .trade_analytics import lot_projection, instrument_projection, annual_summary, dividend_segments, target_path, investment_summary
 from .portfolio_overview import portfolio_overview
+from .family_domain import portfolio_snapshot
 
 
 def uid(): return uuid.uuid4().hex
@@ -522,9 +524,18 @@ class Service:
         for entry in state['portfolios']:
             portfolio = dict(entry, target_annual_pct=entry.get('target_annual_pct', '5'))
             snap, performance = self._investment_projection(state, portfolio, str(as_of), market_data)
-            summary = investment_summary(state, portfolio, snap, performance, as_of)
+            summary = investment_summary(state, portfolio, snap, performance, as_of, annualize=False)
             projections.append((portfolio, snap, summary))
-        return portfolio_overview(projections, as_of, state['revision'])
+
+        @cache
+        def investment_at(portfolio_id, at):
+            portfolio = self.portfolio(state, portfolio_id)
+            snap = portfolio_snapshot(state, portfolio, at, market=market_data)
+            performance = instrument_projection(state, portfolio, snap['holdings'], at,
+                                                market=market_data, annualize=False)
+            return investment_summary(state, portfolio, snap, performance, at, annualize=False)
+
+        return portfolio_overview(projections, as_of, state['revision'], investment_at=investment_at)
 
     @cached_query
     def dashboard(self, portfolio_id, *, start=None, end=None, grain='month', view='full'):

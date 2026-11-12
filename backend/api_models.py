@@ -493,7 +493,8 @@ class PortfolioOverviewRow(BaseModel):
     archived: bool
     start_date: str
     running_days: int
-    total_assets: str | None
+    total_assets: str | None = Field(description='账面总资产，CNY')
+    market_value: str | None = Field(description='实际持仓市值，CNY；不含现金、应收和在途款')
     cumulative: PortfolioReturnMetric
 
 
@@ -502,7 +503,8 @@ class PortfolioOverviewResponse(BaseModel):
     revision: int
     currency: Literal['CNY']
     portfolios: list[PortfolioOverviewRow]
-    total_assets: str | None
+    total_assets: str | None = Field(description='各组合账面总资产合计，CNY')
+    market_value: str | None = Field(description='各组合实际持仓市值合计，CNY；任一组合市值未知时为 null')
     start_date: str | None
     running_days: int | None
     estimated: bool

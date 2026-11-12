@@ -615,6 +615,7 @@ class Ledger:
     def snapshot(self, d):
         warnings = list(self.notes)
         missing = []
+        investment_estimated = False
         assets = ZERO; cash_total = ZERO; available_total = ZERO; unrealized_price = ZERO
         holdings, currencies, receivables = [], [], []
         def converted(value, c, label):
@@ -661,8 +662,10 @@ class Ledger:
                 value = qty * current_price * dec(rate['rate']); assets += value
                 unrealized_price += (qty * current_price - p['cost_native']) * dec(rate['rate'])
                 if quote.get('fallback'):
+                    investment_estimated = True
                     warnings.append(i['name'] + '使用已确认成交/期初价格暂估')
                 elif (day(d) - day(quote['date'])).days > 4 and not no_expected_session(i['market'], quote['date'], d):
+                    investment_estimated = True
                     warnings.append(i['name'] + '沿用' + quote['date'] + '价格，可能休市或尚未更新')
             allocation = self.allocations.get(inst_id, {})
             lots = [dict(lot, **(classification(allocation, historical=True) if self.budget_mode else {}), value_base=lot['quantity'] * current_price * dec(rate['rate'])
@@ -720,7 +723,8 @@ class Ledger:
                 'holdings': holdings, 'cash': currencies, 'receivables': receivables,
                 'invested_cash_flow': self.invested_cash_flow if self.invested_cash_flow_known else None,
                 'warnings': list(dict.fromkeys(warnings + missing)), 'incomplete': incomplete,
-                'estimated': bool(warnings), '_native_components': native_components,
+                'estimated': bool(warnings), 'investment_estimated': investment_estimated,
+                '_native_components': native_components,
                 'attribution_basis': '各交易币种每日价差、分红、费税按当日估值汇率折算；其余折算变动为汇率影响，交易原始折算额保持锁定'}
 
     def run(self, as_of=None, include_history=True):
@@ -748,7 +752,7 @@ class Ledger:
                 for h in snap['holdings']
                 if (h['quantity'] > ZERO or h['instrument_id'] in previous_positions) and (quote := h['quote'])
             )
-            pending_close = not snap['estimated'] and not snap['incomplete'] and any(
+            pending_close = not snap['investment_estimated'] and any(
                 quote['date'] < str(d) and not no_expected_session(h['instrument']['market'], quote['date'], d)
                 for h in snap['holdings'] if h['quantity'] > ZERO and (quote := h['quote'])
             )
@@ -807,6 +811,8 @@ class Ledger:
                             'investment_cost':self.investment_cost,'day_profit': profit, 'inflow': inflow, 'outflow': outflow, 'return': r,
                             'twr': twr, 'segment': segment, 'components': delta_components,
                             'estimated': snap['estimated'], 'incomplete': snap['incomplete'], 'quality_reasons': snap['warnings'][:],
+                            'investment_estimated': snap['investment_estimated'],
+                            'investment_incomplete': snap['securities_total'] is None,
                             'has_investment_quote': has_investment_quote, 'pending_close': pending_close})
             was_zero = assets == ZERO
             prev_assets = assets; prev_capital = self.capital; prev_components = snap['components']; d += timedelta(days=1)

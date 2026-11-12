@@ -51,6 +51,7 @@ class PortfolioOverviewTests(TestCase):
         self.assertEqual(self.app.state.store.state(), before)
         self.assertEqual(result['running_days'], 70)
         self.assertEqual(result['total_assets'], '13450')
+        self.assertEqual(result['market_value'], '2450')
         self.assertEqual(result['cumulative'], {'amount': '450', 'rate': '0.225'})
         self.assertEqual(result['year_to_date']['amount'], '350')
         self.assertEqual(result['year_to_date']['rate'], '0.175')
@@ -66,6 +67,7 @@ class PortfolioOverviewTests(TestCase):
         for row in result['portfolios']:
             detail = self.service.dashboard(row['id'], view='summary')
             self.assertEqual(row['total_assets'], detail['total_assets'])
+            self.assertEqual(row['market_value'], detail['capital_summary']['market_value'])
             self.assertEqual(row['cumulative']['amount'], detail['capital_summary']['profit'])
         self.assertTrue(next(row for row in result['portfolios'] if row['id'] == b['id'])['archived'])
 
@@ -73,8 +75,49 @@ class PortfolioOverviewTests(TestCase):
         updated = self.overview()
         self.assertGreater(updated['revision'], result['revision'])
         self.assertEqual(updated['total_assets'], '14450')
-        for key in ('annualized', 'cumulative', 'year_to_date', 'month_to_date', 'latest_trading_day'):
+        for key in ('market_value', 'annualized', 'cumulative', 'year_to_date', 'month_to_date', 'latest_trading_day'):
             self.assertEqual(updated[key], result[key])
+
+    def test_idle_foreign_cash_does_not_change_market_value_or_returns(self):
+        p = self.service.save_portfolio(dict(name='实盘组合', planned_amount='5000', start_date='2025-01-02',
+                                             funding_mode='cash'))
+        self.service.save_event(dict(portfolio_id=p['id'], kind='DEPOSIT', date='2025-01-02',
+                                     currency='CNY', amount='3000', fx_rate='1'))
+        i = self.buy(p, '2025-01-02', '510300', '10', '1000')
+        self.quotes(i, [('2025-01-02', '100'), ('2025-01-31', '100'), ('2025-02-06', '105'), ('2025-02-07', '110')])
+        before = self.overview()
+        self.service.save_event(dict(portfolio_id=p['id'], kind='DEPOSIT', date='2025-02-04',
+                                     currency='USD', amount='1000', fx_rate='7'))
+
+        missing_cash_fx = self.overview()
+        self.assertIsNone(missing_cash_fx['total_assets'])
+        self.assertFalse(missing_cash_fx['incomplete'])
+        for at, rate in [('2025-02-04', '7'), ('2025-02-06', '7.1'), ('2025-02-07', '7.2')]:
+            self.service.save_fx(dict(currency='USD', date=at, rate=rate, mode='daily'))
+        with_cash_fx = self.overview()
+        self.assertEqual(with_cash_fx['total_assets'], '10300')
+        for key in ('market_value', 'cumulative', 'annualized', 'year_to_date', 'month_to_date', 'latest_trading_day'):
+            self.assertEqual(missing_cash_fx[key], before[key])
+            self.assertEqual(with_cash_fx[key], before[key])
+        self.assertEqual(with_cash_fx['latest_trading_day']['amount'], '50')
+
+    def test_realized_sales_and_dividends_are_returns_after_holdings_reach_zero(self):
+        p = self.service.save_portfolio(dict(name='清仓组合', planned_amount='5000', start_date='2025-01-02'))
+        i = self.buy(p, '2025-01-02', '510300', '10', '1000')
+        self.quotes(i, [('2025-01-02', '100'), ('2025-01-31', '100'), ('2025-02-06', '110'), ('2025-02-07', '120')])
+        self.service.save_event(dict(portfolio_id=p['id'], kind='DIVIDEND', date='2025-02-07', pay_date='2025-02-10',
+                                     instrument_id=i, net_amount='20', fx_rate='1'))
+        self.service.save_event(dict(portfolio_id=p['id'], kind='SELL', date='2025-02-07', payment_date='2025-02-10',
+                                     instrument_id=i, sell_all=True, gross_amount='1200', fx_rate='1'))
+
+        result = self.overview()
+        self.assertEqual(result['market_value'], '0')
+        self.assertEqual(result['portfolios'][0]['market_value'], '0')
+        self.assertEqual(result['total_assets'], '5220')
+        self.assertEqual(result['cumulative'], {'amount': '220', 'rate': '0.22'})
+        self.assertEqual(result['month_to_date']['amount'], '220')
+        self.assertEqual(result['latest_trading_day']['amount'], '120')
+        self.assertTrue(result['latest_trading_day']['estimated'])
 
     def test_latest_session_flags_missing_close_in_another_portfolio(self):
         with patch('backend.service.today', return_value=date(2026, 11, 12)):
@@ -117,18 +160,18 @@ class PortfolioOverviewTests(TestCase):
             cost = Decimal(35000)
             portfolio = {'id': str(i), 'name': f'组合 {i}', 'start_date': buys[0]['date']}
             snapshot = {
-                'total_assets': cost, 'estimated': False, 'incomplete': False,
-                'history': [{'date': str(self.as_of), 'investment_cost': cost, 'day_profit': Decimal(0),
-                             'estimated': False, 'incomplete': False, 'has_investment_quote': True,
+                'total_assets': cost, 'investment_estimated': False,
+                'history': [{'date': str(self.as_of), 'investment_estimated': False,
+                             'investment_incomplete': False, 'has_investment_quote': True,
                              'pending_close': False}],
             }
             summary = {
-                'profit': Decimal(0), 'cost': cost, 'return_on_cost': Decimal(0), 'provisional': False,
+                'profit': Decimal(0), 'cost': cost, 'market_value': cost, 'return_on_cost': Decimal(0), 'provisional': False,
                 'pending_settlement': False, 'cash_flows': [*buys, {'date': str(self.as_of), 'amount': cost}],
             }
             projections.append((portfolio, snapshot, summary))
 
-        result = portfolio_overview(projections, self.as_of, revision=1)
+        result = portfolio_overview(projections, self.as_of, revision=1, investment_at=lambda *_: self.fail('no prior snapshot'))
         self.assertEqual(result['total_assets'], '105000')
         self.assertEqual(result['annualized']['rate'], '0')
         self.assertEqual(result['annualized']['amount'], '0')
@@ -137,6 +180,7 @@ class PortfolioOverviewTests(TestCase):
         empty = self.overview()
         self.assertEqual(empty['portfolios'], [])
         self.assertIsNone(empty['total_assets'])
+        self.assertIsNone(empty['market_value'])
         self.assertIsNone(empty['running_days'])
 
         a = self.service.save_portfolio(dict(name='组合甲', planned_amount='5000', start_date='2025-02-03'))
@@ -148,6 +192,7 @@ class PortfolioOverviewTests(TestCase):
         result = self.overview()
         self.assertTrue(result['incomplete'])
         self.assertIsNone(result['total_assets'])
+        self.assertIsNone(result['market_value'])
         for key in ('annualized', 'cumulative', 'year_to_date', 'month_to_date', 'latest_trading_day'):
             self.assertIsNone(result[key]['amount'])
             self.assertIsNone(result[key]['rate'])

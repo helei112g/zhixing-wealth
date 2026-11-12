@@ -295,6 +295,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                'filters': ['instrument_id', 'kind', 'market', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},
                 'portfolio_overview': {'endpoint': '/api/portfolios/overview', 'scope': 'all portfolios, including archived',
+                                       'market_value_field': 'market_value',
                                        'windows': ['year_to_date', 'month_to_date', 'latest_trading_day']},
                 'dashboard': {'endpoint': '/api/portfolios/{portfolio_id}/dashboard', 'default_view': 'full',
                               'views': {'full': 'summary plus historical curves, calendar and periods',
@@ -444,7 +445,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         return reply(service.check_plan(portfolio_id, instrument_id, target_pct))
 
     @app.get('/api/portfolios/overview', response_model=PortfolioOverviewResponse, summary='全部组合收益总览',
-             description='合计所有组合（含归档）的账面资产与投资收益。合并实际投资现金流计算 XIRR，期间收益率使用期末累计买入成本。仅使用本机账本和行情缓存。')
+             description='合计所有组合（含归档）的持仓市值与投资收益，另返回账面总资产。期间涨跌使用累计投资收益差额，合并实际投资现金流计算 XIRR。仅使用本机账本和行情缓存。')
     def portfolio_overview(): return service.portfolio_overview()
 
     @app.get('/api/portfolios/{portfolio_id}/dashboard', response_model=DashboardResponse, response_model_exclude_unset=True)

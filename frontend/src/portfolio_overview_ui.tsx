@@ -45,8 +45,8 @@ export function PortfolioOverview({boot, version, onCreate, onEdit, onOpen}: Obj
    <Button onClick={() => setRetry(retry + 1)}>重新读取汇总</Button></div>}
   {summary ? <section className="panel portfolio-overview-summary" aria-label="全部组合汇总">
    <div className="portfolio-overview-total">
-    <span>全部组合总资产 · CNY</span>
-    <strong>{money(summary.total_assets)}</strong>
+    <span>全部组合持仓市值 · CNY</span>
+    <strong>{money(summary.market_value)}</strong>
     <small>{summary.portfolios.length} 个组合</small>
     {(summary.incomplete || summary.estimated) && <small role="status">{summary.incomplete?'部分数据待补齐':'部分收益含暂估'}</small>}
    </div>
@@ -60,7 +60,7 @@ export function PortfolioOverview({boot, version, onCreate, onEdit, onOpen}: Obj
      <ReturnMetric label="最近交易日涨跌" value={day}
       note={day.end_date ? day.end_date + (day.estimated ? ' · 含暂估' : '') : '暂无可用行情日期'}/>
     </dl>
-    <p>累计及期间收益率以对应期末累计买入成本为分母。年化金额为累计买入成本 × XIRR。最近交易日以已同步行情为准。</p>
+    <p>区间涨跌为累计投资收益的变化。累计及期间收益率以对应期末累计买入成本为分母。年化金额为累计买入成本 × XIRR。</p>
    </div>
   </section> : !error && <div className="portfolio-overview-loading" role="status"><LoaderCircle size={18} className="spin"/>正在汇总组合收益…</div>}
   <Panel title="投资组合" className="portfolio-overview-list">
@@ -76,7 +76,7 @@ export function PortfolioOverview({boot, version, onCreate, onEdit, onOpen}: Obj
        }}>{portfolio.name}<ChevronRight size={16}/></a>
        <small>运行 {portfolio.running_days} 天 · 始于 {portfolio.start_date}{portfolio.archived && ' · 已归档'}</small>
       </div>
-      <div className="portfolio-overview-row-value"><small>总资产 · CNY</small><b>{money(row?.total_assets)}</b></div>
+      <div className="portfolio-overview-row-value"><small>持仓市值 · CNY</small><b>{money(row?.market_value)}</b></div>
       <div className="portfolio-overview-row-value"><small>累计收益 · CNY</small>
        <b className={tone(row?.cumulative.amount)}>{signedMoney(row?.cumulative.amount)} <span>{percent(row?.cumulative.rate, true)}</span></b></div>
       <Button small aria-label={'编辑组合 '+portfolio.name} onClick={() => onEdit(portfolio)}><Edit3 size={14}/>编辑</Button>

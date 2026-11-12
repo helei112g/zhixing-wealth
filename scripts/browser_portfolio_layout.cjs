@@ -65,11 +65,17 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
   await page.reload();
   await overview().waitFor();
   const aggregate=await api('/portfolios/overview');
-  check(await overview().locator('.portfolio-overview-total strong').innerText()===Number(aggregate.total_assets).toLocaleString('zh-CN',{minimumFractionDigits:2}),
-   'homepage displays the server total assets');
+  check(aggregate.market_value==='1050'&&aggregate.total_assets!==aggregate.market_value
+   &&await overview().getByText('全部组合持仓市值 · CNY',{exact:true}).isVisible()
+   &&await overview().locator('.portfolio-overview-total strong').innerText()==='1,050.00',
+   'homepage displays only the current holdings market value');
   check(await overview().locator('.portfolio-return-metric').count()===5&&await overview().getByText(/运行|始于/).count()===0,
    'homepage summary displays the five return pairs without aggregate running dates');
   for(const portfolio of aggregate.portfolios){
+   const expectedValue=portfolio.id===p.id?'1,040.00':'10.00';
+   check(await row(portfolio.id).getByText('持仓市值 · CNY',{exact:true}).isVisible()
+    &&await row(portfolio.id).locator('.portfolio-overview-row-value b').first().innerText()===expectedValue,
+    'the individual portfolio row excludes idle cash and shows its holdings market value');
    check(await row(portfolio.id).getByText('运行 '+portfolio.running_days+' 天 · 始于 '+portfolio.start_date,{exact:true}).isVisible(),
     'the individual portfolio row displays its own running time');
   }

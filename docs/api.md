@@ -152,11 +152,11 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&asset_class
 
 #### 全部组合收益总览
 
-`GET /api/portfolios/overview` 返回同一账本 `revision` 和估值 `date` 下的 CNY 汇总。顶层 `total_assets` 合计各组合账面资产，`start_date` 取最早记账起始日，`running_days` 从该日起含首日计数。空账本这三项为 null，`portfolios` 为空。组合列表逐项返回 `id,name,archived,start_date,running_days,total_assets,cumulative`。
+`GET /api/portfolios/overview` 返回同一账本 `revision` 和估值 `date` 下的 CNY 汇总。组合列表逐项返回 `id,name,archived,start_date,running_days,market_value,total_assets,cumulative`。每项 `market_value` 与单组合 `capital_summary.market_value` 一致，仅计实际持仓。顶层 `market_value` 合计各组合持仓市值。两级 `total_assets` 继续提供账面总资产。`start_date` 取最早记账起始日，`running_days` 从该日起含首日计数。空账本的市值、总资产和起始日、运行天数均为 null，`portfolios` 为空。
 
 - `cumulative` 的金额合计单组合 `capital_summary.profit`，比例为该金额除以合计累计买入成本。
 - `annualized.rate` 合并实际日期现金流重算 XIRR，排除未投入现金。 `annualized.amount` 为合计累计买入成本乘 XIRR 的一年折算金额。 `status,xirr_basis` 提供状态与口径。
-- `year_to_date,month_to_date,latest_trading_day` 各返回 `amount,rate,start_date,end_date,estimated`。金额合计区间日收益，比例使用共同期末累计买入成本。最近交易日取期初或期末持仓实际缓存行情的最新观测日，并在同一日期统计全部组合。若计算所用的当日或前一日估值沿用旧行情且无法用已知休市解释，最近交易日收益标为暂估。无观测时日期和收益均为 null。
+- `year_to_date,month_to_date,latest_trading_day` 各返回 `amount,rate,start_date,end_date,estimated`。金额合计期末累计投资收益减期初前一日累计投资收益，沿用 `cumulative` 的投资现金流口径，排除闲置现金的汇兑损益。比例使用共同期末累计买入成本。最近交易日取期初或期末持仓实际缓存行情的最新观测日，并在同一日期统计全部组合。若计算所用的当日或前一日估值沿用旧行情且无法用已知休市解释，最近交易日收益标为暂估。无观测时日期和收益均为 null。
 - 金额和比例使用 Decimal 字符串，`0.05` 表示 5%。缺少必要估值的合计或区间收益为 null，零买入成本时比例为 null。已知的暂估保留数值并以 `estimated` 标记。完整性不足时返回 `incomplete` 或对应指标 null；读取不触发行情同步。
 
 旧交易/计划接口的 `expected_revision` 兼容为可选；资产、投资笔记接口和 AI 客户端写入强制提供。不能把 CSRF token 当作并发版本。

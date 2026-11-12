@@ -281,7 +281,7 @@ def lot_projection(state,portfolio,as_of=None):
     return metrics
 
 
-def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
+def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None,annualize=True):
     """Instrument money-weighted returns, including all related fees and receivables.
 
     Reinvestment has both dividend income and purchase cash, so internal cash
@@ -337,7 +337,9 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
                 complete=False;proceeds_complete=False
         if h['value_base'] is not None and h['value_base']!=0:flows.append((end,h['value_base']))
         profit=sum((v for _,v in flows),ZERO) if complete else None
-        annual=xirr(flows) if complete else {'rate':None,'status':'有未确认流水或缺少估值，暂不年化'}
+        annual={'rate':None,'status':'有未确认流水或缺少估值，暂不年化'}
+        if complete:
+            annual=xirr(flows) if annualize else {'rate':None,'status':''}
         own=[e for e in events if e.get('instrument_id')==iid]
         provisional=any(e['kind'] in ('DIVIDEND','REINVEST') and (not e.get('tax_known',True) or not e.get('ex_date_known',True)) for e in own)
         if any(e['kind']=='OPENING_POSITION' for e in own):annual['status']+='；期初份额仅自记账起计算'
@@ -355,7 +357,7 @@ def instrument_projection(state,portfolio,holdings,as_of=None,*,market=None):
     return result
 
 
-def investment_summary(state, portfolio, snapshot, performances, as_of):
+def investment_summary(state, portfolio, snapshot, performances, as_of, *, annualize=True):
     """Aggregate investment cash flows, never averages of instrument XIRRs.
 
     Idle budget is excluded. Closed investment cash flows remain part of the
@@ -378,7 +380,9 @@ def investment_summary(state, portfolio, snapshot, performances, as_of):
         elif e['kind'] in ('SUBSCRIBE_PENDING', 'REDEEM_PENDING', 'OPENING_RECEIVABLE'):
             complete = False
     profit = sum((value for _, value in flows), ZERO) if complete else None
-    annual = xirr(flows) if complete and cost > 0 else {'rate': None, 'status': '尚无可核实买入本金，不计算年化' if complete else '有未确认流水或缺少估值，暂不年化'}
+    annual = {'rate': None, 'status': '尚无可核实买入本金，不计算年化' if complete else '有未确认流水或缺少估值，暂不年化'}
+    if complete and cost > ZERO:
+        annual = xirr(flows) if annualize else {'rate': None, 'status': ''}
     if any(e['portfolio_id'] == portfolio['id'] and e['kind'] == 'OPENING_POSITION' and e['date'] <= str(as_of) for e in state['events']):
         annual['status'] += '；含期初份额，仅计算记账以来'
     planned = dec(snapshot['capital']) if snapshot.get('funding_mode') == 'budget' else dec(portfolio['planned_amount'])

@@ -43,14 +43,23 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await officialDialog.getByLabel('采集指数代码',{exact:true}).fill('H11136');
   check(await officialDialog.getByRole('button',{name:'预览范围与调用量',exact:true}).isDisabled(), 'new index requires a primary valuation choice');
   await officialDialog.getByLabel('主估值指标',{exact:true}).selectOption('ps');
+  check(await officialDialog.getByRole('checkbox',{name:'指数基本信息',exact:true}).isDisabled() &&
+   await officialDialog.getByRole('checkbox',{name:'十年历史成分',exact:true}).isDisabled() &&
+   !await officialDialog.getByRole('checkbox',{name:'日频 PE/PB 估值',exact:true}).isChecked(),
+   'cross-market dialog disables unsupported modules and leaves optional valuation unchecked');
   await officialDialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
   const officialPreview = officialDialog.locator('.collection-preview');
   await officialPreview.getByText(/^已核验中证指数价格日线/).waitFor();
   check(await officialPreview.getByText('采集模块 · 价格日线、全收益日线、当前成分与权重',{exact:true}).isVisible() &&
-   (await officialPreview.innerText()).includes('无需理杏仁 Token') &&
-   (await officialPreview.innerText()).includes('未纳入采集'), 'cross-market preview shows verified official modules before any token is configured');
+   (await officialPreview.innerText()).includes('无需理杏仁 Token'), 'cross-market preview shows verified official modules before any token is configured');
   await officialPreview.scrollIntoViewIfNeeded();
   await shot('h11136-official-collection-preview');
+  await officialDialog.getByRole('checkbox',{name:'日频 PE/PB 估值',exact:true}).check();
+  await officialDialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  await officialPreview.getByText('cn/index/fundamental',{exact:true}).waitFor();
+  check((await officialPreview.innerText()).includes('当前成分与权重、日频 PE/PB 估值') &&
+   (await officialPreview.innerText()).includes('更新需配置本机 Token'), 'mixed preview keeps official modules and estimates only valuation calls');
+  await shot('h11136-mixed-collection-preview');
   await page.keyboard.press('Escape');
   await officialDialog.waitFor({state:'hidden'});
 

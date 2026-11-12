@@ -125,7 +125,7 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 可传 `sort_by='annual_1'`、`'annual_2'`、`'annual_3'`、`'ytd'`、`'monthly'` 或 `'daily'` 对匹配列表排序。`sort_direction` 支持 `'asc'` 和 `'desc'`，默认降序。排序先于分页，缺失值置后。
 
-读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start, primary_valuation=...)` 展示指数家族、拟用主指标、核验日线的来源和日期、范围、预计调用数、排除模块和原 research_revision。H11136/H01136 的价格、全收益和当前成分走官方数据，无需配置理杏仁 Token。其他新指数按 capabilities 核对验证来源。获授权后以 `write('/api/research/collection', payload, 'PUT')` 提交预览返回的 modules、primary_valuation、history_start，并带上 enabled 与 expected_research_revision。只改分类时沿用同版本的原订阅模块、起始日和启用状态。按返回的 id 回读，首次保存同时返回全量任务的 job_id。按该 ID 回读任务。后续更新可用 `refresh_index`，或从详情的 `collection.resources` 选择资源并提交稳定 request_id。
+读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start, primary_valuation=...)` 展示指数家族、拟用主指标、核验日线的来源和日期、范围、预计调用数、排除模块和原 research_revision。H11136/H01136 的价格、全收益和当前成分走官方数据，无需配置理杏仁 Token。日频 PE/PB 可独立订阅，更新时从 `collection.resources` 选择 `valuations` 资源。其他新指数按 capabilities 核对验证来源。获授权后以 `write('/api/research/collection', payload, 'PUT')` 提交预览返回的 modules、primary_valuation、history_start，并带上 enabled 与 expected_research_revision。只改分类时沿用同版本的原订阅模块、起始日和启用状态。按返回的 id 回读，首次保存同时返回全量任务的 job_id。按该 ID 回读任务。后续更新可用 `refresh_index`，或从详情的 `collection.resources` 选择资源并提交稳定 request_id。
 
 `research_index` 默认 mcw。`research_studio` 支持四指标、四种估值方法和 0/3/5/10 年窗口。0 表示本地已采集全历史。版本变更后重读，来源失败保留旧值，缺失保留 null。旧源 overall/arithmetic 用于回看。报告时区分指数汇总财务、固定公司篮子与同篮子同比。
 

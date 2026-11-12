@@ -74,13 +74,27 @@ def series_code(profile, basis):
     return profile['code']
 
 
+OFFICIAL_COLLECTION_MODULES = ('price', 'total_return', 'memberships')
+
+
+def has_lixinger_pe_pb(profile):
+    return (profile.get('provider'), profile.get('code'), profile.get('exposure')) == ('csi', 'H11136', 'overseas')
+
+
 def module_capabilities(profile):
-    from .lixinger import MODULES
-    result={m:dict(supported=True,reason=None) for m in (*MODULES, 'volatility')}
-    if profile.get('exposure')=='overseas':
-        for m in result:
-            if m not in ('price','total_return','memberships'):
-                result[m]=dict(supported=False,reason='跨市场理杏仁身份、权限及币种未核验；已有官方行情与当前成分保留')
+    from .lixinger import MODULES, SOURCE
+    result = {m: dict(supported=True, reason=None, source=SOURCE) for m in (*MODULES, 'volatility')}
+    for module in ('stock_valuations', 'financials', 'historical_financials'):
+        result[module]['source'] = '东方财富'
+    if profile.get('exposure') == 'overseas':
+        official_source = '国证指数' if profile['provider'] == 'cni' else '中证指数'
+        for module in result:
+            if module in OFFICIAL_COLLECTION_MODULES:
+                result[module]['source'] = official_source
+            elif module == 'valuations' and has_lixinger_pe_pb(profile):
+                result[module]['metrics'] = ['pe', 'pb']
+            else:
+                result[module] = dict(supported=False, source=None, reason='该跨市场模块的数据口径尚未核验')
     return result
 
 

@@ -75,17 +75,35 @@ export function TokenSettings(){
  </Panel>;
 }
 
+export function collectionModuleLabel(module:string, capability?:Obj){
+ return module==='valuations'&&capability?.metrics?'日频 PE/PB 估值':moduleLabels[module]||module;
+}
+
+function overseasOptions(catalog:Obj, code:string){
+ const normalized=code.trim().toUpperCase();
+ const item=catalog.items.find((p:Obj)=>p.code===normalized||p.return_code===normalized);
+ return item?catalog.overseas_modules?.[item.code]:undefined;
+}
+
 function collectionSettings(profile:Obj){
  const {enabled,history_start,modules}=profile.subscription;
  return JSON.stringify([profile.id,profile.primary_valuation??null,enabled,history_start??null,[...modules].sort()]);
 }
 
 export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
- const [code,Code]=useState(profile?.code||''),[modules,Modules]=useState<string[]>(profile?.subscription?.modules||catalog.default_modules),[limited,Limited]=useState(Boolean(profile?.subscription?.history_start)),[start,Start]=useState(profile?.subscription?.history_start||new Date(Date.now()-30*86400000).toISOString().slice(0,10)),[enabled,Enabled]=useState(profile?.subscription?.enabled??true),[preview,P]=useState<Obj|null>(null),[busy,B]=useState(false),[error,E]=useState('');
+ const [code,Code]=useState(profile?.code||''),[selectedModules,Modules]=useState<string[]|null>(profile?.subscription?.modules??null),[limited,Limited]=useState(Boolean(profile?.subscription?.history_start)),[start,Start]=useState(profile?.subscription?.history_start||new Date(Date.now()-30*86400000).toISOString().slice(0,10)),[enabled,Enabled]=useState(profile?.subscription?.enabled??true),[preview,P]=useState<Obj|null>(null),[busy,B]=useState(false),[error,E]=useState('');
  const [primary,Primary]=useState(profile?.primary_valuation||'');
  const generation=useRef(0);
  const baseline=useRef(profile?collectionSettings(profile):null);
+ const options=overseasOptions(catalog,code);
+ const defaults=options?catalog.default_modules.filter((m:string)=>m!=='valuations'):catalog.default_modules;
+ const modules=(selectedModules??defaults).filter((m:string)=>!options||options[m]?.supported);
  function invalidate(){generation.current++;P(null);E('');}
+ function changeCode(value:string){
+  if(overseasOptions(catalog,value)!==options)Modules(null);
+  Code(value);
+  invalidate();
+ }
  async function inspect(){
   B(true);E('');P(null);
   const turn=generation.current;
@@ -104,15 +122,24 @@ export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
  const official=preview?.profile.exposure==='overseas';
  return <Modal title={profile?'管理指数采集':'添加指数采集'} onClose={onClose} busy={busy}>
   <ErrorBox error={error}/>
-  <Field label="指数代码"><input aria-label="采集指数代码" list="index-catalog-options" value={code} disabled={busy||Boolean(profile)} onChange={e=>{Code(e.target.value);invalidate();}}/></Field>
+  <Field label="指数代码"><input aria-label="采集指数代码" list="index-catalog-options" value={code} disabled={busy||Boolean(profile)} onChange={e=>changeCode(e.target.value)}/></Field>
   <datalist id="index-catalog-options">{catalog.items.map((p:Obj)=><option key={p.code} value={p.code}>{p.name}</option>)}</datalist>
   <Field label="主估值指标"><select aria-label="主估值指标" value={primary} disabled={busy}
    onChange={e=>{Primary(e.target.value);invalidate();}}>
    {!profile?.primary_valuation&&<option value="">{profile?'未分类':'请选择主估值指标'}</option>}
    {primaryValuations.map(metric=><option key={metric.key} value={metric.key}>{metric.label}</option>)}
   </select></Field>
-  <p className="muted small">支持内置目录和目录外的理杏仁指数。已支持的跨市场指数使用编制机构官方来源。新指数先核验身份和价格日线，保存后启动首次全量同步。</p>
-  <div className="collection-modules">{catalog.modules.map((m:string)=><label className="check" key={m}><input type="checkbox" aria-label={moduleLabels[m]} checked={modules.includes(m)} disabled={busy||m==='index_info'} onChange={e=>{Modules(e.target.checked?[...modules,m]:modules.filter(x=>x!==m));invalidate();}}/><span><b>{moduleLabels[m]}</b><small>{catalog.module_sources?.[m]}</small></span></label>)}</div>
+  <p className="muted small">{profile?'保存后可在数据管理中更新已订阅模块。':'新指数先核验身份和价格日线，保存后启动首次全量同步。'}</p>
+  <div className="collection-modules">{catalog.modules.map((m:string)=>{
+   const capability=options?.[m];
+   const label=collectionModuleLabel(m,capability);
+   const description=capability?(capability.supported?capability.source:'暂不支持跨市场采集'):catalog.module_sources?.[m];
+   return <label className="check" key={m}>
+    <input type="checkbox" aria-label={label} checked={modules.includes(m)} disabled={busy||m==='index_info'||capability?.supported===false}
+     onChange={e=>{Modules(e.target.checked?[...modules,m]:modules.filter((x:string)=>x!==m));invalidate();}}/>
+    <span><b>{label}</b><small>{description}</small></span>
+   </label>;
+  })}</div>
   <div className="segmented" aria-label="采集历史范围"><button type="button" disabled={busy} aria-pressed={!limited} className={!limited?'active':''} onClick={()=>{Limited(false);invalidate();}}>全历史</button><button type="button" disabled={busy} aria-pressed={limited} className={limited?'active':''} onClick={()=>{Limited(true);invalidate();}}>指定起始日</button></div>
   {limited&&<Field label="采集起始日"><input aria-label="采集起始日" type="date" value={start} disabled={busy} onChange={e=>{Start(e.target.value);invalidate();}}/></Field>}
   {profile&&<label className="check"><input type="checkbox" checked={enabled} disabled={busy} onChange={e=>Enabled(e.target.checked)}/>启用此指数；关闭即暂停并保留历史</label>}
@@ -123,8 +150,9 @@ export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
    <p>价格 {preview.profile.code} / 全收益 {preview.profile.return_code||'同代码的理杏仁全收益序列'}</p>
    {preview.verified_price_date&&<p>已核验{preview.verified_price_source}价格日线（{preview.verified_price_date}）</p>}
    <p>{preview.effective_start} → {preview.end}{!official&&'；历史成分最多十年。'}</p>
-   {official?<p>采集模块 · {preview.modules.map((m:string)=>moduleLabels[m]).join('、')}</p>:
-    <div className="table-wrap"><table><thead><tr><th>端点</th><th>预计首次调用</th></tr></thead><tbody>{preview.endpoint_budget.map((r:Obj)=><tr key={r.endpoint}><td>{r.endpoint}</td><td>{r.calls}</td></tr>)}</tbody></table></div>}
+   {official&&<p>采集模块 · {preview.modules.map((m:string)=>collectionModuleLabel(m,options?.[m])).join('、')}</p>}
+   {(!official||preview.endpoint_budget.length>0)&&
+    <div className="table-wrap"><table><thead><tr><th>端点</th><th>{official?'预计全量调用':'预计首次调用'}</th></tr></thead><tbody>{preview.endpoint_budget.map((r:Obj)=><tr key={r.endpoint}><td>{r.endpoint}</td><td>{r.calls}</td></tr>)}</tbody></table></div>}
    <p className="muted small">{preview.limitation}{preview.unsupported_modules?.length>0&&` 未纳入采集 · ${preview.unsupported_modules.map((m:string)=>moduleLabels[m]).join('、')}（跨市场尚未核验）。`}</p>
    <Button primary disabled={busy} onClick={save}>确认保存采集设置</Button>
   </div>}

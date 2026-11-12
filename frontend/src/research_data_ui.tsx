@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react';
 import {api, Obj} from './api';
 import {Button, ErrorBox, Panel} from './components';
-import {CollectionDialog, moduleLabels, SourceReview, TokenSettings} from './research_studio';
+import {CollectionDialog, collectionModuleLabel, SourceReview, TokenSettings} from './research_studio';
 import {activeJob, UpdateRecords, useJobs, useSubmission} from './sync_ui';
 
 const indexScopes=['index_prices','memberships','valuations','financials'];
@@ -11,12 +11,6 @@ function UpdateActions({label, disabled, onUpdate}: {label:string; disabled:bool
   <Button small disabled={disabled} onClick={()=>onUpdate(false)}>增量更新</Button>
   <Button small disabled={disabled} onClick={()=>onUpdate(true)}>全量校准</Button>
  </div>;
-}
-
-function providerFor(profile:Obj, module:string){
- if(profile.exposure==='overseas')return profile.provider==='cni'?'国证指数':'中证指数';
- if(['stock_valuations','financials','historical_financials'].includes(module))return '东方财富';
- return '理杏仁';
 }
 
 function IndexData({profile, busy, revision, onUpdate, onEdit}:Obj){
@@ -33,7 +27,7 @@ function IndexData({profile, busy, revision, onUpdate, onEdit}:Obj){
  const resources:Obj[]=detail?.collection.resources||[];
  const groups=new Map<string,Obj[]>();
  for(const resource of resources){
-  const provider=providerFor(profile,resource.module);
+  const provider=detail?.module_status[resource.module]?.source||'来源待核对';
   const list=groups.get(provider)||[];
   list.push(resource);
   groups.set(provider,list);
@@ -48,6 +42,12 @@ function IndexData({profile, busy, revision, onUpdate, onEdit}:Obj){
   <ErrorBox error={error}/>
   {!detail&&!error&&<p className="muted small">正在读取本地来源…</p>}
   {detail&&!detail.collection.subscription.enabled&&<p className="muted small">采集已暂停，已发布数据仍可查看。</p>}
+  {profile.exposure==='overseas'&&groups.size>1&&<div className="inline-actions">
+   {[...groups].map(([provider,entries])=><div className="inline-actions" key={provider}>
+    <span>{provider}</span>
+    <UpdateActions label={profile.name+' · '+provider} disabled={disabled} onUpdate={full=>onUpdate(entries,full)}/>
+   </div>)}
+  </div>}
   {detail&&<div className="table-wrap"><table className="data-sources-table">
    <thead><tr><th scope="col">来源</th><th scope="col">数据模块</th><th scope="col">最新数据日期</th></tr></thead>
    {[...groups].map(([provider,entries])=><tbody key={provider}>{entries.map((resource,index)=>{
@@ -57,7 +57,7 @@ function IndexData({profile, busy, revision, onUpdate, onEdit}:Obj){
     const date=module==='index_info'?null:status?.date;
     return <tr key={module}>
      {index===0&&<th scope="rowgroup" rowSpan={entries.length}>{provider}</th>}
-     <td>{moduleLabels[module]||module}</td>
+     <td>{collectionModuleLabel(module,status)}</td>
      <td>
       {date?<time dateTime={date}>{date}</time>:snapshot&&module==='index_info'
        ?<span>核对日 {snapshot.fetched_at.slice(0,10)}</span>:snapshot?'日期待核验':'待采集'}
@@ -70,7 +70,7 @@ function IndexData({profile, busy, revision, onUpdate, onEdit}:Obj){
   {detail&&<details className="data-target-evidence">
    <summary>来源证据、采集进度与历史版本</summary>
    {detail.sources.map((source:Obj)=><details key={source.module} className="research-source">
-    <summary>{moduleLabels[source.module]||source.module} · {source.effective_date||'日期待核验'}</summary>
+    <summary>{collectionModuleLabel(source.module,detail.module_status[source.module])} · {source.effective_date||'日期待核验'}</summary>
     <p className="muted small">抓取 {source.fetched_at} · 快照 {source.snapshot_id}</p>
     {source.limitation&&<p>{source.limitation}</p>}
     {source.evidence.map((item:Obj,n:number)=><p key={n}>
@@ -79,7 +79,7 @@ function IndexData({profile, busy, revision, onUpdate, onEdit}:Obj){
    </details>)}
    {Object.entries(detail.collection.modules).map(([module, value])=>{
     const progress=value as Obj;
-    return <p key={module} className="muted small">{moduleLabels[module]||module} · 分片 {progress.completed}/{progress.planned}
+    return <p key={module} className="muted small">{collectionModuleLabel(module,detail.module_status[module])} · 分片 {progress.completed}/{progress.planned}
      {progress.last_reconciled&&' · 最近完整校准 '+progress.last_reconciled}</p>;
    })}
    <SourceReview d={detail}/>

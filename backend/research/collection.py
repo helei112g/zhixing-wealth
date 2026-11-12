@@ -12,7 +12,9 @@ def subscription(profile):
     # Only explicitly saved profiles are passed here, never the built-in catalog.
     saved = profile.get('subscription')
     if not saved:
-        return dict(enabled=True, modules=list(lixinger.DEFAULT_MODULES), history_start=None)
+        # Legacy overseas profiles only collected official data before module subscriptions.
+        modules = providers.OFFICIAL_COLLECTION_MODULES if profile.get('exposure') == 'overseas' else lixinger.DEFAULT_MODULES
+        return dict(enabled=True, modules=list(modules), history_start=None)
     return dict(saved, modules=[module for module in saved['modules'] if module != 'tracking_funds'])
 
 
@@ -63,7 +65,8 @@ class Collection:
         start = str(day(history_start)) if history_start else p['launch']
         if not p['launch'] <= start <= end: raise DomainError('历史起点须介于指数发布日期和已完成交易日之间')
         overseas=p.get('exposure')=='overseas'
-        unsupported=[m for m in modules if not providers.module_capabilities(p)[m]['supported']]
+        capabilities = providers.module_capabilities(p)
+        unsupported = [m for m in modules if not capabilities[m]['supported']]
         chosen = [m for m in modules if m not in unsupported] if overseas else list(dict.fromkeys(['index_info', *modules]))
         if not chosen: raise DomainError('所选模块的跨市场身份与币种尚未核验')
         if overseas and not existing:
@@ -72,14 +75,19 @@ class Collection:
 
         calls_by_endpoint = {}; pending = []
         for m in collection_modules(p, chosen):
-            if overseas: continue
+            if overseas and m in providers.OFFICIAL_COLLECTION_MODULES:
+                continue
             if m in ('index_financials', 'stock_valuations', 'financials', 'historical_financials'):
                 pending.append(m); continue
             for call in lixinger.request_plan(p, m, start, end):
                 e = call['endpoint']; calls_by_endpoint[e] = calls_by_endpoint.get(e, 0)+1
         state = self.research.access.status()
-        limitation = ('所选可采集模块使用编制机构官方数据，无需理杏仁 Token。' if overseas else
-                      '公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。')
+        if overseas and 'valuations' in chosen:
+            limitation = 'PE TTM/PB 估值使用理杏仁，更新需配置本机 Token。价格、全收益和当前成分使用中证官方数据。'
+        elif overseas:
+            limitation = '所选可采集模块使用编制机构官方数据，无需理杏仁 Token。'
+        else:
+            limitation = '公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。'
         return dict(profile=p, modules=chosen, history_start=history_start, effective_start=start, end=end,
                     primary_valuation=primary_valuation or p.get('primary_valuation'),
                     verified_price_date=price_date, verified_price_source=price_source, initial_sync=existing is None,
@@ -151,7 +159,7 @@ class Collection:
 
         old = self.research.module(iid, module)
         start = sub.get('history_start') or p['launch']
-        if p.get('exposure') == 'overseas':
+        if p.get('exposure') == 'overseas' and module in providers.OFFICIAL_COLLECTION_MODULES:
             return self.collect_official(p, module, start, end, old, full)
 
         state = self.research.module(iid, 'stage.'+module) or {}
@@ -177,7 +185,8 @@ class Collection:
                      'pe_ttm.ewpvo' in state['calls'][0]['params']['metricsList'])):
             start, end = state['range_start'], state['range_end']
         info = (self.research.module(iid, 'index_info') or {}).get('info')
-        if module != 'index_info' and not info:
+        independent_valuation = module == 'valuations' and providers.has_lixinger_pe_pb(p)
+        if module != 'index_info' and not info and not independent_valuation:
             raise DomainError('请先更新指数基本信息并核验地区、币种及编制方，再采集其他理杏仁模块')
         calls = lixinger.request_plan(p, module, start, end, info)
         if not full and module == 'historical_memberships':

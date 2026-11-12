@@ -387,16 +387,16 @@ GET /api/notifications返回missing_requests：每项含id、schedule_id、item_
 
 | 接口 | 请求与结果 |
 |---|---|
-| GET `/api/research/catalog` | 本地已核验目录、已添加订阅、模块、默认全选的default_modules、module_sources来源说明及研究版本；不采集目录中的全部指数。 |
+| GET `/api/research/catalog` | 本地已核验目录、已添加订阅、模块、default_modules、module_sources 来源说明和研究版本。overseas_modules 按价格代码提供跨市场模块支持状态和来源，H11136 的 valuations.metrics 仅含 pe、pb，页面默认不勾选。 |
 | POST `/api/research/indices/resolve` | `{code}`，本地查询已保存档案或内置代码配对。目录外新指数通过采集预览在线核验。 |
-| POST `/api/research/collection/preview` | `{code, modules, history_start, primary_valuation}`。history_start 为 null 表示从发布日期起，主指标可取 pe、pb、dividend_yield、ps。省略主指标或传 null 时保留已有分类，旧客户端新增时归入未分类。返回拟保存的主指标、核验日线来源和日期、预计调用量、依赖缺项和原 `research_revision`。目录内跨市场指数使用官方日线，`modules` 只含支持的模块，`unsupported_modules` 列出被排除项，`endpoint_budget` 为空。其他新指数通过理杏仁核验。已保存指数的预览只用本地数据。 |
+| POST `/api/research/collection/preview` | `{code, modules, history_start, primary_valuation}`。history_start 为 null 表示从发布日期起，主指标可取 pe、pb、dividend_yield、ps。省略主指标或传 null 时保留已有分类，旧客户端新增时归入未分类。返回拟保存的主指标、核验日线来源和日期、预计调用量、依赖缺项和原 `research_revision`。目录内跨市场指数使用官方日线，`modules` 只含支持的模块，`unsupported_modules` 列出被排除项。H11136 勾选估值时，`endpoint_budget` 仅估算理杏仁基本面调用，官方模块不计入。其他新指数通过理杏仁核验。已保存指数的预览只用本地数据。 |
 | PUT `/api/research/collection` | 提交预览中的模块、主指标及历史起点，携带 code、enabled 和 expected_research_revision。以家族去重，暂停保留历史，改变范围使旧检查点失效；409不写入。新指数重新核验后在同一事务保存订阅并排队全量同步，返回 job_id。修改既有订阅返回 job_id=null。 |
 | GET `/api/research/indices` | 已建档指数本地摘要，每页20条。支持 kind、page、method、valuation_group。旧调用默认 overall，首页显式 mcw。估值与分组字段见下。返回 calendar_year 与 changes.annual（前三个完整自然年）、ytd、monthly、daily。涨跌幅含 ratio、from_date、to_date，缺取价为 null。可按 `sort_by=annual_1/annual_2/annual_3/ytd/monthly/daily` 排序，其中 annual_1 对应最近一个完整自然年。方向 `sort_direction=asc/desc`（默认 desc）。先筛选、排序再分页，空值置后，相同涨跌幅沿用原始顺序。 |
 | GET `/api/research/indices/{id}` | basis=price/total_return；method=mcw/ew/ewpvo/median，旧源可读overall/arithmetic；window=0/3/5/10（0为本地全历史）。行情与估值日期独立；详情/投影为兼容旧调用默认overall，新UI/AI显式发送mcw；asof历史PIT查询仍拒绝。 |
 | GET `.../{id}/studio` | basis/method/window，metric=pe/pb/ps/dividend_yield。返回日频估值均值、分位、资金观察、波动率和集中度；收益回测、成分重叠、区间收益比较已退役，含同一analysis_id。 |
 | GET `.../{id}/{part}` | series/constituents/financials/sources；analysis_id 防混版本，page/page_size 分页。 |
 | GET `.../{id}/versions`、`.../versions/{snapshot_id}` | 最近100个非检查点来源版本及精确版本回读；跨指数版本拒绝，旧来源历史不删除。 |
-| POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和整体法/mcw估值可在用户接受固定成分、股数、权重、除数及全部成分同比例变化假设后试算；读取scenario_metrics/ scenario_assumption；全收益/等权/中位数禁用。 |
+| POST `.../{id}/scenarios` | 原 analysis_id、basis、metric、method、target_multiple、change_ratio、accept_fixed_basket_assumption、reference_window。同日正数价格和整体法/mcw估值可在用户接受固定成分、股数、权重、除数及全部成分同比例变化假设后试算；读取 scenario_metrics、scenario_assumption 和 scenario_unavailable_reason；全收益/等权/中位数禁用。 |
 | POST `/api/research/indices/{id}/source-check` | analysis_id绑定mcw价格快照；显式请求官方最近45天同日价格与可得PE参考，不消耗理杏仁额度，不合并历史。 |
 | GET `/api/settings/lixinger` | 已配置状态、本机文件路径、独立revision、每端点尝试次数；mode为unlimited，limit及endpoints[].limit/remaining固定null，表示无本机上限，不代表供应商余额；不返回Token或片段。 |
 | PUT `/api/settings/lixinger/token` | 仅用户本机页面提交 token 与 expected_revision；0600原子文件，保存不采集且关闭自动采集；显式手动更新不受本机次数限制，计数不重置。AI客户端不提供密钥读写命令。 |
@@ -473,7 +473,7 @@ UpdateRequest.resources按scope区分七种结构，OpenAPI同时公开各模块
 - `GET /api/family/cashflow?year=YYYY`：默认`include_fund=true`（显式false仅保留旧API兼容）。返回12个月 `rows`、全年已录入收入 `income_summary`、同组已核对月份 `summary`、计划历史 `plans`、可引用项目 `source_items`、years、revision、basis。月度含 income/planned/actual/surplus/savings_rate/estimated_surplus/estimated_savings_rate/confirmed/needs_review/fixed_plan；金额CNY字符串，比例为0–1（可负），未知null。summary不平均月比例，按months所列月份计算；confirmed_months说明完整度。income_summary含total、known_total、months、missing_fx_months，不受开支核对状态影响；缺汇率时total为null并单列已知金额，不能把全年收入代作summary储蓄率的分母。
 - `expense_plan`、`expense_month` 加入 `/api/family/preview` 和 `/api/family/commands`，沿用expected_revision、record_id。`command-schema`版本3提供完整JSON Schema。expense_plan包含name、amount或source_item_id、effective_month、end_month；编辑原ID追加版本。expense_month包含month、extra_plan、actual_amount、confirmed、note，record_id为YYYY-MM；未来月份只允许预算。
 - 实际开支总额替代预算，不相加。confirmed表示整月收入和开支已经完整核对，无收入记录时明确确认零收入；收入记录改变后needs_review为true并退出实际年度统计。已确认月份保存预算快照，之后改计划不改写该月。上述两类操作不产生现金流水、证券事件或资产快照；超时先回读，不自动重试。
-- 指数详情新增 `module_status`，逐模块包含supported/status/reason/date。科创50价格/全收益代码000688/000688CNY01，中证海外中国互联网H11136/H01136；后者估值及财务模块明确unsupported，不调用A股财务适配器。
+- 指数详情新增 `module_status`，逐模块包含supported/status/reason/date。科创50价格/全收益代码000688/000688CNY01，中证海外中国互联网H11136/H01136；后者可按独立资源更新理杏仁 PE/PB，其财务模块仍为 unsupported。
 
 
 ### 轻量导航、统一更新记录与当前指数更新

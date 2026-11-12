@@ -167,12 +167,14 @@ def router(service):
     @api.get('/api/research/catalog')
     def catalog():
         from .collection import subscription
-        from .providers import CATALOG
-        from .lixinger import MODULES,MODULE_SOURCES
+        from .providers import CATALOG, module_capabilities
+        from .lixinger import MODULES, MODULE_SOURCES
         with service.store.lock:
             profiles = [dict(profile, subscription=subscription(profile)) for profile in service.profiles()]
             revision = service.revision()
-        return dict(items=CATALOG,modules=MODULES,module_sources=MODULE_SOURCES,default_modules=MODULES,subscriptions=profiles,research_revision=revision)
+        overseas_modules = {p['code']: module_capabilities(p) for p in CATALOG if p.get('exposure') == 'overseas'}
+        return dict(items=CATALOG, modules=MODULES, module_sources=MODULE_SOURCES, default_modules=MODULES,
+                    overseas_modules=overseas_modules, subscriptions=profiles, research_revision=revision)
     @api.post('/api/research/collection/preview', summary='新指数核验身份和日线；目录内跨市场指数使用官方来源，已保存指数只做本地预览')
     def collection_preview(body:CollectionPreview):
         return service.collection.preview(body.code, body.modules, body.history_start, primary_valuation=body.primary_valuation)

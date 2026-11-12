@@ -150,6 +150,25 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(iid,self.add());self.assertEqual(len(self.r.profiles()),n);self.assertFalse(self.calls)
         self.assertEqual(len(self.r.updates.jobs()), 1)
 
+    def test_primary_valuation_edit_keeps_subscription_history_and_jobs(self):
+        iid = self.add()
+        before = self.r.profile(iid)
+        self.calls.clear()
+        sub = before['subscription']
+        plan = self.r.collection.preview(before['code'], sub['modules'], sub['history_start'], primary_valuation='ps')
+        self.assertEqual(plan['primary_valuation'], 'ps')
+        self.assertNotIn('primary_valuation', self.r.profile(iid))
+        args = (before['code'], sub['modules'], sub['history_start'], sub['enabled'])
+        saved = self.r.collection.save(*args, plan['research_revision'], primary_valuation='ps')
+        self.assertEqual(saved['primary_valuation'], 'ps')
+        self.assertIsNone(saved['job_id'])
+        self.assertEqual(self.r.profile(iid), dict(before, primary_valuation='ps'))
+        with self.assertRaises(ConflictError):
+            self.r.collection.save(*args, plan['research_revision'], primary_valuation='pe')
+        self.assertEqual(self.r.collection.save(*args, self.r.revision())['primary_valuation'], 'ps')
+        self.assertFalse(self.calls)
+        self.assertEqual(len(self.r.updates.jobs()), 1)
+
     def test_catalog_overseas_requires_an_official_session_in_the_selected_range(self):
         start, end = '2026-10-30', '2026-10-30'
         revision = self.r.revision()

@@ -7,6 +7,8 @@ from ..trading_calendar import no_expected_session
 
 METHOD_VERSION = 'index-studio-6'
 WINDOWS = (3, 5, 10)
+PRIMARY_VALUATIONS = ('pe', 'pb', 'dividend_yield', 'ps')
+VALUATION_GROUPS = (*PRIMARY_VALUATIONS, 'unclassified')
 
 
 def years_before(value, years):
@@ -79,6 +81,32 @@ def valuation(series, asof, allow_zero=False):
                                'quantiles': quantiles(vals)}
     return dict(source=series.get('source'), field=series.get('field'), frequency=series.get('frequency'),
                 date=current['date'] if current else None, current=current['value'] if current else None, windows=windows)
+
+
+def valuation_position(metric, valuations):
+    """Put all primary metrics on a scale from cheaper to more expensive."""
+    if metric is None:
+        return None
+    raw_windows = valuations.get(metric, {}).get('windows', {})
+    windows = {}
+    for years in ('5', '10'):
+        raw_rank = raw_windows.get(years, {}).get('rank')
+        if raw_rank is None:
+            windows[years] = {'rank': None, 'grade': None}
+            continue
+        rank = dec(raw_rank)
+        if metric == 'dividend_yield':
+            rank = 1 - rank
+        if rank <= Decimal('.2'):
+            grade = 'low'
+        elif rank <= Decimal('.5'):
+            grade = 'fair_low'
+        elif rank < Decimal('.8'):
+            grade = 'fair_high'
+        else:
+            grade = 'high'
+        windows[years] = {'rank': ds(rank), 'grade': grade}
+    return {'metric': metric, 'windows': windows}
 
 
 def financial_totals(rows, members, period):

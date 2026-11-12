@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import timedelta
 from ..common import ConflictError, DomainError, day, json_dumps, now
 from . import lixinger, providers
-from .metrics import years_before
+from .metrics import PRIMARY_VALUATIONS, years_before
 
 
 def subscription(profile):
@@ -40,7 +40,9 @@ class Collection:
     def __init__(self, research):
         self.research = research
 
-    def preview(self, code, modules, history_start):
+    def preview(self, code, modules, history_start, *, primary_valuation=None):
+        if primary_valuation is not None and primary_valuation not in PRIMARY_VALUATIONS:
+            raise DomainError('主估值指标须为 PE、PB、股息率或 PS')
         if not modules or len(modules) != len(set(modules)) or any(m not in lixinger.MODULES for m in modules):
             raise DomainError('请选择有效且不重复的采集模块')
         known = providers.catalog_identity(code)
@@ -78,20 +80,21 @@ class Collection:
         limitation = ('所选可采集模块使用编制机构官方数据，无需理杏仁 Token。' if overseas else
                       '公司数据仍用已核验来源；指数财报端点需基本信息确认后计划。')
         return dict(profile=p, modules=chosen, history_start=history_start, effective_start=start, end=end,
+                    primary_valuation=primary_valuation or p.get('primary_valuation'),
                     verified_price_date=price_date, verified_price_source=price_source, initial_sync=existing is None,
                     research_revision=revision, endpoint_budget=[dict(endpoint=e, calls=n,
                     remaining=None) for e, n in sorted(calls_by_endpoint.items())],
                     dependencies_pending=pending, unsupported_modules=unsupported, configured=state['configured'], enabled=state['enabled'],
                     limitation=limitation + '新订阅保存后立即启动一次全量同步。')
 
-    def save(self, code, modules, history_start, enabled, expected):
+    def save(self, code, modules, history_start, enabled, expected, *, primary_valuation=None):
         from .updates import index_resources
 
         if self.research.revision() != expected:
             raise ConflictError('资料或设置已变化，请重新读取并核对；本次未写入')
         if not self.research.writes_allowed():
             raise DomainError('系统处于只读验收或停写状态')
-        plan = self.preview(code, modules, history_start)
+        plan = self.preview(code, modules, history_start, primary_valuation=primary_valuation)
         p = plan['profile']
         iid = p['provider']+':'+p['code']
         job_id = None
@@ -103,6 +106,8 @@ class Collection:
             previous = subscription(value)
             changed = previous.get('modules') != plan['modules'] or previous.get('history_start') != history_start
             value['subscription'] = dict(enabled=enabled, modules=plan['modules'], history_start=history_start)
+            if plan['primary_valuation'] is not None:
+                value['primary_valuation'] = plan['primary_valuation']
             # A changed range invalidates checkpoints, never observations or historical versions.
             if changed: value['collection_generation'] = value.get('collection_generation', 0)+1
             db.execute('INSERT INTO research_indices VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data', (iid, json_dumps(value)))
@@ -112,7 +117,8 @@ class Collection:
 
         if job_id:
             self.research.updates.start()
-        return dict(id=iid, subscription=value['subscription'], research_revision=self.research.revision(), job_id=job_id)
+        return dict(id=iid, subscription=value['subscription'], primary_valuation=value.get('primary_valuation'),
+                    research_revision=self.research.revision(), job_id=job_id)
 
     def active(self, iid, module):
         p = self.research.profile(iid); sub = subscription(p)

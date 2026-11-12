@@ -15,6 +15,8 @@ Method=Literal['overall','median','arithmetic','mcw','ew','ewpvo']
 Part=Literal['series','constituents','financials','sources']
 IndexReturnSort=Literal['annual_1','annual_2','annual_3','ytd','monthly','daily']
 SortDirection=Literal['asc','desc']
+PrimaryValuation=Literal['pe','pb','dividend_yield','ps']
+ValuationGroup=Literal['all','pe','pb','dividend_yield','ps','unclassified']
 
 
 class FxResource(BaseModel):
@@ -130,6 +132,7 @@ class CollectionPreview(BaseModel):
     code:str=Field(min_length=1,max_length=16)
     modules:list[str]=Field(min_length=1,max_length=12)
     history_start:str|None=None
+    primary_valuation:PrimaryValuation|None=Field(None, description='主估值指标；省略或 null 保留已有分类，旧客户端新增时归入未分类')
 
 
 class CollectionSave(CollectionPreview):
@@ -163,13 +166,18 @@ def router(service):
         422:{'description':'输入、身份配对、数据口径或条件假设无效；保留缺口，不补零'}})
     @api.get('/api/research/catalog')
     def catalog():
+        from .collection import subscription
         from .providers import CATALOG
         from .lixinger import MODULES,MODULE_SOURCES
-        return dict(items=CATALOG,modules=MODULES,module_sources=MODULE_SOURCES,default_modules=MODULES,subscriptions=service.profiles(),research_revision=service.revision())
+        profiles = [dict(profile, subscription=subscription(profile)) for profile in service.profiles()]
+        return dict(items=CATALOG,modules=MODULES,module_sources=MODULE_SOURCES,default_modules=MODULES,subscriptions=profiles,research_revision=service.revision())
     @api.post('/api/research/collection/preview', summary='新指数核验身份和日线；目录内跨市场指数使用官方来源，已保存指数只做本地预览')
-    def collection_preview(body:CollectionPreview):return service.collection.preview(body.code,body.modules,body.history_start)
+    def collection_preview(body:CollectionPreview):
+        return service.collection.preview(body.code, body.modules, body.history_start, primary_valuation=body.primary_valuation)
     @api.put('/api/research/collection', summary='按原研究版本保存订阅；首次添加同时排队全量同步')
-    def collection_save(body:CollectionSave):return service.collection.save(body.code,body.modules,body.history_start,body.enabled,body.expected_research_revision)
+    def collection_save(body:CollectionSave):
+        return service.collection.save(body.code, body.modules, body.history_start, body.enabled,
+                                       body.expected_research_revision, primary_valuation=body.primary_valuation)
     @api.get('/api/settings/lixinger')
     def access_status():return dict(service.access.status(), automatic=False)
     @api.put('/api/settings/lixinger/token',summary='仅由用户在本机页面输入凭据；保存到本地文件，响应不返回Token')
@@ -195,8 +203,9 @@ def router(service):
         with service.store.lock:return dict(research_revision=service.revision(),updating=service.updating())
     @api.get('/api/research/indices', summary='已建档指数、最新估值与历史分位、价格涨跌幅与实际取价日期')
     def listing(kind:str|None=None, page:int=Query(1,ge=1), method:Method='overall',
-                sort_by:IndexReturnSort|None=None, sort_direction:SortDirection='desc'):
-        return service.listing(kind, page, method, sort_by=sort_by, sort_direction=sort_direction)
+                sort_by:IndexReturnSort|None=None, sort_direction:SortDirection='desc',
+                valuation_group:ValuationGroup|None=Query(None, description='按主估值指标筛选；all 默认按组排列，收益排序优先')):
+        return service.listing(kind, page, method, sort_by=sort_by, sort_direction=sort_direction, valuation_group=valuation_group)
     @api.post('/api/research/indices/resolve')
     def resolve(body:ResolveRequest):return service.resolve(body.code)
     @api.post('/api/research/indices/valuation-preview', deprecated=True)

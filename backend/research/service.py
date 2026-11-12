@@ -13,6 +13,7 @@ from .snapshots import encode,decode
 from .validation import validate as validate_snapshot,public_url
 from .updates import AUTOMATIC_SCOPES, UpdateJobs,SCOPES,MODULES
 from .metrics import WINDOWS, METHOD_VERSION, clean_prices, drawdown, valuation, financial_totals,price_changes,moving_averages
+from .metrics import PRIMARY_VALUATIONS, VALUATION_GROUPS, valuation_position
 from .lixinger_access import LocalAccess
 from .collection import Collection, subscription
 
@@ -170,7 +171,7 @@ class ResearchService:
         asof=price['effective_date'] if price else providers.cutoff()
         prices=clean_prices(price['rows'],asof) if price else []
         valuations={}
-        for metric in ('pe','pb','ps','dividend_yield'):
+        for metric in PRIMARY_VALUATIONS:
             series=(v or {}).get('series',{}).get(metric,{}).get(method)
             if series:
                 valuations[metric]=valuation(series,str(today()),allow_zero=metric=='dividend_yield')
@@ -269,16 +270,26 @@ class ResearchService:
             value=dict(summary=d['financials'],items=rows[(page-1)*page_size:page*page_size],total=len(rows),page=page,page_size=page_size)
         return dict(value,analysis_id=d['analysis_id'],research_revision=d['research_revision'],series_code=d['series_code'],basis=basis)
 
-    def listing(self, kind=None, page=1, method='overall', *, sort_by=None, sort_direction='desc'):
+    def listing(self, kind=None, page=1, method='overall', *, sort_by=None, sort_direction='desc', valuation_group=None):
         if page<1:raise DomainError('页码无效')
+        if valuation_group not in (None, 'all', *VALUATION_GROUPS):raise DomainError('指数估值分组无效')
         with self.store.lock:
             profiles=[p for p in self.profiles() if not kind or p['kind']==kind]
+            groups = {key: [] for key in VALUATION_GROUPS}
+            for profile in profiles:
+                groups[profile.get('primary_valuation') or 'unclassified'].append(profile)
+            if valuation_group in groups:
+                profiles = groups[valuation_group]
+            elif valuation_group == 'all' and not sort_by:
+                profiles = [profile for group in groups.values() for profile in group]
             calendar_year=today().year
             page_slice=slice((page-1)*20,page*20)
             rows=[]
             for p in (profiles if sort_by else profiles[page_slice]):
                 d=self.detail(p['id'], method=method, summary=True)
-                rows.append({k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')})
+                row = {k:d[k] for k in ('id','profile','latest','asof','valuation','drawdown','changes','status')}
+                row['valuation_position'] = valuation_position(p.get('primary_valuation'), row['valuation'])
+                rows.append(row)
 
             if sort_by:
                 annual_year=str(calendar_year-int(sort_by[-1])) if sort_by.startswith('annual_') else None
@@ -295,7 +306,8 @@ class ResearchService:
                 rows=rows[page_slice]
 
             return dict(items=rows,total=len(profiles),page=page,page_size=20,research_revision=self.revision(),
-                        method=method,calendar_year=calendar_year)
+                        method=method,calendar_year=calendar_year,valuation_group=valuation_group,
+                        valuation_counts={key:len(group) for key,group in groups.items()})
 
     def settings(self):
         with self.store.connection() as db:
@@ -364,6 +376,8 @@ def validate_backup(db):
             if (not isinstance(proof, dict) or proof.get('source') != 'lixinger'
                     or not day(p['launch']) <= day(proof.get('price_date')) <= day(str(proof.get('checked_at'))[:10])):
                 raise DomainError('指数日线核验证据无效')
+        if p.get('primary_valuation') is not None and p['primary_valuation'] not in PRIMARY_VALUATIONS:
+            raise DomainError('指数主估值指标无效')
         public_url(p['method_url'])
     summaries=price_chunks.validate_blocks(db)
     for r in db.execute('SELECT id,index_id,module,sha256,data FROM research_snapshots'):

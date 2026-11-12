@@ -41,6 +41,8 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await page.getByRole('button',{name:'添加采集',exact:true}).click();
   const officialDialog = page.getByRole('dialog',{name:'添加指数采集'});
   await officialDialog.getByLabel('采集指数代码',{exact:true}).fill('H11136');
+  check(await officialDialog.getByRole('button',{name:'预览范围与调用量',exact:true}).isDisabled(), 'new index requires a primary valuation choice');
+  await officialDialog.getByLabel('主估值指标',{exact:true}).selectOption('ps');
   await officialDialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
   const officialPreview = officialDialog.locator('.collection-preview');
   await officialPreview.getByText(/^已核验中证指数价格日线/).waitFor();
@@ -67,6 +69,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   await navigate('指数研究');
   await page.getByRole('button',{name:'添加采集',exact:true}).first().click();
   const dialog = page.getByRole('dialog',{name:'添加指数采集'});
+  await dialog.getByLabel('主估值指标',{exact:true}).selectOption('pe');
   await dialog.getByLabel('采集指数代码',{exact:true}).fill('INVALID');
   await dialog.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
   await dialog.getByText('理杏仁未返回该代码的唯一指数档案').waitFor();
@@ -88,6 +91,7 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
     previewCounts['cn/index/candlestick']===countsBeforeKnown['cn/index/candlestick']+1,
     'new preview checks identity and price with the supplier');
   check((await api('/research/catalog')).subscriptions.length===0,'preview leaves subscriptions unchanged');
+  check(await dialog.getByText('主估值指标 · PE 市盈率',{exact:true}).isVisible(), 'preview shows the reviewed classification');
   const previewHeaders=await dialog.locator('.collection-preview th').allTextContents();
   check(JSON.stringify(previewHeaders)===JSON.stringify(['端点','预计首次调用']),'preview shows estimates without local quota');
   check(!(await dialog.innerText()).includes('完整回填超过当前预算'),'preview has no obsolete budget warning');
@@ -125,18 +129,56 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   const indexListData=await api('/research/indices?method=mcw');
   const year=indexListData.calendar_year;
   check(JSON.stringify(await listing.getByRole('columnheader').allTextContents())===JSON.stringify([
-   '指数','PE TTM','PE 分位','PB','PB 分位',(year-1)+'年',(year-2)+'年',(year-3)+'年','今年','本月','上一个交易日','操作',
+   '指数','主指标估值位置','PE TTM','PB','股息率','PS TTM',(year-1)+'年',(year-2)+'年',(year-3)+'年','今年','本月','上一个交易日','操作',
   ]),'index library opens on the list with the requested periods');
   check(indexListData.items[0].valuation.pe.date===detail.valuation.pe.date&&
    await page.getByRole('heading',{name:'点位走势',exact:true}).count()===0,'index list and detail share the latest valuation snapshot');
   const indexRow = listing.getByRole('row').filter({has:page.getByRole('button',{name:'中证500',exact:true})});
-  const valuationCells = await indexRow.getByRole('cell').allTextContents();
-  for (const [i, metric] of ['pe','pb'].entries()) {
+  const asPercent = rank => (Number(rank)*100).toFixed(2)+'%';
+  for (const metric of ['pe','pb','dividend_yield','ps']) {
    const valuation = detail.valuation[metric];
    const expected = [5,10].map(years=>Math.round(Number(valuation.windows[years].rank)*100)+'%').join(' / ');
+   const cell = indexRow.locator('[data-valuation-metric="'+metric+'"]');
    check(valuation.field.endsWith('.mcw') && [5,10].every(years=>valuation.windows[years].rank!=null) &&
-    valuationCells[2*i+1]===expected, metric+' renders the 5/10-year market-cap weighted ranks');
+    await cell.getByText(expected,{exact:true}).isVisible(), metric+' renders its raw 5/10-year market-cap weighted ranks');
+   if(metric==='dividend_yield')check(await cell.locator('b').innerText()===asPercent(valuation.current),'yield is formatted as a ratio');
   }
+  const groups=page.getByRole('navigation',{name:'主估值指标分组'});
+  check(await listing.locator('[data-valuation-group="pe"]').isVisible()&&
+   await indexRow.locator('.index-valuation-track .valuation-marker').count()===2,
+   'saved primary metric groups the row and shows both markers on one track');
+  for(const years of [5,10]){
+   const band=indexRow.locator('[data-valuation-window="'+years+'"]');
+   check(await band.locator('b').innerText()===asPercent(detail.valuation.pe.windows[years].rank)&&
+    await band.locator('.valuation-grade').isVisible(),'primary PE renders the '+years+'-year rank and grade');
+  }
+  await groups.getByRole('button',{name:'PB 市净率',exact:true}).click();
+  await page.getByRole('heading',{name:'该分类暂无指数',exact:true}).waitFor();
+  await groups.getByRole('button',{name:'PE 市盈率',exact:true}).click();
+  await indexLink.waitFor();
+  const beforeClassification=await api('/settings/lixinger');
+  await indexRow.getByRole('button',{name:'编辑分类',exact:true}).click();
+  const classification=page.getByRole('dialog',{name:'管理指数采集'});
+  check(await classification.getByLabel('主估值指标',{exact:true}).inputValue()==='pe','editor reads the saved primary metric');
+  await classification.getByLabel('主估值指标',{exact:true}).selectOption('dividend_yield');
+  await classification.getByRole('button',{name:'预览范围与调用量',exact:true}).click();
+  await classification.getByText('主估值指标 · DY 股息率',{exact:true}).waitFor();
+  await classification.getByRole('button',{name:'确认保存采集设置',exact:true}).click();
+  await page.getByRole('heading',{name:'该分类暂无指数',exact:true}).waitFor();
+  await groups.getByRole('button',{name:'全部',exact:true}).click();
+  await listing.locator('[data-valuation-group="dividend_yield"]').waitFor();
+  check(await listing.locator('[data-valuation-group="dividend_yield"] b').evaluate(title=>{
+   const bounds=title.getBoundingClientRect(), viewport=title.closest('.table-wrap').getBoundingClientRect();
+   return bounds.left>=viewport.left&&bounds.right<=viewport.right;
+  }), 'group heading stays visible at the start of the wide table');
+  for(const years of [5,10]){
+   const band=indexRow.locator('[data-valuation-window="'+years+'"]');
+   check(await band.locator('b').innerText()===asPercent(1-Number(detail.valuation.dividend_yield.windows[years].rank)),
+    'primary yield reverses the '+years+'-year valuation position');
+  }
+  check(JSON.stringify((await api('/settings/lixinger')).counts)===JSON.stringify(beforeClassification.counts)&&
+   (await api('/data-updates/jobs')).jobs[0].id===job.id,'changing only classification calls no supplier and starts no update');
+  await shot('index-valuation-groups');
   const returnHeaders=[
    [(year-1)+'年','annual_1'],[(year-2)+'年','annual_2'],[(year-3)+'年','annual_3'],
    ['今年','ytd'],['本月','monthly'],['上一个交易日','daily'],

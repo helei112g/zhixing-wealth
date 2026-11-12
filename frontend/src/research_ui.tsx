@@ -4,9 +4,10 @@ import {api,money,Obj,percent,query} from './api';
 import {Button,Empty,ErrorBox,Notice,Panel} from './components';
 import {StudioOverview,CapitalFlows,CollectionDialog,IndexFinancials,moduleLabels} from './research_studio';
 import {activeJob,useSubmission} from './sync_ui';
+import {IndexValuationCell,IndexValuationPosition,primaryValuations,ValuationLegend,valuationGroups,valuationLabel} from './index_valuation';
+import type {ValuationGroup} from './index_valuation';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d);
-const valuationRank=(rank:string|null|undefined)=>rank==null?'—':money(Number(rank)*100,0)+'%';
 const indexScopes=['index_prices','memberships','valuations','financials'];
 const jobStates:Obj={pending:'等待中',running:'更新中',complete:'已完成',partial:'部分失败',error:'更新失败',interrupted:'已中断'};
 const annualOffsets=[1,2,3] as const;
@@ -20,9 +21,10 @@ type ReturnSort={key:ReturnColumn;direction:'asc'|'desc'};
 
 export function ResearchPage({onData}:Obj){
  const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(''),[revision,R]=useState(0),[running,Running]=useState(false),[error,E]=useState('');
- const [adding, setAdding]=useState(false);
+ const [collectionDialog,setCollectionDialog]=useState<{profile?:Obj}|null>(null);
  const [initialSync, setInitialSync]=useState('');
  const [listPage,setListPage]=useState(1);
+ const [group,setGroup]=useState<ValuationGroup>('all');
  const [listSort,setListSort]=useState<ReturnSort|null>(null);
  const [indexJob,setIndexJob]=useState<Obj|null>(null);
  useEffect(()=>{let active=true;api('/research/catalog').then(v=>{if(active){C(v);S(s=>v.subscriptions.some((p:Obj)=>p.id===s)?s:'');E('');}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[revision]);
@@ -41,24 +43,29 @@ export function ResearchPage({onData}:Obj){
     :<p className="muted small">浏览已建档指数，选择名称查看详情。</p>}
    <div className="inline-actions">
     {profile&&<Button onClick={()=>onData(selected)}>数据管理</Button>}
-    <Button primary disabled={!catalog} onClick={()=>setAdding(true)}><Plus size={15}/>添加采集</Button>
+    <Button primary disabled={!catalog} onClick={()=>setCollectionDialog({})}><Plus size={15}/>添加采集</Button>
    </div>
   </div>
   {selected?<IndexDetail key={selected} id={selected} revision={revision}/>
    :<IndexList revision={revision} running={running} page={listPage} onPage={setListPage} onSelect={S} onData={onData}
-    sort={listSort} onSort={sortList} job={indexJob} setJob={setIndexJob}/>}
+    group={group} onGroup={(value:ValuationGroup)=>{setGroup(value);setListPage(1);}}
+    sort={listSort} onSort={sortList} onResetSort={()=>{setListSort(null);setListPage(1);}} job={indexJob} setJob={setIndexJob}
+    onEdit={catalog&&((row:Obj)=>{
+     const saved=catalog.subscriptions.find((profile:Obj)=>profile.id===row.id);
+     if(saved)setCollectionDialog({profile:saved});
+    })}/>}
   {initialSync===selected&&initialSync&&<p role="status" className="muted small">首次全量任务已受理。<button className="text-button" onClick={()=>onData(selected)}>在数据管理查看进度和结果</button></p>}
   {running&&<p role="status" className="muted small"><LoaderCircle size={14} className="spin"/>采集正在执行，已有有效快照可继续查看。</p>}
-  {adding&&catalog&&<CollectionDialog catalog={catalog} onClose={()=>setAdding(false)} onSaved={(value:Obj)=>{
-   setAdding(false);
-   S(value.id);
+  {collectionDialog&&catalog&&<CollectionDialog catalog={catalog} profile={collectionDialog.profile} onClose={()=>setCollectionDialog(null)} onSaved={(value:Obj)=>{
+   setCollectionDialog(null);
+   if(!collectionDialog.profile)S(value.id);
    if(value.job_id){setInitialSync(value.id);Running(true);}
    R(value.research_revision);
   }}/>}
  </div>;
 }
 
-function IndexList({revision,running,page,onPage,onSelect,onData,sort,onSort,job,setJob}:Obj){
+function IndexList({revision,running,page,onPage,onSelect,onData,group,onGroup,sort,onSort,onResetSort,job,setJob,onEdit}:Obj){
  const [listing,setListing]=useState<Obj|null>(null);
  const [error,setError]=useState('');
  const submission=useSubmission(()=>{});
@@ -66,14 +73,14 @@ function IndexList({revision,running,page,onPage,onSelect,onData,sort,onSort,job
 
  useEffect(()=>{
   let active=true;
-  api('/research/indices?'+query({method:'mcw',page,sort_by:sort?.key,sort_direction:sort?.direction})).then(value=>{
+  api('/research/indices?'+query({method:'mcw',page,valuation_group:group,sort_by:sort?.key,sort_direction:sort?.direction})).then(value=>{
    if(!active)return;
    const lastPage=Math.max(1,Math.ceil(value.total/value.page_size));
    if(page>lastPage)onPage(lastPage);
    else{setListing({...value,sort});setError('');}
   }).catch(error=>{if(active)setError(error.message);});
   return()=>{active=false;};
- },[page,revision,sort]);
+ },[page,revision,sort,group]);
 
  useEffect(()=>{
   if(!pending)return;
@@ -97,14 +104,18 @@ function IndexList({revision,running,page,onPage,onSelect,onData,sort,onSort,job
   if(result)setJob({id:result.job_id,target:id,state:'pending'});
  }
 
- const current=listing;
+ const current=listing?.valuation_group===group?listing:null;
  const rows:Obj[]=current?.items||[];
+ const counts:Record<string,number>=listing?.valuation_counts||{};
+ const total=Object.values(counts).reduce((sum,count)=>sum+count,0);
  const annualColumns=annualOffsets.map(offset=>({
   key:`annual_${offset}` as const,
   year:Number(current?.calendar_year)-offset,
  }));
  const appliedSort:ReturnSort|null|undefined=current?.sort;
  const loading=current?.page!==page||appliedSort!==sort;
+ const grouped=group==='all'&&!appliedSort;
+ const columnCount=3+primaryValuations.length+annualColumns.length+recentReturnColumns.length;
  const returnHeader=(key:ReturnColumn,label:string)=>{
   const direction=appliedSort?.key===key?appliedSort.direction:null;
   const Icon=direction==='asc'?ArrowUp:direction==='desc'?ArrowDown:ArrowDownUp;
@@ -120,39 +131,50 @@ function IndexList({revision,running,page,onPage,onSelect,onData,sort,onSort,job
  </td>;
  return <>
   <ErrorBox error={error||submission.error}/>
+  {listing&&total>0&&<nav className="index-valuation-groups" aria-label="主估值指标分组">
+   {[{key:'all',label:'全部'},...valuationGroups].map(option=><button key={option.key} type="button"
+    aria-label={option.label} aria-pressed={group===option.key} onClick={()=>onGroup(option.key)}>
+    <span>{option.label}</span><b>{option.key==='all'?total:counts[option.key]??0}</b>
+   </button>)}
+  </nav>}
   {!current?<p className="muted small" role="status">正在读取本地指数列表…</p>
-   :!rows.length?<Empty title="还没有指数档案">选择要采集的指数和模块。添加后即可在此查看进度和数据。</Empty>
-   :<Panel title="指数列表" right={<small className="muted">{current.total} 个指数</small>}>
-    <p className="muted small">PE TTM、PB 的当前值与分位均采用总市值加权。分位按 5 年 / 10 年显示，历史不足显示「—」。涨跌幅按价格指数收盘点位计算，年度和月度以相应的上期末收盘为基准。</p>
+   :!rows.length?(group==='all'?<Empty title="还没有指数档案">选择要采集的指数和模块。添加后即可在此查看进度和数据。</Empty>:<Empty title="该分类暂无指数"/>)
+   :<Panel title="指数列表" right={<div className="inline-actions"><small className="muted">{current.total} 个指数</small>
+    {sort&&<Button small onClick={onResetSort}>{group==='all'?'恢复分组':'清除收益排序'}</Button>}</div>}>
+    <ValuationLegend/>
+    <p className="muted small">估值采用总市值加权。各指标列显示原始 5 年 / 10 年分位；主指标为股息率时，估值位置用 1 减原始分位。历史不足显示「—」。涨跌幅按价格指数收盘点位计算，年、月以上期末收盘为基准。</p>
     <div className="table-wrap"><table className="index-library-table" aria-label="指数列表" aria-busy={loading&&!error}>
      <thead><tr>
-      <th scope="col">指数</th><th scope="col">PE TTM</th><th scope="col">PE 分位</th><th scope="col">PB</th><th scope="col">PB 分位</th>
+      <th scope="col">指数</th><th scope="col">主指标估值位置</th>
+      {primaryValuations.map(metric=><th key={metric.key} scope="col">{metric.short}</th>)}
       {annualColumns.map(({key,year})=>returnHeader(key,year+'年'))}
       {recentReturnColumns.map(({key,label})=>returnHeader(key,label))}
       <th scope="col">操作</th>
      </tr></thead>
-     <tbody>{rows.map(row=>{
+     <tbody>{rows.map((row,i)=>{
       const rowJob=job?.target===row.id?job:null;
       const paused=row.profile.subscription?.enabled===false;
-      return <tr key={row.id}>
+      const category=row.profile.primary_valuation||'unclassified';
+      const previous=rows[i-1]?.profile.primary_valuation||'unclassified';
+      return <React.Fragment key={row.id}>
+       {grouped&&(i===0||category!==previous)&&<tr className="index-valuation-group-row" data-valuation-group={category}>
+        <td colSpan={columnCount}><b>{valuationLabel(category)}</b><span>{counts[category]} 个指数</span></td></tr>}
+       <tr data-index-id={row.id}>
        <th scope="row"><button className="text-button" onClick={()=>onSelect(row.id)}>{row.profile.name}</button>
         <small>{row.profile.code}{paused?' · 已暂停':''}</small>
         <small>行情 {row.latest?.date||'待采集'}</small>
+        <button className="text-button index-classification-edit" type="button" disabled={!onEdit} onClick={()=>onEdit(row)}>{category==='unclassified'?'设置分类':'编辑分类'}</button>
        </th>
-       {['pe','pb'].map(metric=>{
-        const value=row.valuation[metric];
-        return <React.Fragment key={metric}>
-         <td>{money(value?.current)}{value?.date&&<small>{value.date}</small>}</td>
-         <td>{valuationRank(value?.windows?.[5]?.rank)} / {valuationRank(value?.windows?.[10]?.rank)}</td>
-        </React.Fragment>;
-       })}
+       <td><IndexValuationPosition position={row.valuation_position} valuations={row.valuation}/></td>
+       {primaryValuations.map(metric=><IndexValuationCell key={metric.key} metric={metric.key} value={row.valuation[metric.key]}/>)}
        {annualColumns.map(({year})=>ratioCell(year,row.changes.annual[year]))}
        {recentReturnColumns.map(({key})=>ratioCell(key,row.changes[key]))}
        <td><Button small disabled={running||submission.busy||pending||paused} onClick={()=>update(row.id)}>更新数据</Button>
         {rowJob&&<small role="status">{jobStates[rowJob.state]||rowJob.state}{['error','partial','interrupted'].includes(rowJob.state)&&
          <> · <button className="text-button" onClick={()=>onData(row.id)}>查看结果</button></>}</small>}
        </td>
-      </tr>;
+       </tr>
+      </React.Fragment>;
      })}</tbody>
     </table></div>
     {current.total>current.page_size&&<div className="research-pagination">

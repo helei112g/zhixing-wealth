@@ -24,6 +24,7 @@ from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, Event
 from .api_models import (HoldingLabelRequest, PurchasePlanRequest, PurchasePlanDeletionRequest,
                          PurchasePlanDeletionPreview, PurchasePlanDeletionResult)
 from .api_models import InstrumentDetail, InstrumentNameRequest, DashboardResponse, PortfolioOverviewResponse
+from .research.metrics import PRIMARY_VALUATIONS, VALUATION_GROUPS
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
@@ -188,11 +189,16 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                'preview': 'review the current values and proposed changes; no dedicated preview endpoint'},
                 'research': {'resolve':'/api/research/indices/resolve','indices':'/api/research/indices','detail':'/api/research/indices/{id}',
                              'index_list': {'method':'mcw', 'page_size':20, 'basis':'price',
+                                            'valuation_group':['all', *VALUATION_GROUPS], 'valuation_metrics':list(PRIMARY_VALUATIONS),
+                                            'valuation_position':{'windows':[5,10], 'dividend_yield':'1 - raw rank',
+                                                                  'grades':{'low':'<=0.2','fair_low':'(0.2,0.5]',
+                                                                            'fair_high':'(0.5,0.8)','high':'>=0.8'}},
                                             'changes':['annual','ytd','monthly','daily'],
                                             'sort_by':['annual_1','annual_2','annual_3','ytd','monthly','daily'],
                                             'sort_direction':['asc','desc'], 'sort_missing':'last'},
                              'catalog':'/api/research/catalog','collection_preview':'/api/research/collection/preview',
                              'collection':{'path':'/api/research/collection','method':'PUT','revision':'expected_research_revision',
+                                           'primary_valuation':list(PRIMARY_VALUATIONS),
                                            'validate_new':'lixinger_identity_and_price',
                                            'validate_new_catalog_overseas':'official_identity_and_price',
                                            'verified_price_source_field':'verified_price_source',

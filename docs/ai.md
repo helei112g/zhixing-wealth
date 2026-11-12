@@ -116,11 +116,11 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 ## 指数研究
 
-`research_indices(page=1, method='mcw')` 读取与指数研究首页相同的已建档列表。PE、PB 和价格各自有观测日期，PE/PB 的 5 年和 10 年分位见 `valuation` 中对应指标的 `windows`。涨跌幅带起止取价日期。最近三个完整自然年的结果位于 `changes.annual`，缺少有效基准时返回 null。
+`research_indices(page=1, method='mcw', valuation_group='all')` 读取与指数研究首页相同的分组列表。四个估值指标各自有观测日期，原始 5 年和 10 年分位见 `valuation` 中对应指标的 `windows`。主指标的估值位置与分级见 `valuation_position`，股息率使用反向位置。涨跌幅带起止取价日期。最近三个完整自然年的结果位于 `changes.annual`，缺少有效基准时返回 null。
 
 可传 `sort_by='annual_1'`、`'annual_2'`、`'annual_3'`、`'ytd'`、`'monthly'` 或 `'daily'` 对匹配列表排序。`sort_direction` 支持 `'asc'` 和 `'desc'`，默认降序。排序先于分页，缺失值置后。
 
-读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start)` 展示指数家族、核验日线的来源和日期、范围、预计调用数和原 research_revision。目录内跨市场指数使用官方配对和日线核验，预览列出可采集模块与未纳入项。其他新指数通过理杏仁核验。在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交预览返回的 `modules`、enabled 与 expected_research_revision，再按 id 回读。首次保存返回全量同步的 job_id。按该 ID 回读任务，避免另发重复更新。以后显式使用 `refresh_index`，或从详情的 `collection.resources` 选择对应资源并提交稳定 request_id。
+读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start, primary_valuation=...)` 展示指数家族、拟用主指标、核验日线的来源和日期、范围、预计调用数和原 research_revision。目录内跨市场指数使用官方配对和日线核验，其他新指数通过理杏仁核验。在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交预览返回的 modules、primary_valuation、history_start，并带上 enabled 与 expected_research_revision，再按 id 回读。首次保存返回全量同步的 job_id。按该 ID 回读任务，避免另发重复更新。后续可显式使用 `refresh_index`，或从详情的 `collection.resources` 选择对应资源并提交稳定 request_id。
 
 `research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口；不再提供收益回测或指数重叠。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
 

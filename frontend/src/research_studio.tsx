@@ -4,6 +4,7 @@ import {Bar,BarChart,Cell,CartesianGrid,Line,LineChart,ResponsiveContainer,Toolt
 import {api,money,Obj,percent,query} from './api';
 import {Button,Empty,ErrorBox,Field,Modal,Notice,Panel} from './components';
 import {LinkedHistory,Scenario,ValuationTrend} from './research_charts';
+import {primaryValuations,valuationLabel} from './index_valuation';
 
 const num=(v:any,d=2)=>v==null?'-':money(v,d),pct=(v:any)=>v==null?'-':percent(v);
 export const moduleLabels:Obj={index_info:'指数基本信息',price:'价格日线',volatility:'指数波动率',total_return:'全收益日线',valuations:'日频估值与场内基金/市值',memberships:'当前成分与权重',historical_memberships:'十年历史成分',index_financials:'指数季度/TTM财务',market_activity:'融资与北向持仓',stock_valuations:'公司估值',financials:'公司财务',historical_financials:'历史财务备用汇总'};
@@ -74,25 +75,51 @@ export function TokenSettings(){
  </Panel>;
 }
 
+function collectionSettings(profile:Obj){
+ const {enabled,history_start,modules}=profile.subscription;
+ return JSON.stringify([profile.id,profile.primary_valuation??null,enabled,history_start??null,[...modules].sort()]);
+}
+
 export function CollectionDialog({catalog,profile,onClose,onSaved}:Obj){
  const [code,Code]=useState(profile?.code||''),[modules,Modules]=useState<string[]>(profile?.subscription?.modules||catalog.default_modules),[limited,Limited]=useState(Boolean(profile?.subscription?.history_start)),[start,Start]=useState(profile?.subscription?.history_start||new Date(Date.now()-30*86400000).toISOString().slice(0,10)),[enabled,Enabled]=useState(profile?.subscription?.enabled??true),[preview,P]=useState<Obj|null>(null),[busy,B]=useState(false),[error,E]=useState('');
+ const [primary,Primary]=useState(profile?.primary_valuation||'');
  const generation=useRef(0);
+ const baseline=useRef(profile?collectionSettings(profile):null);
  function invalidate(){generation.current++;P(null);E('');}
- async function inspect(){B(true);E('');const turn=generation.current;try{const v=await api('/research/collection/preview',{code,modules,history_start:limited?start:null});if(turn===generation.current)P(v);}catch(e:any){E(e.message);}finally{B(false);}}
- async function save(){if(!preview)return;B(true);E('');try{const v=await api('/research/collection',{code:preview.profile.code,modules:preview.modules,history_start:preview.history_start,enabled,expected_research_revision:preview.research_revision},'PUT');onSaved(v);}catch(e:any){E(e.message);P(null);}finally{B(false);}}
+ async function inspect(){
+  B(true);E('');P(null);
+  const turn=generation.current;
+  try{
+   const value=await api('/research/collection/preview',{code,modules,history_start:limited?start:null,primary_valuation:primary||null});
+   if(turn!==generation.current)return;
+   if(baseline.current!==null&&collectionSettings(value.profile)!==baseline.current){
+    E('该指数的分类或采集设置已变化，请关闭后重新打开并核对。');
+    return;
+   }
+   P(value);
+  }catch(e:any){if(turn===generation.current)E(e.message);}
+  finally{B(false);}
+ }
+ async function save(){if(!preview)return;B(true);E('');try{const v=await api('/research/collection',{code:preview.profile.code,modules:preview.modules,history_start:preview.history_start,primary_valuation:preview.primary_valuation,enabled,expected_research_revision:preview.research_revision},'PUT');onSaved(v);}catch(e:any){E(e.message);P(null);}finally{B(false);}}
  const official=preview?.profile.exposure==='overseas';
  return <Modal title={profile?'管理指数采集':'添加指数采集'} onClose={onClose} busy={busy}>
   <ErrorBox error={error}/>
   <Field label="指数代码"><input aria-label="采集指数代码" list="index-catalog-options" value={code} disabled={busy||Boolean(profile)} onChange={e=>{Code(e.target.value);invalidate();}}/></Field>
   <datalist id="index-catalog-options">{catalog.items.map((p:Obj)=><option key={p.code} value={p.code}>{p.name}</option>)}</datalist>
+  <Field label="主估值指标"><select aria-label="主估值指标" value={primary} disabled={busy}
+   onChange={e=>{Primary(e.target.value);invalidate();}}>
+   {!profile?.primary_valuation&&<option value="">{profile?'未分类':'请选择主估值指标'}</option>}
+   {primaryValuations.map(metric=><option key={metric.key} value={metric.key}>{metric.label}</option>)}
+  </select></Field>
   <p className="muted small">支持内置目录和目录外的理杏仁指数。已支持的跨市场指数使用编制机构官方来源。新指数先核验身份和价格日线，保存后启动首次全量同步。</p>
   <div className="collection-modules">{catalog.modules.map((m:string)=><label className="check" key={m}><input type="checkbox" aria-label={moduleLabels[m]} checked={modules.includes(m)} disabled={busy||m==='index_info'} onChange={e=>{Modules(e.target.checked?[...modules,m]:modules.filter(x=>x!==m));invalidate();}}/><span><b>{moduleLabels[m]}</b><small>{catalog.module_sources?.[m]}</small></span></label>)}</div>
   <div className="segmented" aria-label="采集历史范围"><button type="button" disabled={busy} aria-pressed={!limited} className={!limited?'active':''} onClick={()=>{Limited(false);invalidate();}}>全历史</button><button type="button" disabled={busy} aria-pressed={limited} className={limited?'active':''} onClick={()=>{Limited(true);invalidate();}}>指定起始日</button></div>
   {limited&&<Field label="采集起始日"><input aria-label="采集起始日" type="date" value={start} disabled={busy} onChange={e=>{Start(e.target.value);invalidate();}}/></Field>}
   {profile&&<label className="check"><input type="checkbox" checked={enabled} disabled={busy} onChange={e=>Enabled(e.target.checked)}/>启用此指数；关闭即暂停并保留历史</label>}
-  <Button disabled={busy||!code||!modules.length} onClick={inspect}>预览范围与调用量</Button>
+  <Button disabled={busy||!code||!modules.length||(!profile&&!primary)} onClick={inspect}>预览范围与调用量</Button>
   {preview&&<div className="collection-preview">
    <h3>{preview.profile.name} · {preview.profile.code}</h3>
+   <p>主估值指标 · {valuationLabel(preview.primary_valuation)}</p>
    <p>价格 {preview.profile.code} / 全收益 {preview.profile.return_code||'同代码的理杏仁全收益序列'}</p>
    {preview.verified_price_date&&<p>已核验{preview.verified_price_source}价格日线（{preview.verified_price_date}）</p>}
    <p>{preview.effective_start} → {preview.end}{!official&&'；历史成分最多十年。'}</p>

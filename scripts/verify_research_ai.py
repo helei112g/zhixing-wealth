@@ -17,10 +17,12 @@ def main():
     cap=c.request('/api/capabilities');check(cap['research']['windows']==[0,3,5,10],'discover complete windows')
     check(cap['research']['local_credentials']['local_request_limit'] is None,'discover no local request cap')
     before=c.connect()['revision'];counts=c.request('/api/settings/lixinger')['counts']
-    p=c.collection_preview('000905',['index_info','price','total_return','valuations','memberships'],'2026-10-01')
+    p=c.collection_preview('000905',['index_info','price','total_return','valuations','memberships'],'2026-10-01',
+                           primary_valuation='dividend_yield')
     check(c.request('/api/settings/lixinger')['counts']==counts,'saved subscription preview uses no supplier calls')
     check(p['endpoint_budget'] and all(row['remaining'] is None for row in p['endpoint_budget']),'call estimates have no local quota')
-    body=dict(code='000905',modules=p['modules'],history_start=p['history_start'],enabled=True,expected_research_revision=p['research_revision'])
+    body=dict(code='000905',modules=p['modules'],history_start=p['history_start'],primary_valuation=p['primary_valuation'],
+              enabled=True,expected_research_revision=p['research_revision'])
     saved=c.write('/api/research/collection',body,'PUT');check(c.request('/api/research/catalog')['subscriptions'][0]['subscription']['enabled'] and saved['job_id'] is None,'subscription read back without a second initial sync')
     try:c.write('/api/research/collection',body,'PUT')
     except RuntimeError as e:check('409' in str(e),'stale subscription rejected')
@@ -32,6 +34,10 @@ def main():
           set(row['changes']['annual'])=={str(listing['calendar_year']-n) for n in (1,2,3)},
           'index list shares the same valuation and provides three completed years')
     index_list=cap['research']['index_list']
+    filtered=c.research_indices(valuation_group='dividend_yield')
+    check(index_list['valuation_position']['windows']==[5,10] and row['profile']['primary_valuation']=='dividend_yield'
+          and row['valuation_position']['metric']=='dividend_yield' and filtered['items']==[row]
+          and filtered['valuation_counts']['dividend_yield']==1, 'AI reads the reviewed category and both valuation positions')
     check(set(index_list['sort_by'])=={'annual_1','annual_2','annual_3','ytd','monthly','daily'} and
           index_list['sort_direction']==['asc','desc'] and index_list['sort_missing']=='last' and
           c.research_indices(sort_by='daily',sort_direction='asc')['items']==listing['items'],

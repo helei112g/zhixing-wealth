@@ -15,7 +15,7 @@ from backend.common import ConflictError,DomainError,json_dumps
 from backend.deployment_guard import capture,verify,require_empty
 from backend.migration import migrate
 from backend.research import providers
-from backend.research.metrics import drawdown,valuation,financial_totals,years_before,price_changes,moving_averages
+from backend.research.metrics import drawdown,valuation,valuation_position,financial_totals,years_before,price_changes,moving_averages
 from backend.research.service import ResearchService,validate_backup
 from backend.research.snapshots import encode,decode,MAX_PAYLOAD
 from backend.service import Service
@@ -62,6 +62,20 @@ class MetricTests(unittest.TestCase):
         for frequency,value in [('snapshot','10'),('daily','-1'),('monthly','0')]:
             s=dict(rows=[dict(date=ASOF,value=value)],frequency=frequency)
             self.assertTrue(all(v['rank'] is None for v in valuation(s,ASOF)['windows'].values()))
+    def test_primary_valuation_position_thresholds_and_reversed_yield(self):
+        for metric in ('pe', 'pb', 'ps'):
+            for rank, grade in (('0', 'low'), ('0.2', 'low'), ('0.2001', 'fair_low'), ('0.5', 'fair_low'),
+                                ('0.5001', 'fair_high'), ('0.7999', 'fair_high'), ('0.8', 'high'), ('1', 'high')):
+                raw = {metric: {'windows': {'5': {'rank': rank}, '10': {'rank': None}}}}
+                self.assertEqual(valuation_position(metric, raw)['windows'], {
+                    '5': {'rank': rank, 'grade': grade}, '10': {'rank': None, 'grade': None},
+                })
+        raw = {'dividend_yield': {'windows': {'5': {'rank': '0.8'}, '10': {'rank': '0.2'}}}}
+        self.assertEqual(valuation_position('dividend_yield', raw)['windows'], {
+            '5': {'rank': '0.2', 'grade': 'low'}, '10': {'rank': '0.8', 'grade': 'high'},
+        })
+        self.assertEqual(raw['dividend_yield']['windows']['5']['rank'], '0.8')
+        self.assertIsNone(valuation_position(None, raw))
     def test_independent_period_company_sets(self):
         members=[dict(code=str(i),weight='20',industry='工业') for i in range(5)]
         rows=[dict(code=str(i),period='2025-12-31',revenue='100') for i in range(4)]+[dict(code=str(i),period='2024-12-31',revenue='500' if i==4 else '100') for i in range(1,5)]
@@ -178,16 +192,18 @@ class ResearchTests(unittest.TestCase):
         iid=self.r.profiles()[0]['id']
         full=self.r.detail(iid)
         summary=next(x for x in self.r.listing()['items'] if x['id']==iid)
-        self.assertEqual({k:v for k,v in summary.items() if k!='changes'},
-                         {k:full[k] for k in summary if k!='changes'})
+        comparable = {k:v for k,v in summary.items() if k not in ('changes','valuation_position')}
+        self.assertEqual(comparable, {k:full[k] for k in comparable})
+        self.assertIsNone(summary['valuation_position'])
         self.assertEqual({k:v for k,v in summary['changes'].items() if k!='annual'},full['changes'])
         self.assertEqual(len(summary['changes']['annual']),3)
 
     def test_return_sort_orders_all_indices_before_paging_with_stable_ties_and_missing_last(self):
         ids=[f'csi:synthetic-{n:02d}' for n in range(23)]
+        categories = {ids[3]: 'ps', ids[21]: 'pe', ids[22]: 'pe'}
         with self.r.transaction(bump=True) as db:
             db.executemany('INSERT INTO research_indices VALUES (?,?)',
-                           [(iid,json_dumps(dict(id=iid,kind='synthetic'))) for iid in ids])
+                           [(iid,json_dumps(dict(id=iid,kind='synthetic',primary_valuation=categories.get(iid)))) for iid in ids])
         dates=['2022-12-30','2023-12-29','2024-12-31','2025-12-31','2026-01-30','2026-02-03','2026-02-04']
         closes={
             1:[100,105,100,120,110,100,101],
@@ -210,6 +226,14 @@ class ResearchTests(unittest.TestCase):
         }
         with patch('backend.research.service.today',return_value=date.fromisoformat(dates[-1])):
             self.assertEqual([row['id'] for row in self.r.listing()['items']],ids[:20])
+            grouped = self.r.listing(valuation_group='all')
+            self.assertEqual([row['id'] for row in grouped['items'][:3]], [ids[21], ids[22], ids[3]])
+            self.assertEqual(grouped['valuation_counts'], dict(pe=2, pb=0, dividend_yield=0, ps=1, unclassified=20))
+            filtered = self.r.listing(valuation_group='pe', sort_by='daily')
+            self.assertEqual([row['id'] for row in filtered['items']], [ids[21], ids[22]])
+            self.assertEqual(filtered['total'], 2)
+            self.assertEqual(filtered['items'][0]['valuation_position']['windows']['5'], {'rank': None, 'grade': None})
+            self.assertEqual(self.r.listing(valuation_group='unclassified')['total'], 20)
             for period, orders in expected.items():
                 for direction, order in zip(('asc','desc'),orders):
                     with self.subTest(period=period,direction=direction):

@@ -5,8 +5,8 @@ description: 在知行财富本机系统读取指数资料和市场水位事实�
 
 # 指数观察台
 
-1. 读取 `/api/capabilities` 和 `/api/research/catalog`，内置目录提供常用代码。用 `research_indices(page, method='mcw')` 查看已建档列表、PE/PB 当前值与 5/10 年分位和价格涨跌幅，核对各观测日和取价端点。需要按涨跌幅排列时，按 capabilities 的 `index_list` 传入 `sort_by` 和 `sort_direction`，排序后分页，缺失值置后。目录内跨市场指数按官方配对在线预览，其他新指数使用理杏仁代码。
-2. 用 `collection_preview(code, modules, history_start)` 展示核验日线的来源和日期、范围、预计调用量、可采集及未纳入模块和原研究 revision。依据用户授权提交 `PUT /api/research/collection`，使用预览返回的 `modules` 和原 expected_research_revision，按 id 回读。409 不自动重试。首次保存同时提交全量同步，回读返回的 job_id。后续编辑既有订阅没有首次同步任务。
+1. 读取 `/api/capabilities` 和 `/api/research/catalog`。用 `research_indices(page, method='mcw', valuation_group='all')` 查看分组列表、PE/PB/股息率/PS 当前值、原始 5/10 年分位和价格涨跌幅。主指标的窗口分级见 `valuation_position`，股息率按 1 减原始分位。核对各观测日和取价端点。按 capabilities 的 `index_list` 传入 `sort_by` 和 `sort_direction` 可在筛选范围内先排序再分页。
+2. 用 `collection_preview(code, modules, history_start, primary_valuation=...)` 展示拟保存分类、核验日线的来源和日期、范围、预计调用量、可采集及未纳入模块和原研究 revision。目录内跨市场指数按官方配对在线预览，其他新指数使用理杏仁代码。依据用户授权提交 `PUT /api/research/collection`，使用预览返回的 modules、primary_valuation 和原 expected_research_revision，按 id 回读。409 不自动重试。首次保存同时提交全量同步，回读返回的 job_id。分类编辑沿用原订阅且不触发同步。
 3. 明确更新时提交原有公共数据任务，稳定request_id，结果未知先查job_id。按来源更新使用指数详情返回的 `collection.resources`，精确重试只提交失败项原resource；暂停保留历史。本机不设调用次数上限，保留累计尝试计数，不自动解除供应商权限或额度阻断。
 4. Token由用户在本机「研究工具 → 数据管理」输入并保存本地文件。禁止读取Token文件或令牌内容，禁止发到聊天、请求文件、日志、云端或仓库。仅可读取配置状态和非敏感计数。
 5. `research_index`/`research_studio`/`research_part`只读本地；日期和分析ID一致，跨版本分页重读。mcw/ew/ewpvo/median不混；旧overall/arithmetic保留旧来源。全历史标实际覆盖，当前篮子回溯不等于历史当期篮子。指数财报不能填逐只公司表。

@@ -148,19 +148,22 @@ class Client:
     def resolve_index(self,code):
         return self.preview({'code':code},'/api/research/indices/resolve')
 
-    def collection_preview(self,code,modules,history_start=None):
+    def collection_preview(self,code,modules,history_start=None,*,primary_valuation=None):
         """Preview collection and its verification source (official for catalog overseas indices)."""
-        return self.preview(dict(code=code,modules=modules,history_start=history_start),'/api/research/collection/preview')
+        return self.preview(dict(code=code, modules=modules, history_start=history_start, primary_valuation=primary_valuation),
+                            '/api/research/collection/preview')
 
     def research_studio(self,index_id,**options):
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/studio?'+urllib.parse.urlencode(options))
 
-    def research_indices(self, page=1, method='mcw', kind=None, *, sort_by=None, sort_direction='desc'):
+    def research_indices(self, page=1, method='mcw', kind=None, *, sort_by=None, sort_direction='desc', valuation_group=None):
         params = dict(page=page, method=method)
         if kind is not None:
             params['kind'] = kind
         if sort_by is not None:
             params.update(sort_by=sort_by, sort_direction=sort_direction)
+        if valuation_group is not None:
+            params['valuation_group'] = valuation_group
         return self.request('/api/research/indices?' + urllib.parse.urlencode(params))
 
     def market_waterlevel(self, method='mcw', asof=None, facts=False):

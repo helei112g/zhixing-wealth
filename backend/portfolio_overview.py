@@ -21,7 +21,7 @@ def return_metric(profit, rate, **details):
     return {'amount': decimal_text(profit), 'rate': decimal_text(rate), **details}
 
 
-def period_summary(snapshots, start, end):
+def period_summary(snapshots, start, end, *, check_daily_close=False):
     if end is None:
         return return_metric(None, None, start_date=None, end_date=None, estimated=False)
 
@@ -36,7 +36,7 @@ def period_summary(snapshots, start, end):
             continue
         cost += history[last]['investment_cost']
         for row in history[first:last + 1]:
-            estimated |= row['estimated']
+            estimated |= row['estimated'] or (check_daily_close and row['pending_close'])
             if row['incomplete'] or row['day_profit'] is None:
                 incomplete = True
             else:
@@ -85,5 +85,5 @@ def portfolio_overview(projections, as_of, revision):
                                    xirr_basis=XIRR_BASIS),
         'year_to_date': period_summary(snapshots, as_of.replace(month=1, day=1), as_of),
         'month_to_date': period_summary(snapshots, as_of.replace(day=1), as_of),
-        'latest_trading_day': period_summary(snapshots, trading_day, trading_day),
+        'latest_trading_day': period_summary(snapshots, trading_day, trading_day, check_daily_close=True),
     }

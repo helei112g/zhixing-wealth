@@ -748,6 +748,10 @@ class Ledger:
                 for h in snap['holdings']
                 if (h['quantity'] > ZERO or h['instrument_id'] in previous_positions) and (quote := h['quote'])
             )
+            pending_close = not snap['estimated'] and not snap['incomplete'] and any(
+                quote['date'] < str(d) and not no_expected_session(h['instrument']['market'], quote['date'], d)
+                for h in snap['holdings'] if h['quantity'] > ZERO and (quote := h['quote'])
+            )
             previous_positions = held_positions
             native = snap.pop('_native_components')
             for key in attributed:
@@ -803,7 +807,7 @@ class Ledger:
                             'investment_cost':self.investment_cost,'day_profit': profit, 'inflow': inflow, 'outflow': outflow, 'return': r,
                             'twr': twr, 'segment': segment, 'components': delta_components,
                             'estimated': snap['estimated'], 'incomplete': snap['incomplete'], 'quality_reasons': snap['warnings'][:],
-                            'has_investment_quote': has_investment_quote})
+                            'has_investment_quote': has_investment_quote, 'pending_close': pending_close})
             was_zero = assets == ZERO
             prev_assets = assets; prev_capital = self.capital; prev_components = snap['components']; d += timedelta(days=1)
         snap['twr'] = history[-1]['twr']

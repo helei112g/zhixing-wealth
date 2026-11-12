@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
+from backend.portfolio_overview import portfolio_overview
 
 
 class PortfolioOverviewTests(TestCase):
@@ -41,7 +42,7 @@ class PortfolioOverviewTests(TestCase):
         j = self.buy(b, '2025-02-04', '510500', '5', '1000')
         self.quotes(i, [('2024-12-02', '100'), ('2024-12-31', '110'), ('2025-01-31', '130'),
                         ('2025-02-06', '140'), ('2025-02-07', '150')])
-        self.quotes(j, [('2025-02-04', '200'), ('2025-02-06', '190')])
+        self.quotes(j, [('2025-02-04', '200'), ('2025-02-06', '190'), ('2025-02-07', '190')])
         self.service.save_portfolio(dict(b, archived=True), b['id'])
 
         before = self.app.state.store.state()
@@ -74,6 +75,49 @@ class PortfolioOverviewTests(TestCase):
         self.assertEqual(updated['total_assets'], '14450')
         for key in ('annualized', 'cumulative', 'year_to_date', 'month_to_date', 'latest_trading_day'):
             self.assertEqual(updated[key], result[key])
+
+    def test_latest_session_flags_missing_close_in_another_portfolio(self):
+        with patch('backend.service.today', return_value=date(2026, 11, 12)):
+            a = self.service.save_portfolio(dict(name='组合甲', planned_amount='5000', start_date='2026-11-10'))
+            b = self.service.save_portfolio(dict(name='组合乙', planned_amount='8000', start_date='2026-11-10'))
+            i = self.buy(a, '2026-11-10', '510300', '10', '1000')
+            j = self.buy(b, '2026-11-10', '510500', '10', '1000')
+            self.quotes(i, [('2026-11-11', '100'), ('2026-11-12', '110')])
+            self.quotes(j, [('2026-11-11', '100')])
+
+            result = self.overview()
+            self.assertEqual(result['latest_trading_day'], {
+                'amount': '100', 'rate': '0.05', 'start_date': '2026-11-12', 'end_date': '2026-11-12', 'estimated': True,
+            })
+            self.quotes(j, [('2026-11-12', '105')])
+            day_return = self.overview()['latest_trading_day']
+            self.assertEqual(day_return['amount'], '150')
+            self.assertFalse(day_return['estimated'])
+
+    def test_many_distinct_investment_cash_flow_dates_in_aggregate(self):
+        start = self.as_of - timedelta(days=1050)
+        projections = []
+        for i in range(3):
+            buys = [{'date': str(start + timedelta(days=offset)), 'amount': Decimal(-100)}
+                    for offset in range(i, 1050, 3)]
+            cost = Decimal(35000)
+            portfolio = {'id': str(i), 'name': f'组合 {i}', 'start_date': buys[0]['date']}
+            snapshot = {
+                'total_assets': cost, 'estimated': False, 'incomplete': False,
+                'history': [{'date': str(self.as_of), 'investment_cost': cost, 'day_profit': Decimal(0),
+                             'estimated': False, 'incomplete': False, 'has_investment_quote': True,
+                             'pending_close': False}],
+            }
+            summary = {
+                'profit': Decimal(0), 'cost': cost, 'return_on_cost': Decimal(0), 'provisional': False,
+                'pending_settlement': False, 'cash_flows': [*buys, {'date': str(self.as_of), 'amount': cost}],
+            }
+            projections.append((portfolio, snapshot, summary))
+
+        result = portfolio_overview(projections, self.as_of, revision=1)
+        self.assertEqual(result['total_assets'], '105000')
+        self.assertEqual(result['annualized']['rate'], '0')
+        self.assertEqual(result['annualized']['amount'], '0')
 
     def test_empty_missing_quote_and_unconfirmed_split_are_distinct(self):
         empty = self.overview()

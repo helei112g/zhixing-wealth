@@ -8,6 +8,7 @@ import math
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import timedelta
+from itertools import pairwise
 from .common import ZERO, ONE, DomainError, day, dec, ratio, today
 from .ledger import Ledger, Market
 
@@ -54,17 +55,30 @@ def xirr(flows):
     if len(rows)<2:return {'rate':None,'status':'同日或缺少跨日现金流，不计算年化'}
     if not any(v<0 for _,v in rows) or not any(v>0 for _,v in rows):return {'rate':None,'status':'须同时有投入和回收现金流'}
     start=day(rows[0][0]);terms=[((day(d)-start).days/365,float(v)) for d,v in rows]
-    scale=max(abs(c) for _,c in terms);terms=[(t,c/scale) for t,c in terms]
+    scale=max(abs(c) for _,c in terms);terms=[(t, c / scale) for t, c in terms if c / scale]
     def value(ts,y):
         es=[-t*y for t,_ in ts];m=max(es)
         vals=[c*math.exp(e-m) for e,(_,c) in zip(es,ts)]
         result=math.fsum(vals);limit=math.fsum(abs(v) for v in vals)*1e-13
         return 0.0 if abs(result)<=limit else result
-    def roots(ts,lo=-30.,hi=30.):
-        if len(ts)<2:return []
-        t0=ts[0][0];ts=[(t-t0,c) for t,c in ts]
-        derivative=[(t,-t*c) for t,c in ts[1:]]
-        points=[lo]+roots(derivative,lo,hi)+[hi];result=[]
+    def roots(ts, lo=-30., hi=30.):
+        # Descartes' rule for ordered real exponents bounds positive roots of
+        # the polynomial in exp(-y), counting multiplicity.
+        changes = [t for (_, previous), (t, current) in pairwise(ts) if (previous < 0) != (current < 0)]
+        if not changes:
+            return []
+        critical = []
+        if len(changes) > 1:
+            # Dividing by the exponential at the first sign change preserves
+            # the roots. Its derivative removes that term and one sign change.
+            pivot = changes[0]
+            ts = [(t - pivot, c) for t, c in ts]
+            derivative = [(t, -t * c) for t, c in ts if t]
+            scale = max(abs(c) for _, c in derivative)
+            if scale:
+                critical = roots([(t, c / scale) for t, c in derivative if c / scale], lo, hi)
+        points = [lo, *critical, hi]
+        result = []
         for a,b in zip(points,points[1:]):
             fa,fb=value(ts,a),value(ts,b)
             if fa==0:result.append(a)
@@ -80,7 +94,10 @@ def xirr(flows):
         for y in sorted(result):
             if not out or abs(y-out[-1])>1e-7:out.append(y)
         return out
-    found=roots(terms)
+    try:
+        found = roots(terms)
+    except RecursionError:
+        return {'rate': None, 'status': '现金流符号交替过多，暂无法核验年化解'}
     if len(found)!=1:return {'rate':None,'status':'现金流存在多个年化解，暂不展示' if found else '无可核验年化解或超出计算范围'}
     return {'rate':Decimal(str(math.expm1(found[0]))),'status':'ACT/365 · 实际日期现金流'}
 

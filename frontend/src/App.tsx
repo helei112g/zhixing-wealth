@@ -34,6 +34,8 @@ const familyIcons:Record<string,React.ReactNode>={overview:<Home size={17}/>,ana
 
 export default function App(){
  const [initialRoute]=useState(()=>new URLSearchParams(location.search));
+ const portfolioLink=['overview','portfolio'].includes(initialRoute.get('page')||'')&&
+  !['family','reminders','dividend'].some(key=>initialRoute.has(key));
  const [page,Page]=useState(()=>{
   if(initialRoute.has('reminders')||initialRoute.get('family')==='reminders')return 'reminders';
   if(initialRoute.has('family'))return 'family';
@@ -61,7 +63,16 @@ export default function App(){
  useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>T(''),4500);return()=>clearTimeout(timer);},[toast]);
  useEffect(()=>{TradeId('');TradeOpen(false);},[pid]);
  useEffect(()=>{if(!boot)return;let alive=true,busy=false;const refresh=async()=>{if(document.hidden||busy)return;busy=true;try{const r=await api('/family/revision');if(alive&&(r.revision!==boot.revision||(r.today&&r.today!==boot.today)))await reload();}catch{}finally{busy=false;}};const timer=setInterval(refresh,2000);window.addEventListener('focus',refresh);return()=>{alive=false;clearInterval(timer);window.removeEventListener('focus',refresh);};},[boot?.revision,boot?.today]);
+ function replacePortfolioLink(next:string,id?:string){
+  if(!portfolioLink)return;
+  const url=new URL(location.href);
+  url.searchParams.set('page',next);
+  if(id)url.searchParams.set('portfolio',id);
+  else url.searchParams.delete('portfolio');
+  history.replaceState(history.state,'',url);
+ }
  function navigate(next:string,target=''){
+  if(next==='overview')replacePortfolioLink(next);
   DataTarget(target);Page(next);TradeOpen(false);E('');
  }
  function selectPortfolio(id:string){
@@ -69,6 +80,7 @@ export default function App(){
  }
  function openPortfolio(id:string){
   selectPortfolio(id);
+  replacePortfolioLink('portfolio',id);
   navigate('portfolio');
  }
  function openDetail(id:string){Inst(id);Page('detail');}

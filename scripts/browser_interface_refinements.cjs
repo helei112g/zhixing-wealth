@@ -20,7 +20,7 @@ const base=process.env.PORTFOLIO_TEST_URL,out=process.env.PORTFOLIO_TEST_OUTPUT;
   }
   const fixture=cp.spawnSync(path.resolve(__dirname,'../.venv/bin/python'),['-c',"import json,os;from pathlib import Path;from backend.environment import claim_environment;from backend.store import Store;from backend.service import Service;d=Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');s=Service(Store(d));p=json.load(__import__('sys').stdin);[s.cache_prices(e['instrument_id'],[{'date':'2026-01-02','price':'10','source':'synthetic'},{'date':p['today'],'price':'12','source':'synthetic'}]) for e in p['events']]"],{cwd:path.resolve(__dirname,'..'),encoding:'utf8',input:JSON.stringify({events,today:boot.today})});assert.equal(fixture.status,0,fixture.stderr);
   await api('/events',{portfolio_id:p.id,instrument_id:events[0].instrument_id,kind:'DIVIDEND',date:'2026-03-01',ex_date:'2026-03-01',pay_date:'2026-03-01',gross_amount:'5',tax:'0',tax_known:true,fx_rate:'1'});
-  await page.goto(new URL('/?page=overview',base).href);await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);
+  await page.goto(new URL('/?page=portfolio&portfolio='+p.id,base).href);
   await page.locator('.summary-cumulative [data-profit-equation]').waitFor();
   check(await page.locator('.summary-facts').getByText(/计划后余量/).count()===0,'overview suppresses redundant plan surplus');
   const caption=page.locator('.page-header .page-caption');await caption.waitFor();

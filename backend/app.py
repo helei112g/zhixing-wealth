@@ -23,7 +23,7 @@ from .api_models import PortfolioRequest, EventRequest, AllocationRequest, NoteR
 from .api_models import PlanCheck, AllocationResult, ReinvestmentEstimate, EventPreview, EventDeletionPreview, DividendReviewRequest, DividendReviewResult
 from .api_models import (HoldingLabelRequest, PurchasePlanRequest, PurchasePlanDeletionRequest,
                          PurchasePlanDeletionPreview, PurchasePlanDeletionResult)
-from .api_models import InstrumentDetail, InstrumentNameRequest, DashboardResponse
+from .api_models import InstrumentDetail, InstrumentNameRequest, DashboardResponse, PortfolioOverviewResponse
 from .research.metrics import PRIMARY_VALUATIONS, VALUATION_GROUPS
 
 from .environment import LABELS, claim_environment, cookie_name, workspace_for
@@ -294,6 +294,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,
                                'filters': ['instrument_id', 'kind', 'market', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},
+                'portfolio_overview': {'endpoint': '/api/portfolios/overview', 'scope': 'all portfolios, including archived',
+                                       'windows': ['year_to_date', 'month_to_date', 'latest_trading_day']},
                 'dashboard': {'endpoint': '/api/portfolios/{portfolio_id}/dashboard', 'default_view': 'full',
                               'views': {'full': 'summary plus historical curves, calendar and periods',
                                         'summary': 'same current financial values without historical projections'}},
@@ -440,6 +442,10 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     @app.get('/api/portfolios/{portfolio_id}/instruments/{instrument_id}/plan-check', response_model=PlanCheck)
     def plan_check(portfolio_id: str, instrument_id: str, target_pct: str):
         return reply(service.check_plan(portfolio_id, instrument_id, target_pct))
+
+    @app.get('/api/portfolios/overview', response_model=PortfolioOverviewResponse, summary='全部组合收益总览',
+             description='合计所有组合（含归档）的账面资产与投资收益。合并实际投资现金流计算 XIRR，期间收益率使用期末累计买入成本。仅使用本机账本和行情缓存。')
+    def portfolio_overview(): return service.portfolio_overview()
 
     @app.get('/api/portfolios/{portfolio_id}/dashboard', response_model=DashboardResponse, response_model_exclude_unset=True)
     def dashboard(portfolio_id: str, start: str | None = None, end: str | None = None,

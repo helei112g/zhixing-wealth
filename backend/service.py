@@ -32,6 +32,7 @@ from .planning import plan_funding, plan_percentage
 from .trade_windows import forward_performance
 from .market_changes import instrument_market_changes
 from .trade_analytics import lot_projection, instrument_projection, annual_summary, dividend_segments, target_path, investment_summary
+from .portfolio_overview import portfolio_overview
 
 
 def uid(): return uuid.uuid4().hex
@@ -498,6 +499,33 @@ class Service:
         from .allocation_planning import allocation_report
         return allocation_report(self, portfolio_id, level, scope, direction, detail, asset_class, status, sort, instrument_id=instrument_id)
 
+    def _investment_projection(self, state, portfolio, as_of, market_data):
+        portfolio_id = portfolio['id']
+        key = ('snapshot', state['revision'], portfolio_id, as_of)
+        snap = self.store.cache.get(key)
+        if snap is None:
+            snap = Ledger(state, portfolio, market=market_data).run(as_of)
+            self.store.cache[key] = snap
+        perf_key=('instrument-performance',state['revision'],portfolio_id,as_of)
+        performance = self.store.cache.get(perf_key)
+        if performance is None:
+            performance = instrument_projection(state,portfolio,snap['holdings'],as_of,market=market_data)
+            self.store.cache[perf_key] = performance
+        return snap, performance
+
+    @cached_query
+    def portfolio_overview(self):
+        state = self.store.state()
+        as_of = today()
+        market_data = Market(state)
+        projections = []
+        for entry in state['portfolios']:
+            portfolio = dict(entry, target_annual_pct=entry.get('target_annual_pct', '5'))
+            snap, performance = self._investment_projection(state, portfolio, str(as_of), market_data)
+            summary = investment_summary(state, portfolio, snap, performance, as_of)
+            projections.append((portfolio, snap, summary))
+        return portfolio_overview(projections, as_of, state['revision'])
+
     @cached_query
     def dashboard(self, portfolio_id, *, start=None, end=None, grain='month', view='full'):
         state = self.store.state(); portfolio = self.portfolio(state, portfolio_id)
@@ -506,17 +534,8 @@ class Service:
         if grain not in ('day', 'week', 'month', 'year'): raise DomainError('收益周期无效')
         if view not in ('full', 'summary'): raise DomainError('总览视图须为full或summary')
         market_data = Market(state)
-        key = ('snapshot', state['revision'], portfolio_id, as_of)
-        snap = self.store.cache.get(key)
-        if snap is None:
-            snap = Ledger(state, portfolio, market=market_data).run(as_of)
-            self.store.cache[key] = snap
+        snap, performance = self._investment_projection(state, portfolio, as_of, market_data)
         result = {k: v for k, v in snap.items() if k != 'history'}
-        perf_key=('instrument-performance',state['revision'],portfolio_id,as_of)
-        performance = self.store.cache.get(perf_key)
-        if performance is None:
-            performance = instrument_projection(state,portfolio,snap['holdings'],as_of,market=market_data)
-            self.store.cache[perf_key] = performance
         from .allocation_planning import holding_status
         saved_labels = label_map(state, portfolio_id)
         result['holdings']=[dict(h, status=holding_status(state, portfolio_id, h), performance=performance.get(h['instrument_id']),

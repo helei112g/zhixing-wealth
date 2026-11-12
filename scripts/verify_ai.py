@@ -75,6 +75,10 @@ def main():
     check(client.request('/api/family/overview')['total_assets']==before,'income does not double-count cash')
     p=client.write('/api/portfolios',dict(name='AI合成组合验收',description='合成组合介绍\n保留策略与背景',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
     q=client.write('/api/portfolios',dict(name='AI合成隔离组合',planned_amount='10000',start_date='2024-01-01',expected_revision=revision()),'POST')
+    overview=client.portfolio_overview()
+    check(cap['portfolio_overview']['endpoint']=='/api/portfolios/overview'
+          and {p['id'], q['id']} <= {row['id'] for row in overview['portfolios']}
+          and overview['revision']==revision(), 'AI discovers and reads the portfolio overview at the current revision')
     event=dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'CN','code':'510300','name':'AI合成标的'},quantity='10',gross_amount='100',fx_rate='1',expected_revision=revision())
     client.preview(event)
     check(revision()==event['expected_revision'],'trade preview is read-only')

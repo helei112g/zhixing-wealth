@@ -67,6 +67,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 | 功能 | 读取／核对 | 保存或客户端入口 |
 |---|---|---|
 | 组合介绍 | bootstrap 的 portfolios[].description | POST/PUT portfolios；省略或null保留，空字符串清空，最多10000字 |
+| 全部组合的资产、累计与区间收益 | GET /api/portfolios/overview | portfolio_overview()；含归档组合，读取实际估值日期及暂估标记 |
 | 持仓收益、净投入与分红拆分 | dashboard?view=summary 的 capital_summary、holdings | investment_summary(P)；金额/null及计算口径由后端给出 |
 | 持有／清仓状态与交易类型 | holdings[].quantity、performance.cost；交易 actual.closed、filters.kind、facets.kinds | 标的无份额且累计成本为0是尚未买入；交易状态指单笔批次，不代替当前标的状态 |
 | 最近交易日／本周行情 | instrument_detail(P,I).market_changes | 只读；输出实际取价日期、序列与缺失原因，行情不等于个人收益 |

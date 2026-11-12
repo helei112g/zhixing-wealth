@@ -77,6 +77,7 @@ macOS 排程计算未来366天候选，每次仅登记最近一条，到期事�
 | 方法与路径 | 参数/结果 |
 |---|---|
 | GET `/api/bootstrap` | portfolios、instruments、allocations、revision、同步状态等；不要持久化 csrf_token |
+| GET `/api/portfolios/overview` | 全部组合收益总览（含归档），无需查询参数。只读取本地数据 |
 | GET `/api/portfolios/{pid}/dashboard` | `start`、`end`、`grain=day/week/month/year`、`view=full/summary`（默认full）；不传日期为当前。summary保留相同capital_summary、holdings、todos等当前财务值，省略curve、curve_quality、calendar、periods、target、benchmark及selected_*历史投影 |
 | GET `/api/portfolios/{pid}/instruments/{iid}` | 当前组合标的详情、market_changes（最近交易日/本周行情涨跌）、曲线、收益、关联交易、分红公告；旧全量 transactions 保留兼容，新列表使用分页接口 |
 | GET `/api/portfolios/{pid}/transactions` | 见分页约定 |
@@ -148,6 +149,15 @@ GET /api/portfolios/{pid}/transactions?page=2&page_size=20&market=CN&asset_class
 | POST `/api/dividends/{notice_id}/confirm` | 在候选 suggested_event 上核对税前总额、税费、到账、再投信息，保留 dividend_basis，附 expected_revision；权益变更时拒绝旧核对 |
 
 组合介绍随组合对象在保存响应、bootstrap.portfolios 和 dashboard.portfolio 返回。创建时省略或null为空；编辑时省略或null保留原介绍，空字符串清空。旧组合可没有该字段，读取不回写。超长或非字符串返回422；过期revision返回409且不保存介绍或其他变更。介绍仅作展示，不参与财务计算。
+
+#### 全部组合收益总览
+
+`GET /api/portfolios/overview` 返回同一账本 `revision` 和估值 `date` 下的 CNY 汇总。顶层 `total_assets` 合计各组合账面资产，`start_date` 取最早记账起始日，`running_days` 从该日起含首日计数。空账本这三项为 null，`portfolios` 为空。组合列表逐项返回 `id,name,archived,start_date,running_days,total_assets,cumulative`。
+
+- `cumulative` 的金额合计单组合 `capital_summary.profit`，比例为该金额除以合计累计买入成本。
+- `annualized.rate` 合并实际日期现金流重算 XIRR，排除未投入现金。 `annualized.amount` 为合计累计买入成本乘 XIRR 的一年折算金额。 `status,xirr_basis` 提供状态与口径。
+- `year_to_date,month_to_date,latest_trading_day` 各返回 `amount,rate,start_date,end_date,estimated`。金额合计区间日收益，比例使用共同期末累计买入成本。最近交易日取期初或期末持仓实际缓存行情的最新观测日，并在同一日期统计全部组合。若计算所用的当日或前一日估值沿用旧行情且无法用已知休市解释，最近交易日收益标为暂估。无观测时日期和收益均为 null。
+- 金额和比例使用 Decimal 字符串，`0.05` 表示 5%。缺少必要估值的合计或区间收益为 null，零买入成本时比例为 null。已知的暂估保留数值并以 `estimated` 标记。完整性不足时返回 `incomplete` 或对应指标 null；读取不触发行情同步。
 
 旧交易/计划接口的 `expected_revision` 兼容为可选；资产、投资笔记接口和 AI 客户端写入强制提供。不能把 CSRF token 当作并发版本。
 

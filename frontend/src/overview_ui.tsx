@@ -1,10 +1,10 @@
 import {money,Obj,percent,signedMoney,tone} from './api';
-import {Button,Panel,XirrBasis} from './components';
+import {Panel,XirrBasis} from './components';
 import {CurrentHoldingProfit,SummaryReturns} from './performance_summary';
 import {ProfitEquation} from './profit_ui';
 import {PlanFundingNotice} from './plan_ui';
 
-export function PortfolioIntroduction({portfolio,onEdit}:Obj){return <details className="portfolio-introduction"><summary>组合介绍 <small>{portfolio.description?'查看背景与策略':'暂未填写'}</small></summary>{portfolio.description?<p>{portfolio.description}</p>:<p className="muted">写下组合的背景、目标与投资策略，便于随时回顾。</p>}<Button small onClick={onEdit}>编辑组合介绍</Button></details>;}
+export function PortfolioIntroduction({portfolio}:Obj){return <details className="portfolio-introduction"><summary>组合介绍 <small>{portfolio.description?'查看背景与策略':'暂未填写'}</small></summary>{portfolio.description?<p>{portfolio.description}</p>:<p className="muted">暂无组合介绍。</p>}</details>;}
 
 export function OverviewSummary({dash,capital=false}:Obj){
  const a=dash.capital_summary||{},annual=dash.annual_performance,cashLabel=a.available_amount===a.account_available_cash?'剩余可投金额':'账面可用现金';

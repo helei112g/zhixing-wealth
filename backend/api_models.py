@@ -470,6 +470,50 @@ class HoldingSnapshot(BaseModel):
     performance: Performance | None
 
 
+class PortfolioReturnMetric(BaseModel):
+    amount: str | None = Field(description='Decimal 字符串，CNY；未知为 null')
+    rate: str | None = Field(description='Decimal 字符串，比例；0.05 表示 5%')
+
+
+class PortfolioAnnualizedReturn(PortfolioReturnMetric):
+    amount: str | None = Field(description='累计买入成本 × 合并现金流 XIRR 的一年折算金额，CNY')
+    status: str
+    xirr_basis: dict[str, Any]
+
+
+class PortfolioPeriodReturn(PortfolioReturnMetric):
+    start_date: str | None
+    end_date: str | None
+    estimated: bool
+
+
+class PortfolioOverviewRow(BaseModel):
+    id: str
+    name: str
+    archived: bool
+    start_date: str
+    running_days: int
+    total_assets: str | None
+    cumulative: PortfolioReturnMetric
+
+
+class PortfolioOverviewResponse(BaseModel):
+    date: str
+    revision: int
+    currency: Literal['CNY']
+    portfolios: list[PortfolioOverviewRow]
+    total_assets: str | None
+    start_date: str | None
+    running_days: int | None
+    estimated: bool
+    incomplete: bool
+    cumulative: PortfolioReturnMetric
+    annualized: PortfolioAnnualizedReturn
+    year_to_date: PortfolioPeriodReturn
+    month_to_date: PortfolioPeriodReturn
+    latest_trading_day: PortfolioPeriodReturn
+
+
 class DashboardResponse(BaseModel):
     model_config = ConfigDict(extra='allow')
     capital_summary: CapitalSummary

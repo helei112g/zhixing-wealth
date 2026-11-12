@@ -88,9 +88,9 @@ def main():
           'AI discovers official verification for catalog overseas indices')
     counts = c.request('/api/settings/lixinger')['counts']
     modules = ['price', 'total_return', 'memberships']
-    p = c.collection_preview('H01136', [*modules, 'valuations', 'financials'], '2026-10-01')
+    p = c.collection_preview('H01136', [*modules, 'financials'], '2026-10-01')
     check(p['profile']['code']=='H11136' and p['verified_price_source']=='中证指数' and p['verified_price_date']
-          and p['modules']==modules and p['unsupported_modules']==['valuations', 'financials']
+          and p['modules']==modules and p['unsupported_modules']==['financials']
           and not p['endpoint_budget'], 'official return-code alias previews only supported modules')
     check(all(row['code']!='H11136' for row in c.request('/api/research/catalog')['subscriptions']),
           'official preview leaves subscriptions unchanged')
@@ -110,8 +110,36 @@ def main():
     tr = c.research_index(saved['id'], basis='total_return')
     check(d['series_code']=='H11136' and tr['series_code']=='H01136' and d['latest'] and tr['latest'] and
           {row['market'] for row in d['companies']}=={'HK', 'US'} and
-          d['module_status']['valuations']['status']=='unsupported', 'official snapshots read back with distinct series and cross-market constituents')
+          d['module_status']['valuations']['status']=='missing', 'official snapshots read back with distinct series and cross-market constituents')
     check(c.request('/api/settings/lixinger')['counts']==counts and c.connect()['revision']==before,
           'official collection leaves Lixinger counts and ledger revision unchanged')
+    official_heads = {s['module']: s['snapshot_id'] for s in d['sources']}
+    p = c.collection_preview('H11136', [*modules, 'valuations', 'historical_memberships'], None)
+    check(p['modules']==[*modules, 'valuations'] and p['unsupported_modules']==['historical_memberships'] and
+          p['endpoint_budget']==[dict(endpoint='cn/index/fundamental', calls=2, remaining=None)] and
+          c.request('/api/settings/lixinger')['counts']==counts, 'existing mixed subscription preview plans only PE/PB and stays offline')
+    body.update(modules=p['modules'], history_start=p['history_start'], expected_research_revision=p['research_revision'])
+    saved = c.write('/api/research/collection', body, 'PUT')
+    check(saved['job_id'] is None and 'valuations' in saved['subscription']['modules'],
+          'editing adds an independently updatable valuation subscription')
+    d = c.research_index(saved['id'])
+    resource = next(r for r in d['collection']['resources'] if r['module']=='valuations')
+    accepted = c.write('/api/data-updates/run',
+                       dict(scopes=['valuations'], resources=[resource], request_id='synthetic-h11136-pe-pb'), 'POST')
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        job = c.request('/api/data-updates/jobs/' + accepted['job_id'])
+        if job['state'] not in ('pending', 'running'):
+            break
+        time.sleep(.05)
+    check(job['state']=='complete' and job['resources']==[resource],
+          'exact valuation update never queues A-share prerequisites or official modules')
+    d = c.research_index(saved['id'])
+    check({k for k,v in d['valuation'].items() if v.get('current') is not None}=={'pe','pb'} and
+          d['valuation']['pe']['source']==d['valuation']['pb']['source']=='理杏仁' and
+          not any(d['scenario_metrics'].values()), 'valuation reads show only Lixinger PE/PB without cross-source scenario')
+    check({s['module']:s['snapshot_id'] for s in d['sources'] if s['module'] in official_heads}==official_heads and
+          c.request('/api/settings/lixinger')['counts']==dict(counts, **{'cn/index/fundamental':counts.get('cn/index/fundamental',0)+2}),
+          'valuation sync preserves official heads and only calls the fundamental endpoint')
 
 if __name__=='__main__':main()

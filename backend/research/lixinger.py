@@ -93,10 +93,15 @@ def verify_index(access, code, known, history_start, end):
     raise DomainError('理杏仁在所选历史范围内没有有效价格日线，无法录入')
 
 
+def valuation_metrics(profile):
+    return {metric: METRICS[metric] for metric in ('pe', 'pb')} if providers.has_lixinger_pe_pb(profile) else METRICS
+
+
 def request_plan(profile, module, start, end, info=None):
     code = profile['code']; base = dict(stockCode=code)
-    if profile.get('exposure') == 'overseas':
-        raise DomainError('该跨市场指数的理杏仁地区、权限与财务币种尚未核验；保留原有快照')
+    pe_pb_only = providers.has_lixinger_pe_pb(profile)
+    if profile.get('exposure') == 'overseas' and not (pe_pb_only and module == 'valuations'):
+        raise DomainError('该跨市场指数的理杏仁模块尚未核验；保留原有快照')
     if module == 'index_info':
         return [dict(endpoint='cn/index', params=dict(stockCodes=[code]), kind='info')]
     if module in ('memberships', 'historical_memberships'):
@@ -123,7 +128,9 @@ def request_plan(profile, module, start, end, info=None):
         elif module == 'volatility':
             calls.append(dict(endpoint='cn/index/volatility', params=dict(args, volatilityDays=VOLATILITY_DAYS), kind='volatility'))
         elif module == 'valuations':
-            fields = [v+'.'+m for v in METRICS.values() for m in METHODS] + list(ACTIVITY)
+            fields = [field + '.' + method for field in valuation_metrics(profile).values() for method in METHODS]
+            if not pe_pb_only:
+                fields.extend(ACTIVITY)
             calls.append(dict(endpoint='cn/index/fundamental', params=dict(stockCodes=[code], startDate=a, endDate=b, metricsList=fields), kind='fundamental'))
         elif module == 'market_activity':
             calls.extend([dict(endpoint='cn/index/margin-trading-and-securities-lending', params=args, kind='margin'),
@@ -216,8 +223,12 @@ def assemble(profile, module, parts, end):
         rows = [r for p in parts for r in p['rows'] if r['date'] >= profile['launch']]
         if not rows: raise DomainError('该范围没有估值观测；保留旧版本')
         series = {metric: {m: dict(field=field+'.'+m, source=SOURCE, frequency='daily',
-                    rows=[dict(date=r['date'], value=r[field+'.'+m]) for r in rows if r.get(field+'.'+m) is not None]) for m in METHODS} for metric, field in METRICS.items()}
+                    rows=[dict(date=r['date'], value=r[field+'.'+m]) for r in rows if r.get(field+'.'+m) is not None]) for m in METHODS} for metric, field in valuation_metrics(profile).items()}
         if not all(series[m]['mcw']['rows'] for m in ('pe','pb')):raise DomainError('PE/PB主方法未完整取得，保留旧版本')
+        if providers.has_lixinger_pe_pb(profile):
+            effective_date = min(series[metric]['mcw']['rows'][-1]['date'] for metric in ('pe', 'pb'))
+            return dict(common, effective_date=effective_date, series=series, mapping_verified=False,
+                        methodology_note='PE TTM/PB 采用理杏仁历史估值。估值与中证官方点位的分母映射尚未核验。')
         return dict(common, effective_date=max(r['date'] for r in rows), series=series,
                     activity_rows=[{k: r.get(k) for k in ('date', *ACTIVITY)} for r in rows],
                     mapping_verified=False, methodology_note='供应商各估值方法独立保存；mcw与条件点位分母关系待认证核验，试算暂不开放')

@@ -1,3 +1,4 @@
+const {openPortfolio}=require('./browser_portfolio_nav.cjs');
 /* Status, price-change and allocation UI: fresh synthetic test ledger only. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
@@ -28,7 +29,7 @@ const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL,out=
   const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',
    "import json,sys;from pathlib import Path;from datetime import date,timedelta;from backend.service import Service;from backend.store import Store;from backend.environment import claim_environment;p=json.load(sys.stdin);d=Path(p['directory']).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');s=Service(Store(d));at=date.fromisoformat(p['today']);monday=at-timedelta(days=at.weekday());latest=at-timedelta(days=max(0,at.weekday()-4));previous=latest-timedelta(days=3 if latest.weekday()==0 else 1);anchor=monday-timedelta(days=3);[(s.cache_prices(i,[{'date':str(anchor),'price':'10','source':'合成净值'},{'date':str(previous),'price':'10','source':'合成净值'},{'date':str(latest),'price':v,'source':'合成净值'}])) for i,v in p['instruments']]"],
    {cwd:root,encoding:'utf8',input:JSON.stringify({directory:h.data_directory,today:boot.today,instruments:[[a.instrument_id,'12'],[b.instrument_id,'9'],[closed.instrument_id,'11']]})});assert.equal(fixture.status,0,fixture.stderr);
-  await page.goto(base);await nav('组合收益');await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);
+  await page.goto(base);await nav('组合收益');await openPortfolio(page,p.id);
   for(const width of [1600,390,320]){
    await page.setViewportSize({width,height:1000});await nav('持仓标的');await row('合成稳健基金').waitFor();
    check(await row('合成稳健基金').locator('.holding-identity .holding-status').innerText()==='持有中','holding badge in identity '+width);

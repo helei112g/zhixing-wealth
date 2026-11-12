@@ -1,4 +1,5 @@
 /* Introductions and dense lists. All writes require an isolated synthetic test ledger. */
+const {openPortfolio}=require('./browser_portfolio_nav.cjs');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
 const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL;
@@ -13,6 +14,9 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
  const shot=async name=>page.screenshot({path:path.join(out,name+'.png'),fullPage:true});
  const ready=()=>page.locator('.transaction-viewport[aria-busy="false"]').waitFor();
  const dialog=()=>page.getByRole('dialog');
+ const row=id=>page.locator('[data-portfolio-id="'+id+'"]');
+ const overview=()=>page.getByRole('region',{name:'全部组合汇总'});
+ const edit=async id=>{await nav('组合收益');await row(id).getByRole('button',{name:/^编辑组合/}).click();};
  try{
   const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
   const boot=await api('/bootstrap');csrf=boot.csrf_token;const start=boot.today.slice(0,4)+'-01-01',month=boot.today.slice(0,7);
@@ -22,40 +26,79 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
   await dialog().getByLabel(/^组合介绍/).fill(description);
   await dialog().getByLabel(/^总计划投资金额/).fill('100000');await dialog().getByLabel('记账起始日',{exact:true}).fill(start);
   await dialog().getByLabel(/^比较基准/).selectOption('');await dialog().getByRole('button',{name:'创建组合',exact:true}).click();
-  await dialog().waitFor({state:'hidden'});await page.locator('.portfolio-introduction').waitFor();
+  await dialog().waitFor({state:'hidden'});
   let p=(await api('/bootstrap')).portfolios.find(p=>p.name==='合成组合介绍与明细验收');
   check(p.description===description,'new portfolio persists the optional multiline introduction');
+  await openPortfolio(page,p.id);
+  check(await page.getByRole('button',{name:/^(创建组合|编辑组合|更新数据|设置比较基准)/}).count()===0,
+   'portfolio details show the existing return content and no portfolio management entries');
+  check(await page.getByRole('combobox',{name:'投资组合',exact:true}).count()===0,
+   'portfolio details omit the portfolio switcher');
   await page.locator('.portfolio-introduction summary').click();
   check(await page.locator('.portfolio-introduction p').textContent()===description&&await page.locator('.portfolio-introduction p b').count()===0,'overview preserves line breaks and renders markup as plain text');
-  await page.getByRole('button',{name:'编辑组合介绍',exact:true}).click();
+  await edit(p.id);
   check(await dialog().getByLabel(/^组合介绍/).inputValue()===description,'edit form reloads the saved introduction');
   const updated='背景：用于长期目标的合成验收组合。\n策略：分批投入，按计划复核，保留流动资金。';
   await dialog().getByLabel(/^组合介绍/).fill(updated);await dialog().getByRole('button',{name:'保存组合',exact:true}).click();await dialog().waitFor({state:'hidden'});
-  await page.reload();await page.locator('.portfolio-introduction summary').click();
+  await page.reload();await openPortfolio(page,p.id);await page.locator('.portfolio-introduction summary').click();
   check(await page.locator('.portfolio-introduction p').textContent()===updated,'edited introduction survives reload');
   await shot('portfolio-introduction-desktop');
-  await page.getByRole('button',{name:'编辑组合介绍',exact:true}).click();await dialog().getByLabel(/^组合介绍/).fill('尚未提交的草稿');
+  await edit(p.id);await dialog().getByLabel(/^组合介绍/).fill('尚未提交的草稿');
   let current=await api('/bootstrap');p=current.portfolios.find(v=>v.id===p.id);
   await api('/portfolios/'+p.id,{...p,description:'另一次已保存的介绍',expected_revision:current.revision},'PUT');
   await dialog().getByRole('button',{name:'保存组合',exact:true}).click();await dialog().getByRole('alert').waitFor();
   check(await dialog().getByLabel(/^组合介绍/).inputValue()==='尚未提交的草稿'&&(await api('/bootstrap')).portfolios.find(v=>v.id===p.id).description==='另一次已保存的介绍','stale edit preserves the draft and cannot overwrite a concurrent change');
-  await dialog().getByRole('button',{name:'取消',exact:true}).click();await page.reload();await page.locator('.portfolio-introduction summary').click();
-  await page.getByRole('button',{name:'编辑组合介绍',exact:true}).click();await dialog().getByLabel(/^组合介绍/).fill('');await dialog().getByRole('button',{name:'保存组合',exact:true}).click();await dialog().waitFor({state:'hidden'});
-  await page.locator('.portfolio-introduction summary').getByText('暂未填写',{exact:true}).waitFor();
+  await dialog().getByRole('button',{name:'取消',exact:true}).click();await page.reload();
+  await edit(p.id);await dialog().getByLabel(/^组合介绍/).fill('');await dialog().getByRole('button',{name:'保存组合',exact:true}).click();await dialog().waitFor({state:'hidden'});
+  await openPortfolio(page,p.id);await page.locator('.portfolio-introduction summary').getByText('暂未填写',{exact:true}).waitFor();
   check((await api('/bootstrap')).portfolios.find(v=>v.id===p.id).description==='','introduction can be explicitly cleared');
   current=await api('/bootstrap');p=current.portfolios.find(v=>v.id===p.id);await api('/portfolios/'+p.id,{...p,description:updated,expected_revision:current.revision},'PUT');
-  await page.reload();await page.locator('.portfolio-introduction').waitFor();
+  await page.reload();await nav('组合收益');
   await page.locator('.page-header').getByRole('button',{name:'创建组合',exact:true}).click();
   await dialog().getByLabel('组合名称',{exact:true}).fill('合成空介绍组合');await dialog().getByLabel(/^总计划投资金额/).fill('1000');await dialog().getByLabel('记账起始日',{exact:true}).fill(start);await dialog().getByLabel(/^比较基准/).selectOption('');await dialog().getByRole('button',{name:'创建组合',exact:true}).click();await dialog().waitFor({state:'hidden'});
   const other=(await api('/bootstrap')).portfolios.find(v=>v.name==='合成空介绍组合');
-  check(other&&await page.getByLabel('投资组合',{exact:true}).inputValue()===other.id,'header creation saves and selects the new portfolio');
+  await row(other.id).waitFor();check(await page.locator('[data-portfolio-id]').count()===2,'header creation adds a row and keeps the portfolio list visible');
   const otherBuy=await api('/events',{portfolio_id:other.id,kind:'BUY',date:start,instrument:{market:'CN',code:'512880',name:'合成切换标的'},quantity:'1',gross_amount:'10',fx_rate:'1'});
   const events=[];for(let n=0;n<26;n++)events.push(await api('/events',{portfolio_id:p.id,kind:'BUY',date:start,instrument:{market:'CN',code:'510300',name:'合成宽基标的'},quantity:'1',gross_amount:String(10+n),fx_rate:'1'}));
   const dividend=await api('/events',{portfolio_id:p.id,kind:'DIVIDEND',date:start,pay_date:start,instrument_id:events[0].instrument_id,net_amount:'10',fx_rate:'1',tax_known:true,ex_date_known:true});
   const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');Service(Store(d)).cache_prices(sys.argv[2],[{'date':sys.argv[3],'price':'40','source':'synthetic'},{'date':sys.argv[4],'price':'40','source':'synthetic'}])",process.env.PORTFOLIO_TEST_DATA_DIR,events[0].instrument_id,start,boot.today],{cwd:root,encoding:'utf8'});assert.equal(fixture.status,0,fixture.stderr);
-  await page.reload();await page.getByLabel('投资组合',{exact:true}).selectOption(other.id);await page.locator('.portfolio-introduction summary').getByText('暂未填写',{exact:true}).waitFor();
+  await page.reload();
+  await overview().waitFor();
+  const aggregate=await api('/portfolios/overview');
+  check(await overview().locator('.portfolio-overview-total strong').innerText()===Number(aggregate.total_assets).toLocaleString('zh-CN',{minimumFractionDigits:2}),
+   'homepage displays the server total assets');
+  check(await overview().locator('.portfolio-return-metric').count()===5&&await overview().getByText(/运行|始于/).count()===0,
+   'homepage summary displays the five return pairs without aggregate running dates');
+  for(const portfolio of aggregate.portfolios){
+   check(await row(portfolio.id).getByText('运行 '+portfolio.running_days+' 天 · 始于 '+portfolio.start_date,{exact:true}).isVisible(),
+    'the individual portfolio row displays its own running time');
+  }
+  check((await overview().locator('.portfolio-return-metric').last().innerText()).includes(aggregate.latest_trading_day.end_date),
+   'latest trading day displays its actual observation date');
+  const syncs=[];
+  await page.route('**/api/sync',async route=>{syncs.push(route.request().postDataJSON());await route.fulfill({json:{queued:false}});});
+  await page.route('**/api/jobs',route=>route.fulfill({json:{jobs:[],syncing:false}}));
+  const update=page.getByRole('button',{name:'更新数据',exact:true});
+  await update.click();await page.locator('.header-actions button:disabled').filter({hasText:'更新数据'}).waitFor();
+  await page.locator('.header-actions button:disabled').filter({hasText:'更新数据'}).waitFor({state:'hidden'});
+  await page.locator('.toast').waitFor({state:'hidden'});
+  check(syncs.length===1&&syncs[0].trigger==='manual_update'&&!syncs[0].instrument_id,'homepage sync covers all portfolios through the existing update entry');
+  for(const width of [1600,1024,390,320]){
+   await page.setViewportSize({width,height:1000});
+   if(width<=760)await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().right<=0);
+   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'portfolio homepage fits '+width);
+   check(await overview().evaluate((element,narrow)=>{
+    const total=element.querySelector('.portfolio-overview-total').getBoundingClientRect();
+    const returns=element.querySelector('.portfolio-overview-returns').getBoundingClientRect();
+    return narrow?returns.top>=total.bottom-1:returns.left>=total.right-1;
+   },width<=1080),'asset and return sections align correctly at '+width);
+   await shot('portfolio-home-'+width);
+  }
+  await page.setViewportSize({width:1600,height:1000});
+  await openPortfolio(page,other.id);await page.locator('.portfolio-introduction summary').getByText('暂未填写',{exact:true}).waitFor();
   check(!await page.locator('.portfolio-introduction').getAttribute('open'),'changing portfolio resets the introduction fold');
-  await page.getByLabel('投资组合',{exact:true}).selectOption(p.id);await page.locator('.portfolio-introduction summary').getByText('查看背景与策略',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'返回组合收益',exact:true}).click();await openPortfolio(page,p.id);
+  await page.locator('.portfolio-introduction summary').getByText('查看背景与策略',{exact:true}).waitFor();
   for(const width of [1600,390,320]){
    await page.setViewportSize({width,height:1000});await nav('持仓标的');await page.locator('.holding-row').waitFor();
    const controls=page.locator('.page-header .portfolio-header-controls');
@@ -89,7 +132,9 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
    check(await page.locator('[data-trade-event] .transaction-return').evaluateAll(cells=>cells.every(cell=>{const main=cell.querySelector('.transaction-return-main'),rate=main.querySelector('b').getBoundingClientRect(),amount=main.querySelector('.transaction-return-amount').getBoundingClientRect(),secondary=cell.querySelector('.transaction-return-secondary').getBoundingClientRect();return amount.left>=rate.right&&Math.abs(rate.top-amount.top)<5&&secondary.top>=Math.max(rate.bottom,amount.bottom);})), 'cumulative rate and amount share one line above annualization at '+width);
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'instrument confines horizontal overflow to the table at '+width);await shot('instrument-records-'+width);
    await page.getByRole('navigation',{name:'流水分页'}).getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('[data-instrument-event]').length===7);check(true,'instrument pagination remains usable at '+width);
-   await nav('组合收益');await page.locator('.overview-summary').waitFor();await page.locator('.portfolio-introduction summary').click();
+   await nav('组合收益');await openPortfolio(page,p.id);await page.locator('.overview-summary').waitFor();await page.locator('.portfolio-introduction summary').click();
+   check(await page.getByRole('combobox',{name:'投资组合',exact:true}).count()===0&&await page.getByRole('button',{name:'返回组合收益',exact:true}).isVisible(),
+    'portfolio detail uses the returns homepage for switching at '+width);
    check(await page.locator('.portfolio-introduction p').textContent()===updated&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'overview keeps statistics and readable introduction at '+width);
    await shot('introduction-'+width);
   }

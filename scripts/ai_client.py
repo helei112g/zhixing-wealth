@@ -222,6 +222,10 @@ class Client:
         self.connect()
         return self.request('/api/research/indices/'+urllib.parse.quote(index_id,safe='')+'/scenarios',payload)
 
+    def portfolio_overview(self):
+        """Read the same cross-portfolio CNY totals and returns as the UI."""
+        return self.request('/api/portfolios/overview')
+
     def investment_summary(self, portfolio_id):
         """Read canonical cost/net input and cash/reinvested dividend components; never recalculate."""
         return self.request('/api/portfolios/' + urllib.parse.quote(portfolio_id, safe='')

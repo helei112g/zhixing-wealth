@@ -735,11 +735,24 @@ class Ledger:
         prev_native = {k: {c: ZERO for c in CURRENCIES} for k in self.native_components}
         attributed = {k: ZERO for k in self.native_components}; attribution_valid = True
         chain = ONE; segment = 1; chain_valid = True; latest_complete = None; seen_active = False; was_zero = False
+        previous_positions = set()
         d = start
         while d <= end:
             while cursor < len(self.ops) and self.ops[cursor][0] <= d.isoformat():
                 self.apply(self.ops[cursor]); cursor += 1
             snap = self.snapshot(d)
+            held_positions = {h['instrument_id'] for h in snap['holdings'] if h['quantity'] > ZERO}
+            # A position sold today still had exposure entering this session.
+            has_investment_quote = any(
+                quote['date'] == str(d) and not quote.get('fallback')
+                for h in snap['holdings']
+                if (h['quantity'] > ZERO or h['instrument_id'] in previous_positions) and (quote := h['quote'])
+            )
+            pending_close = not snap['estimated'] and not snap['incomplete'] and any(
+                quote['date'] < str(d) and not no_expected_session(h['instrument']['market'], quote['date'], d)
+                for h in snap['holdings'] if h['quantity'] > ZERO and (quote := h['quote'])
+            )
+            previous_positions = held_positions
             native = snap.pop('_native_components')
             for key in attributed:
                 for c in CURRENCIES:
@@ -793,7 +806,8 @@ class Ledger:
             history.append({'date': str(d), 'assets': assets, 'capital': self.capital, 'pnl': snap['pnl'],
                             'investment_cost':self.investment_cost,'day_profit': profit, 'inflow': inflow, 'outflow': outflow, 'return': r,
                             'twr': twr, 'segment': segment, 'components': delta_components,
-                            'estimated': snap['estimated'], 'incomplete': snap['incomplete'], 'quality_reasons': snap['warnings'][:]})
+                            'estimated': snap['estimated'], 'incomplete': snap['incomplete'], 'quality_reasons': snap['warnings'][:],
+                            'has_investment_quote': has_investment_quote, 'pending_close': pending_close})
             was_zero = assets == ZERO
             prev_assets = assets; prev_capital = self.capital; prev_components = snap['components']; d += timedelta(days=1)
         snap['twr'] = history[-1]['twr']

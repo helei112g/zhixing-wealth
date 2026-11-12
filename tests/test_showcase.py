@@ -13,7 +13,8 @@ class ShowcaseIsolationTests(unittest.TestCase):
             data=Path(temp)/'synthetic'
             ids=seed(data)
             service=Service(Store(data))
-            self.assertEqual(len(service.store.state()['portfolios']),1)
+            self.assertTrue((data/'.synthetic-fixture').is_file())
+            self.assertEqual(len(service.store.state()['portfolios']),3)
             self.assertEqual(len(service.store.state()['instruments']),4)
             self.assertEqual(service.notes.list(ids['portfolio_id'],ids['instrument_id'])['total'],2)
             before=capture(data)

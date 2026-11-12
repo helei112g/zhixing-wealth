@@ -1,4 +1,4 @@
 interface:
   display_name: "知行财富 · 研究工具"
-  short_description: "核对指数资料、市场水位、估值回撤与公共数据更新"
+  short_description: "按估值分组查指数，核对市场水位与研究数据更新"
   default_prompt: "通过知行财富本机 API 核对指数身份、数据日期与来源；写入前核对授权和原版本，提交后回读。"

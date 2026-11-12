@@ -17,17 +17,84 @@ from backend.service import Service
 from backend.store import Store
 
 
+def seed_research(service):
+    from backend.common import json_dumps, now
+    from backend.research import providers
+    from backend.research.service import ResearchService
+    from backend.research.snapshots import encode
+    from tests.research_fixtures import (
+        ASOF, finance_payload, historical_memberships, member_payload, price_payload, stock_payload,
+    )
+    from tests.waterlevel_fixtures import payload as market_payload
+
+    research = ResearchService(service.store, service)
+    for n, (code, primary) in enumerate([
+        ('000905', 'pe'), ('000300', 'pb'), ('000922', 'dividend_yield'), ('000852', 'ps'),
+    ]):
+        profile = providers.identity(code)
+        iid = f"{profile['provider']}:{profile['code']}"
+        profile.update(id=iid, name=profile['name'] + ' · 示例', primary_valuation=primary)
+        with research.transaction(bump=True) as db:
+            db.execute('INSERT INTO research_indices VALUES (?,?)', (iid, json_dumps(profile)))
+
+        for basis, multiplier in [('price', 1), ('total_return', 1.2)]:
+            prices = price_payload(profile, basis)
+            prices['rows'] = [row for row in prices['rows'] if row['date'] >= profile['launch']]
+            for offset, row in enumerate(prices['rows']):
+                cycle = 290 * math.sin(offset / 190 + n) + 100 * math.sin(offset / 47)
+                row['close'] = f'{multiplier * (2400 + offset * (0.48 - n * 0.05) + cycle):.2f}'
+            research.publish(iid, basis, prices)
+
+        dates = [row['date'] for row in prices['rows']]
+        series = {}
+        for metric, field, baseline in [('pe', 'pe_ttm', 17), ('pb', 'pb', 1.7),
+                                        ('dividend_yield', 'dyr', .026), ('ps', 'ps_ttm', 1.1)]:
+            values = [
+                dict(date=stamp, value=f'{baseline * (1 + .20 * math.sin(i / 195 + n) + .07 * math.cos(i / 53)):.6f}')
+                for i, stamp in enumerate(dates)
+            ]
+            series[metric] = {'mcw': dict(rows=values, source='synthetic-showcase', field=field + '.mcw', frequency='daily')}
+        research.publish(iid, 'valuations', dict(series=series, effective_date=dates[-1], evidence=[]))
+
+        if code == '000905':
+            members = member_payload(profile)
+            for module, value in [('memberships', members), ('stock_valuations', stock_payload(members['rows'])),
+                                  ('financials', finance_payload(members['rows'])),
+                                  ('historical_memberships', historical_memberships(profile))]:
+                research.publish(iid, module, value)
+
+    for group in ('full_market', 'composites', 'margin_balances', 'market_turnover'):
+        snapshot = market_payload(group)
+        if group == 'margin_balances':
+            for i, (sh, sz, total) in enumerate(zip(snapshot['series']['sh_margin_balance'],
+                                                   snapshot['series']['sz_margin_balance'],
+                                                   snapshot['series']['margin_balance'])):
+                sh['value'] = str(round(1.05e12 + i * 1.6e8 + 1.2e11 * math.sin(i / 93)))
+                sz['value'] = str(round(.84e12 + i * 1.1e8 + 1e11 * math.sin(i / 93 + .2)))
+                total['value'] = str(int(sh['value']) + int(sz['value']))
+        elif group == 'market_turnover':
+            for i, row in enumerate(snapshot['series']['a_share_turnover']):
+                row['value'] = str(round(1.22e12 + 3.5e11 * math.sin(i / 35) + 2e11 * math.sin(i * 2.43)))
+        sha, raw = encode(snapshot)
+        sid = f'showcase-{group}'
+        with research.transaction(bump=True) as db:
+            db.execute('INSERT INTO market_snapshots VALUES (?,?,?,?,?)', (sid, group, now(), sha, raw))
+            db.execute('INSERT INTO market_heads VALUES (?,?)', (group, sid))
+
+
 def seed(directory):
     """Only accept a nonexistent directory; never open an existing ledger."""
     directory=Path(directory)
     directory.mkdir()  # fails even for an existing empty directory or a symlink
     claim_environment(directory,'dev')
+    (directory / '.synthetic-fixture').touch(exist_ok=False)
     service=Service(Store(directory));family=FamilyService(service.store)
     end=date.today();start=date(end.year-1,1,1)
     months=(end.year-start.year)*12+end.month
     def command(operation,payload):
         return family.command(operation,payload,service.store.state()['revision'])['result']
-    p=service.save_portfolio({'name':'长期投资 · 示例','planned_amount':'600000','start_date':str(start),'target_annual_pct':'6'})
+    p=service.save_portfolio({'name':'长期投资 · 示例','planned_amount':'600000','start_date':str(start),'target_annual_pct':'6',
+        'description':'合成示例。记录多市场持仓，按计划核对投入进度，并定期回顾配置。'})
     instruments=[]
     for n,(market,code,name,quantity,price,fx,category,region,target) in enumerate([
         ('CN','510300','宽基 ETF · 示例',20000,4.5,1,'权益','A股','30'),
@@ -49,6 +116,16 @@ def seed(directory):
     service.cache_fx([{'currency':'USD','date':str(start+timedelta(days=i)),'rate':'7.1','source':'synthetic-showcase'} for i in range((end-start).days+1)])
     service.save_event({'portfolio_id':p['id'],'instrument_id':instruments[1],'kind':'DIVIDEND',
         'date':str(start+timedelta(days=min(100,(end-start).days))),'gross_amount':'1800','tax':'0','tax_known':True,'fx_rate':'1','reason':'合成展示分红'})
+    for name, instrument, quantity, amount, rate in [
+        ('稳健配置 · 示例', instruments[3], '32000', '41600', '1'),
+        ('海外观察 · 示例', instruments[2], '20', '5000', '7.1'),
+    ]:
+        portfolio = service.save_portfolio({'name': name, 'planned_amount': '100000', 'start_date': str(start)})
+        service.attach_instrument(portfolio['id'], instrument, {})
+        service.save_event({
+            'portfolio_id': portfolio['id'], 'instrument_id': instrument, 'kind': 'BUY', 'date': str(start),
+            'quantity': quantity, 'gross_amount': amount, 'fx_rate': rate, 'reason': '合成展示交易',
+        })
     assets=[('cash','日常账户 · 示例',85000,3500),('cash','应急储备 · 示例',60000,2000),
             ('fixed','自住住宅 · 示例',1800000,0),('investment','定期理财 · 示例',160000,2500),
             ('debt','住房贷款 · 示例',480000,-4200),('debt','汽车分期 · 示例',90000,-1500),('insurance','保障保单 · 示例',12000,120)]
@@ -67,17 +144,7 @@ def seed(directory):
     command('expense_plan',dict(name='生活预算 · 示例',amount='15000',effective_month=f'{end.year}-01'))
     for month in range(1,end.month+1):
         command('expense_month',dict(month=f'{end.year}-{month:02d}',actual_amount=str(13000+month*120),confirmed=True,note='合成整月核对，不是真实支出'))
-    from backend.common import json_dumps
-    from backend.research.service import ResearchService
-    from backend.research import providers
-    from tests.research_fixtures import price_payload,valuation_payload,member_payload,stock_payload,finance_payload,historical_memberships
-    research=ResearchService(service.store,service)
-    profile=dict(providers.identity('000905'),id='csi:000905',name='中证500 · 合成示例')
-    with service.store.connection() as db:
-        db.execute('INSERT INTO research_indices VALUES (?,?)',(profile['id'],json_dumps(profile)));db.commit()
-    members=member_payload(profile)
-    for module,value in [('price',price_payload(profile,'price')),('total_return',price_payload(profile,'total_return')),('valuations',valuation_payload(profile)),('memberships',members),('stock_valuations',stock_payload(members['rows'])),('financials',finance_payload(members['rows'])),('historical_memberships',historical_memberships(profile))]:
-        research.publish(profile['id'],module,value)
+    seed_research(service)
     for title,body in [
         ('建立计划：先写下持有理由','## 这笔配置的角色\n\n作为长期组合的一部分，先确定投入计划，再持续核对记录。\n\n## 待观察\n\n1. 组合集中度是否符合计划。\n2. 剩余可投金额是否足够。\n3. 下一次调整有哪些依据。'),
         ('季度复盘：把判断留在当时','## 本次观察\n\n示例组合的持仓、投入计划和收益已经归到同一份账本。**先核对事实，再决定行动。**\n\n## 下一步\n\n1. 核对本季度交易与分红。\n2. 对照投入计划，确认资金安排。\n3. 保留本次记录，下一季度再回看。\n\n以上为产品截图使用的虚构笔记，不代表真实持仓或投资建议。'),
@@ -97,7 +164,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='synthetic-showcase-',dir=output) as temp:
         data=Path(temp)/'data';seed(data)
         port = available_port()
-        print(f'合成展示实例：http://127.0.0.1:{port}/?family=overview；Ctrl+C 退出并删除本次临时账本。',flush=True)
+        print(f'合成展示实例：http://127.0.0.1:{port}/?family=overview\n合成账本：{data}\nCtrl+C 退出并删除本次临时账本。',flush=True)
         command=[sys.executable,str(ROOT/'run.py'),'--environment','dev','--data-dir',str(data),
             '--runtime-dir',str(Path(temp)/'runtime'),'--port',str(port),'--no-open','--no-sync']
         with (output/'server.log').open('w') as log:

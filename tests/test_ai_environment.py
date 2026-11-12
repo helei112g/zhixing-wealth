@@ -111,6 +111,9 @@ class AIEnvironmentTests(unittest.TestCase):
         daily = self.root/'日常使用'
         init_daily_workspace.initialize(daily, workspace)
         self.assertEqual({p.name for p in daily.iterdir()}, {'AGENTS.md', 'zhixing'})
+        guide = (daily/'AGENTS.md').read_text()
+        for name in ('assets', 'portfolios', 'notes', 'research'):
+            self.assertIn(str(current / f'.agents/skills/zhixing-{name}/SKILL.md'), guide)
         def run(*args):
             return subprocess.run([str(daily/'zhixing'), *args], cwd=self.root,
                                   capture_output=True, text=True, timeout=10)

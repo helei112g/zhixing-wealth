@@ -71,13 +71,14 @@ exec "$release/.venv/bin/python" -B "$release/scripts/ai_client.py" \\
 
 首次安装应为空账本，不为演示自动创建组合、资产、流水或笔记。用户要求升级时转到安装指南；升级不得清空、改写既有业务记录或笔记历史，不能用旧备份覆盖期间新增数据。
 
-先读当前已安装版本的 [AI 接入约定]({current/'docs/ai.md'})；按任务读取 [API 文档]({current/'docs/api.md'})，需要动态能力时读取 `/api/openapi.json`、`/api/guide`。
+先读当前已安装版本的 [AI 接入约定](<{current/'docs/ai.md'}>)；按任务读取 [API 文档](<{current/'docs/api.md'}>)，需要动态能力时读取 `/api/openapi.json`、`/api/guide`。
 
 按业务读取相应操作技能（通过这些路径显式读取，不假定新目录已自动发现安装包的技能）：
 
-- [资产、余额快照、负债、保险、收入、组合关联]({current/'.agents/skills/zhixing-assets/SKILL.md'})
-- [投资组合、交易流水、分红、投入计划]({current/'.agents/skills/zhixing-portfolios/SKILL.md'})
-- [投资笔记]({current/'.agents/skills/zhixing-notes/SKILL.md'})
+- [资产、余额快照、负债、保险、收入、组合关联](<{current/'.agents/skills/zhixing-assets/SKILL.md'}>)
+- [组合收益、交易流水、分红、投入计划](<{current/'.agents/skills/zhixing-portfolios/SKILL.md'}>)
+- [投资笔记](<{current/'.agents/skills/zhixing-notes/SKILL.md'}>)
+- [指数研究、市场水位、公共数据更新](<{current/'.agents/skills/zhixing-research/SKILL.md'}>)
 
 技能中的 `python3 scripts/ai_client.py` 命令前缀统一替换为本目录的 `./zhixing`，不要切到开发目录执行默认客户端。
 
@@ -87,7 +88,7 @@ exec "$release/.venv/bin/python" -B "$release/scripts/ai_client.py" \\
 2. 查询本身不修改账本。不同组合下同一标的互相独立；多页查询保持筛选并核对 revision。金额使用精确十进制字符串，null 保留未知。
 3. 写入须有用户对目标和具体内容的授权。已有明确授权不重复询问；含糊目标、额外覆盖、删除或新增范围先澄清。
 4. 资产使用 `./zhixing preview REQUEST.json --path /api/family/preview`；交易使用 `./zhixing preview REQUEST.json`。组合资料和笔记没有独立预览接口，应核对原值与拟保存差异，不声称已做服务端预览。
-5. 提交使用 `./zhixing write METHOD /api/PATH REQUEST.json --confirm-write`，保留刚核对的 `expected_revision`；确认参数不替代用户授权。仅使用客户端已支持的写入入口，不绕过限制直接发请求。
+5. 提交使用 `./zhixing write METHOD /api/PATH REQUEST.json --confirm-write`。账本、研究订阅和更新设置分别使用刚核对的 `expected_revision`、`expected_research_revision`、`expected_settings_revision`。公共数据更新按能力说明使用 `request_id`。确认参数不替代用户授权；仅使用客户端已支持的写入入口。
 6. 提交后按返回的正式 ID 回读，核对关键字段和作用域。409 时不自动提高 revision 强行覆盖；超时或结果未知时先回读，不自动重试、不打开 allow_duplicate。
 
 余额更新填写完整时点余额，不填增减额；补录不覆盖后续日期。收入不自动增加现金。买卖流水是记账，不会向券商下单。历史锁定汇率不得被当前汇率覆盖。

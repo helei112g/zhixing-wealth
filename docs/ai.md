@@ -12,6 +12,8 @@
 
 Codex 查找当前目录和向上的技能目录，不递归搜索任意子项目。若从父工作区启动，请先将本项目设为工作目录；未出现时重启会话。其他 Agent 是否自动发现取决于其技能规范，不能保证都兼容。见 [Codex 官方技能文档](https://learn.chatgpt.com/docs/build-skills)。技能文件校验通过与当前会话已加载技能是不同事实。
 
+正式日常工作区通过其 `AGENTS.md` 中的 `runtime/current` 链接显式读取当前安装包的技能。旧日常工作区可能只列出资产、组合和笔记，研究任务可沿该目录的「AI 接入约定」链接打开当前安装包的本文，再读取上面的「指数研究」。实际调用继续使用日常目录的 `./zhixing`。
+
 同步与存储：capabilities.storage 提供保留策略。jobs仅返回最近20条，默认最多保存20条（含运行中），不清理运行中任务，不作为完整审计；相同行情不重复写入，修正版本保留，交易锁定汇率不变。AI与界面使用同一同步入口，不直接写库或执行文件清理。
 
 系统通知从 `Client.notification_status()` 或 `GET /api/notifications` 读取，能力见 `capabilities.family.notification_scheduling`。系统每次只登记最近一条，同一时刻合并；`deferred_count` 是等待后续排程数，不是失败，`missing_count` 只计本次选中的缺失提醒。`next_notification_at` 为已受理时刻，后续接续需本机服务运行。不能把系统受理等同于用户看到、分红确认或已付款；不得用确认业务、删除通知状态文件来消除排程提示。
@@ -67,7 +69,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 | 功能 | 读取／核对 | 保存或客户端入口 |
 |---|---|---|
 | 组合介绍 | bootstrap 的 portfolios[].description | POST/PUT portfolios；省略或null保留，空字符串清空，最多10000字 |
-| 全部组合的持仓市值、累计与区间收益 | GET /api/portfolios/overview | portfolio_overview()；用 market_value 读取实际持仓市值，含归档组合，保留估值日期及暂估标记 |
+| 全部组合的持仓市值、累计与区间收益 | `./zhixing read /api/portfolios/overview` | `portfolio_overview()`。顶层与各行 `market_value` 为持仓市值，`total_assets` 为账面总资产。含归档，保留日期、暂估及缺失状态 |
 | 持仓收益、净投入与分红拆分 | dashboard?view=summary 的 capital_summary、holdings | investment_summary(P)；金额/null及计算口径由后端给出 |
 | 持有／清仓状态与交易类型 | holdings[].quantity、performance.cost；交易 actual.closed、filters.kind、facets.kinds | 标的无份额且累计成本为0是尚未买入；交易状态指单笔批次，不代替当前标的状态 |
 | 最近交易日／本周行情 | instrument_detail(P,I).market_changes | 只读；输出实际取价日期、序列与缺失原因，行情不等于个人收益 |
@@ -76,9 +78,12 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 | 持仓分类与分布 | holding_labels(P,I)、holding_distribution(P,basis) | 独立labels PUT或计划PUT；只影响当前组合同标的，不改历史流水 |
 | 保留实际分红并完成核对 | dividends候选、recorded_event、review_basis | POST dividends/ID/review；原revision、原依据及原因，回读原流水与审计 |
 | 按日期归档／恢复资产 | family/catalog、command-schema及preview | family/commands 的archive/restore；不删除历史、不自动产生收款 |
+| 指数分组与收益排序 | GET /api/research/indices | `research_indices(method='mcw', valuation_group=..., sort_by=...)`，原始分位与主指标估值位置分别读取 |
 | 指数建档与资料分页 | collection_preview、research_index、research_part | preview范围后原研究版本保存订阅；跨页固定analysis_id |
 | 指数条件试算 | 当前analysis_id及用户指定假设 | `scenario INDEX_ID REQUEST.json`；只读，无需写入确认开关 |
-| 公共数据更新 | update_settings、data-updates/jobs及单个job_id | write保存策略或提交更新；区分settings版本与request_id |
+| 公共数据更新 | `/api/data-updates/history?area=portfolio` 或 `area=research`，详情按 job_id | 用 `expected_settings_revision` 保存更新策略。提交任务用 `request_id`，查看逐项结果与实际观测日 |
+
+组合收益总览返回 `cumulative`、`annualized`、`year_to_date`、`month_to_date` 和 `latest_trading_day`。区间金额是累计投资收益的期末变化，比例以期末累计买入成本为分母。年化按合并投资现金流重算 XIRR，年化金额为一年折算金额。最近交易日按返回的 `end_date` 报告，缺失与暂估保留原状态。 [接口字段](api.md#全部组合收益总览)
 
 研究试算请求文件示例（合成假设，替换刚读取的真实analysis_id）：
 
@@ -120,9 +125,9 @@ python3 scripts/ai_client.py scenario INDEX_ID_FROM_LIST ../local/work/scenario.
 
 可传 `sort_by='annual_1'`、`'annual_2'`、`'annual_3'`、`'ytd'`、`'monthly'` 或 `'daily'` 对匹配列表排序。`sort_direction` 支持 `'asc'` 和 `'desc'`，默认降序。排序先于分页，缺失值置后。
 
-读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start, primary_valuation=...)` 展示指数家族、拟用主指标、核验日线的来源和日期、范围、预计调用数和原 research_revision。目录内跨市场指数使用官方配对和日线核验，其他新指数通过理杏仁核验。H11136 可单独订阅理杏仁 PE/PB；更新时从 collection.resources 选择 valuations 资源，官方行情和成分使用独立资源。在用户授权范围内以 `write('/api/research/collection', payload, 'PUT')` 提交预览返回的 modules、primary_valuation、history_start，并带上 enabled 与 expected_research_revision，再按 id 回读。首次保存返回全量同步的 job_id。按该 ID 回读任务，避免另发重复更新。后续可显式使用 `refresh_index`，或从详情的 `collection.resources` 选择对应资源并提交稳定 request_id。
+读取 capabilities 和研究目录，调用 `collection_preview(code, modules, history_start, primary_valuation=...)` 展示指数家族、拟用主指标、核验日线的来源和日期、范围、预计调用数、排除模块和原 research_revision。H11136/H01136 的价格、全收益和当前成分走官方数据，无需配置理杏仁 Token。日频 PE/PB 可独立订阅，更新时从 `collection.resources` 选择 `valuations` 资源。其他新指数按 capabilities 核对验证来源。获授权后以 `write('/api/research/collection', payload, 'PUT')` 提交预览返回的 modules、primary_valuation、history_start，并带上 enabled 与 expected_research_revision。只改分类时沿用同版本的原订阅模块、起始日和启用状态。按返回的 id 回读，首次保存同时返回全量任务的 job_id。按该 ID 回读任务。后续更新可用 `refresh_index`，或从详情的 `collection.resources` 选择资源并提交稳定 request_id。
 
-`research_index` 默认 mcw；`research_studio` 读取四指标、三方法、0/3/5/10窗口；不再提供收益回测或指数重叠。0仅表示本地已采集全历史，不能宣称供应商完整历史。版本变更后重读；来源失败保留旧值，缺失不补零。旧源overall/arithmetic仅用于回看。指数汇总财务、固定公司篮子、同篮子同比不得混用。
+`research_index` 默认 mcw。`research_studio` 支持四指标、四种估值方法和 0/3/5/10 年窗口。0 表示本地已采集全历史。版本变更后重读，来源失败保留旧值，缺失保留 null。旧源 overall/arithmetic 用于回看。报告时区分指数汇总财务、固定公司篮子与同篮子同比。
 
 Token只能由用户在本机「研究工具 → 数据管理 → 理杏仁数据源」输入。AI不读取凭据文件、不给命令行传Token，不把Token写进请求JSON文件、日志或聊天。可读 `/api/settings/lixinger` 的非敏感状态和计数。本机不设调用次数上限，失败也记录尝试；本机计数不能代表供应商剩余额度。首次同步随用户确认新增触发，日常更新由用户提交。供应商权限或额度阻断须核对后显式恢复。
 

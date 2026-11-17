@@ -279,6 +279,9 @@ def main():
     check(cap['dividend_review']['mode']=='keep_recorded' and not cap['dividend_review']['event_write'],'AI discovers review without event writes')
     check(cap['dividend_review']['reviewed_hk_yahoo_hkd_rate'] and cap['listed_fund_dividend_sync']['row_check'],
           'AI discovers Hong Kong reference and listed fund row validation policies')
+    off_exchange = cap['off_exchange_fund_dividend_sync']
+    check(off_exchange['markets']==['FUND'] and off_exchange['row_check'] and off_exchange['withdrawal'],
+          'AI discovers off-exchange fund validation and cache retention')
     check('/api/dividends/{notice_id}/review' in client.request(cap['openapi'])['paths'],'AI discovers dividend review contract')
     holding=client.write('/api/events',dict(portfolio_id=p['id'],kind='BUY',date='2024-01-02',instrument={'market':'HK','code':'02800','name':'AI合成分红核对'},quantity='100',gross_amount='1000',fx_rate='.9',expected_revision=revision()),'POST')
     dividend_source=dict(code='02800',source_ref='synthetic-review',record_date=None,ex_date='2024-06-03',pay_date=None,per_share='1',currency='HKD',source='Yahoo现金分派参考',split_restore_factor='1')

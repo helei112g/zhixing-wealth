@@ -194,7 +194,7 @@ UI选择红利再投后自动填入估算，日期/金额/标的变化立即撤�
 
 ## 其他能力
 
-- `POST /api/sync`：`{instrument_id?: string, full?: boolean}`，启动/排队后台更新；用 `/api/jobs` 查看逐项结果，失败可重试。此操作只更新行情/公告缓存，不自动确认分红。天天基金分红页标题须包含匹配代码。场内 ETF、LOF 还须在同代码的历史单位净值数据中有除息日现金分红标记。未取得标记的行暂不写入，已到除息日的未通过行按日期记入分红同步子项，已通过行正常更新。现行分红表已无某条旧记录且同日净值明确没有标记时，撤下没有关联或同日分红流水的缓存并保留审计。来源失败或净值日缺失时保留既有缓存。
+- `POST /api/sync`：`{instrument_id?: string, full?: boolean}`，启动/排队后台更新；用 `/api/jobs` 查看逐项结果，失败可重试。此操作只更新行情/公告缓存，不自动确认分红。天天基金分红页标题须包含匹配代码。场内 ETF、LOF 和场外基金均须在同代码的历史单位净值数据中有除息日现金分红标记。未取得标记的行暂不写入，已到除息日的未通过行按日期记入分红同步子项，已通过行正常更新。场内基金的旧记录同时满足现行表不再列出、同日净值明确无标记、无关联或同日分红流水时，系统撤下缓存并保留审计。场外基金的既有公告不因同步自动撤下；来源失败或净值日缺失时也保留既有缓存。
 - `POST /api/dividends/{notice_id}/ignore`：portfolio_id；仅隐藏候选，不计收益。
 - `POST /api/csv/preview`：text、category=`events/fx`、portfolio_id。只读校验。`POST /api/csv/import` 同参数整批写入；根据 event_id/指纹查重。没有 expected_revision 保护，AI 客户端不暴露此写入；导入前重新预览并确认整个批次。
 - `POST /api/fx`：currency、date、mode=`daily/manual/auto`，非auto时提供 rate；人工估值汇率，不回写交易锁定率。该接口不提供 expected_revision 保护。

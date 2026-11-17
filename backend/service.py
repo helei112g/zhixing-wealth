@@ -744,7 +744,8 @@ class Service:
         notes = ['公告只进入待核对列表，不自动记收益']
         missing = []
         withdrawn_dates = set()
-        if inst['market'] in ('SH', 'SZ') and inst['type'] in ('etf', 'lof'):
+        listed_fund = inst['market'] in ('SH', 'SZ') and inst['type'] in ('etf', 'lof')
+        if listed_fund or (inst['market'] == 'FUND' and notices):
             hints = market.fund_dividend_hints(inst)
             published_dates = {row['ex_date'] for row in notices}
             checked = [row for row in notices if hints.get(row['ex_date'])]
@@ -753,7 +754,10 @@ class Service:
             missing = sorted(date for date in unverified if date <= as_of)
             if unverified - set(missing):
                 notes.append('未到除息日的记录等待当日净值分红标记')
-            withdrawn_dates = {date for date, cash in hints.items() if not cash} - published_dates
+            # Only listed funds support automatic withdrawal. An incomplete or
+            # lagging off-exchange source must not revoke a cached notice.
+            if listed_fund:
+                withdrawn_dates = {date for date, cash in hints.items() if not cash} - published_dates
             notices = checked
 
         withdrawn = self.cache_dividends(inst['id'], notices, withdrawn_fund_dates=withdrawn_dates)

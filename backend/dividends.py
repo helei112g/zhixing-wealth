@@ -169,6 +169,10 @@ def fetch_stock_splits(instrument, *, notes=None):
     return parse_stock_splits(records,instrument['code'],notes=notes)
 
 def fetch_notices(instrument):
+    if instrument['market'] == 'FUND':
+        # The sync service verifies these rows against NAV before caching them.
+        # A retry must read the current table even if the last response parsed.
+        return _fetch_notices(instrument)
     key=(instrument['market'],instrument['code'],instrument['currency']);cached=_NOTICE_CACHE.get(key)
     if cached and time.monotonic()-cached[0]<600:return copy.deepcopy(cached[1])
     result=_fetch_notices(instrument);_NOTICE_CACHE[key]=(time.monotonic(),copy.deepcopy(result));return result

@@ -21,7 +21,7 @@ description: 查询知行财富的全部组合收益、单组合持仓和投入�
 - 计划资产类别仅权益、债券、大宗商品、其他、未分类；地区仅A股、美股、港股、海外其他、未分类。旧tags不可写入，历史混合已迁移为未分类；独立持仓分类路径保留。
 - 投入计划先调用`GET /api/portfolios/P/instruments/I/plan-check?target_pct=...`，仅改计划时按返回revision提交PUT；合并标签修改时须与labels读取的revision一致，不一致则重读并核对；缺口仅提醒，不自动加预算或卖出。
 - 删除未买入计划先读 `GET /api/portfolios/P/purchase-plans/I/deletion-preview`，核对组合、标的、计划金额和将移除的标签。获授权后以原 `expected_revision` 用 `write DELETE /api/portfolios/P/purchase-plans/I REQUEST.json --confirm-write` 提交，按返回的组合和标的 ID 回读关联是否移除。若被账务历史保护，可按用户授权调整投入目标。409或超时先回读，不自动重试。
-- 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理不代表行情更新成功，应看jobs逐项状态。
+- 提交后按正式ID回读流水/持仓/计划并对照预览。409不自动覆盖，超时先回读；同步请求受理后应看 jobs 逐项状态。港美股重试使用原标的和 trigger=retry；核对 prices、dividends 的来源及覆盖，Tiingo 凭据由用户在本机配置。
 - jobs只返回最近20条，后台默认最多保存20条（含运行中），不清理运行中任务，不当作完整业务审计。价格子项saved/unchanged表示新增变化版本/跳过重复；交易锁定汇率不随同步改变。部署和文件清理须另有授权。
 - 「投资组合 → 数据管理」的更新记录用 `GET /api/data-updates/history?area=portfolio`。查公共数据任务的实际结果用 `GET /api/data-updates/jobs/JOB_ID`，查证券行情的分红、送转等子项可读 `/api/jobs`。更新前按 `capabilities.data_updates` 核对行情或汇率范围并取得授权；仅更新指定标的时提交精确的 quotes resource。任务受理后按 job_id 查看完成状态、观测日期及失败项。 [API 契约](../../../docs/api.md)
 - 基金分红页面代码缺失或不匹配时，分红同步子项失败并保留本地公告。场内和场外基金都须通过同代码除息日净值分红标记校验，异常日期查看 jobs 的 dividends 子项。场内基金表内缺失且同日净值明确无标记的未入账缓存可撤下并保留审计。场外基金同步保留既有公告。

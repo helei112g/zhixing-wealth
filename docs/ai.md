@@ -14,7 +14,7 @@ Codex 查找当前目录和向上的技能目录，不递归搜索任意子项�
 
 正式日常工作区通过其 `AGENTS.md` 中的 `runtime/current` 链接显式读取当前安装包的技能。旧日常工作区可能只列出资产、组合和笔记，研究任务可沿该目录的「AI 接入约定」链接打开当前安装包的本文，再读取上面的「指数研究」。实际调用继续使用日常目录的 `./zhixing`。
 
-同步与存储：capabilities.storage 提供保留策略。jobs仅返回最近20条，默认最多保存20条（含运行中），不清理运行中任务，不作为完整审计；相同行情不重复写入，修正版本保留，交易锁定汇率不变。AI与界面使用同一同步入口，不直接写库或执行文件清理。港美股失败时查看 prices 和 dividends 子项的来源、覆盖说明与状态。使用原标的及 trigger=retry 可单独补查失败项。Tiingo 的凭据由用户在本机配置，参考[运行手册](operations.md#美股行情备用源)。
+同步与存储：capabilities.storage 提供保留策略。jobs仅返回最近20条，默认最多保存20条（含运行中），不清理运行中任务，不作为完整审计；相同行情不重复写入，修正版本保留，交易锁定汇率不变。AI与界面使用同一同步入口，不直接写库或执行文件清理。港美股失败时查看 prices 和 dividends 子项的来源、覆盖说明与状态。使用原标的及 trigger=retry 可单独补查失败项。Tiingo 的凭据由用户在本机配置，参考[运行手册](operations.md#美股行情数据源)。
 
 系统通知从 `Client.notification_status()` 或 `GET /api/notifications` 读取，能力见 `capabilities.family.notification_scheduling`。系统每次只登记最近一条，同一时刻合并；`deferred_count` 是等待后续排程数，不是失败，`missing_count` 只计本次选中的缺失提醒。`next_notification_at` 为已受理时刻，后续接续需本机服务运行。不能把系统受理等同于用户看到、分红确认或已付款；不得用确认业务、删除通知状态文件来消除排程提示。
 

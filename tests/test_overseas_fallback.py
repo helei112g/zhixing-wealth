@@ -67,10 +67,14 @@ class OverseasFallback(unittest.TestCase):
                 first_job = sync('manual_update', scopes={'quotes'})
                 self.assertEqual(first_job['status'], 'partial')
                 self.assertTrue(all(it['status'] == 'error' for it in first_job['items']))
+                for item in first_job['items']:
+                    self.assertRegex(item['message'], r'Tiingo：.*403.*Yahoo：.*403')
                 self.assertFalse(store.state()['prices'])
                 blocked = False
                 upstream.clear()
-                second = sync('retry', full=True)
+                with patch.object(yahoo, 'chart', side_effect=AssertionError('Tiingo succeeded')) as fallback:
+                    second = sync('retry', full=True)
+                    fallback.assert_not_called()
                 self.assertEqual(second['status'], 'complete', second['items'])
                 self.assertEqual(upstream, ['TEST', 'TEST/prices'])
                 self.assertEqual(len(failures), 1)
@@ -83,6 +87,37 @@ class OverseasFallback(unittest.TestCase):
                 cash, = [a for a in state['corporate_actions'] if a['kind'] == 'dividend_notice']
                 self.assertEqual((cash['ex_date'], cash['per_share']), (last, '0.25'))
                 self.assertEqual(sync('retry', full=True)['items'], [])
+
+    def test_unusable_tiingo_history_falls_back_to_yahoo(self):
+        inst = dict(market='US', code='TEST', currency='USD', type='stock')
+        first, last = '2024-06-03', '2024-06-04'
+        meta = dict(ticker='TEST', exchangeCode='NASDAQ', startDate=first,
+                    endDate=datetime.now(tiingo.ZONE).date().isoformat())
+        with (patch.object(tiingo, '_CACHE', OrderedDict()),
+              patch.object(tiingo, '_BLOCKED_UNTIL', 0),
+              patch.object(tiingo, 'api_token', return_value='synthetic'),
+              patch.object(tiingo, 'request', side_effect=[meta, [dict(date=None)], meta, [dict(date=None)]]),
+              patch.object(yahoo, 'quotes', return_value=dict(source='Yahoo Finance日线', notes=[])) as quotes,
+              patch.object(yahoo, 'dividends', return_value=[]) as dividends_backup,
+              patch.object(dividends, 'nasdaq_notices', return_value=None)):
+            price = market.quotes(inst, last, last, adjusted_start=first)
+            quotes.assert_called_once_with(inst, last, last, adjusted_start=first)
+            self.assertEqual(price['source'], 'Yahoo Finance日线')
+            self.assertIn('Yahoo', price['notes'][-1])
+            empty = dividends.overseas_notices(inst)
+            dividends_backup.assert_called_once_with(inst)
+            self.assertEqual(empty, [])
+            self.assertEqual(empty.source, 'Yahoo现金分派参考')
+
+    def test_verified_empty_tiingo_dividends_do_not_trigger_yahoo(self):
+        inst = dict(market='US', code='TEST', currency='USD', type='stock')
+        with (patch.object(dividends, 'nasdaq_notices', return_value=None),
+              patch.object(tiingo, 'dividends', return_value=[]),
+              patch.object(yahoo, 'dividends') as fallback):
+            notices = dividends.overseas_notices(inst)
+        self.assertEqual(notices, [])
+        self.assertEqual(notices.source, 'Tiingo·现金分派参考')
+        fallback.assert_not_called()
 
     def test_delayed_retry_only_replays_still_failed_overseas_targets(self):
         with tempfile.TemporaryDirectory() as tmp:

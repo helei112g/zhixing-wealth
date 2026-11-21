@@ -62,6 +62,7 @@ class Service:
         self.syncing = False
         self.pending_sync = {}
         self.overseas_retries = {}
+        self.overseas_outcomes = {}
         self.upgrade_budget_model()
 
     def upgrade_budget_model(self):
@@ -718,6 +719,10 @@ class Service:
             state=self.store.state(db)
             inst=next((i for i in state['instruments'] if i['id']==instrument_id),None)
             if not inst:raise DomainError('标的不存在')
+            incoming_currencies = {}
+            if inst['market'] == 'HK':
+                for row in rows:
+                    incoming_currencies.setdefault(row['ex_date'], set()).add(row['currency'])
             for source in rows:
                 if source['code']!=inst['code']:raise DomainError('分红源返回代码不匹配')
                 notice_id=uuid.uuid5(uuid.UUID(self.store.get_id()),'dividend|'+instrument_id+'|'+source['source_ref']).hex
@@ -733,14 +738,22 @@ class Service:
                         continue
                     if not before:
                         matches = [r for r in same_day if r.get('currency') == source['currency']]
-                        if not matches and source.get('equivalent_currency'):
+                        if not matches and inst['market'] == 'HK' and not reference:
                             matches = [r for r in same_day if dividends.is_overseas_reference(r)
-                                       and r.get('currency') == source['equivalent_currency']]
+                                       and r.get('currency') == inst['currency']]
+                            if matches and (len(same_day) != 1 or len(incoming_currencies[source['ex_date']]) != 1):
+                                raise DomainError('同日跨币种分派存在歧义，请先人工核对')
                         if len(matches) > 1:
                             raise DomainError('同日多份分派存在歧义，请先人工核对')
                         if matches:
                             before = matches[0]
                             notice_id = before['id']
+                    if (inst['market'] == 'HK' and before and not reference
+                            and any(r['id'] != notice_id and dividends.is_overseas_reference(r) for r in same_day)):
+                        raise DomainError('同日已有独立的参考分派，请先核对既有记录')
+                    if (before and before.get('source', '').startswith(('State Street·', 'Vanguard·'))
+                            and source.get('source') == 'Nasdaq现金派息表'):
+                        continue
                 item=dict(source,id=notice_id,kind='dividend_notice',instrument_id=instrument_id,
                           ex_date=str(day(source['ex_date'])),per_share=ds(dec(source['per_share'],'每份分红',positive=True)),
                           currency=currency(source['currency']),fetched_at=now())
@@ -1344,17 +1357,24 @@ class Service:
             for item in job.get('items', []):
                 if item.get('instrument_id') == instrument_id:
                     latest.setdefault(item.get('source_kind'), item.get('status'))
+        # An in-process retry can outlive the 20 most recent display jobs.
+        with self.job_lock:
+            for kind, outcome in self.overseas_outcomes.get(instrument_id, {}).items():
+                latest.setdefault(kind, outcome)
         return {kind for kind in ('prices', 'dividends')
                 if latest.get(kind) == 'error' or (include_unknown and kind not in latest)}
 
-    def _schedule_overseas_retry(self, instruments, items):
+    def _track_overseas_results(self, instruments, items, *, automatic):
         overseas = {i['id'] for i in instruments if i['market'] in ('US', 'HK')}
-        failed = {r['instrument_id'] for r in items if r.get('instrument_id') in overseas
-                  and r.get('source_kind') in ('prices', 'dividends') and r.get('status') == 'error'
-                  and any(status in r.get('message', '') for status in ('HTTP 403', 'HTTP 429'))}
         with self.job_lock:
-            for target in failed:
-                self.overseas_retries.setdefault(target, time.monotonic() + 600)
+            for item in items:
+                target, kind = item.get('instrument_id'), item.get('source_kind')
+                if target not in overseas or kind not in ('prices', 'dividends'):
+                    continue
+                self.overseas_outcomes.setdefault(target, {})[kind] = item['status']
+                if (automatic and item['status'] == 'error'
+                        and any(code in item.get('message', '') for code in ('HTTP 403', 'HTTP 429'))):
+                    self.overseas_retries.setdefault(target, time.monotonic() + 600)
 
     def dispatch_overseas_retries(self, submit):
         # The existing scheduler owns write guards, policy settings and shutdown.
@@ -1400,7 +1420,7 @@ class Service:
             try:
                 state = self.store.state(); instruments = state['instruments']
                 if instrument_id: instruments = [i for i in instruments if i['id'] == instrument_id]
-                overseas_retry = (causes == {'retry'} and not full and instrument_id and len(instruments) == 1
+                overseas_retry = (causes == {'retry'} and instrument_id and len(instruments) == 1
                                   and instruments[0]['market'] in ('HK', 'US') and 'quotes' in scopes)
                 retry_kinds = self._overseas_retry_kinds(instrument_id) if overseas_retry else {'prices', 'dividends'}
                 start = min((p['start_date'] for p in state['portfolios']), default=(today() - timedelta(days=90)).isoformat())
@@ -1448,8 +1468,7 @@ class Service:
                     self.store.save_job(job)
                 job['status'] = 'partial' if any(r['status'] == 'error' for r in job['items']) else 'complete'
                 job['message'] = '部分数据未更新；旧缓存保留，可重试' if job['status'] == 'partial' else '更新完成'
-                if causes & {'startup', 'schedule'}:
-                    self._schedule_overseas_retry(instruments, job['items'])
+                self._track_overseas_results(instruments, job['items'], automatic=bool(causes & {'startup', 'schedule'}))
             except Exception as exc:
                 job.update(status='error', message=str(exc)[:500])
             finally:

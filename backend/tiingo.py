@@ -107,14 +107,16 @@ def quotes(inst, start, end, adjusted_start=None):
     current = datetime.now(ZONE).date().isoformat()
     rows, actions = [], []
     for date, close, adj_close, split, _ in daily:
-        if not (adjusted_start or start) <= date <= end or date >= current:
+        if not (adjusted_start or start) <= date <= min(current, end):
+            continue
+        if split != '1':
+            actions.append(dict(date=date, factor=split, kind='split_notice', source='Tiingo·拆股因子',
+                                source_url='https://www.tiingo.com/ticker/' + quote(inst['code'], safe='')))
+        if date == current:
             continue
         if date >= start:
             rows.append(market.quote_record(date, close, 'Tiingo·名义收盘'))
         rows.append(market.quote_record(date, adj_close, 'Tiingo·复权参考', 'adjusted'))
-        if split != '1':
-            actions.append(dict(date=date, factor=split, kind='split_notice', source='Tiingo·拆股因子',
-                                source_url='https://www.tiingo.com/ticker/' + quote(inst['code'], safe='')))
     if not any(row['kind'] == 'raw' for row in rows):
         raise market.ProviderError('该区间没有已结束交易日的名义收盘价')
     return dict(rows=rows, actions=actions, name=name, source='Tiingo EOD',

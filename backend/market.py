@@ -23,7 +23,13 @@ class ProviderError(DomainError):
     pass
 
 
-def fetch(url, referer=None, timeout=12, attempts=2, request_headers=None):
+class ProviderHTTPError(ProviderError):
+    def __init__(self, status):
+        self.status = status
+        super().__init__(f'数据源暂时不可用（HTTP {status}），已保留本地数据，请稍后重试同步')
+
+
+def fetch(url, referer=None, timeout=12, attempts=2, request_headers=None, *, binary=False):
     headers = dict(request_headers) if request_headers is not None else {'User-Agent': UA, 'Accept': 'application/json,text/plain,*/*'}
     if referer:
         headers['Referer'] = referer
@@ -35,10 +41,11 @@ def fetch(url, referer=None, timeout=12, attempts=2, request_headers=None):
                 data = response.read(8 * 1024 * 1024 + 1)
                 if len(data) > 8 * 1024 * 1024:
                     raise ProviderError('数据响应超过8MB限制')
-                return data.decode('utf-8-sig')
+                return data if binary else data.decode('utf-8-sig')
         except (OSError, urllib.error.URLError, TimeoutError) as exc:
             error = ('HTTP '+str(exc.code)) if isinstance(exc,urllib.error.HTTPError) else type(exc).__name__
-            if isinstance(exc,urllib.error.HTTPError) and exc.code==429:break
+            if isinstance(exc, urllib.error.HTTPError) and (exc.code in (401, 403, 429) or attempt + 1 == attempts):
+                raise ProviderHTTPError(exc.code) from None
             if attempt + 1 < attempts:
                 time.sleep(.4 * (attempt + 1))
     raise ProviderError(f'数据源暂时不可用（{error}），已保留本地数据，请稍后重试同步')
@@ -148,8 +155,16 @@ def quotes(instrument, start, end, include_adjusted=True, adjusted_start=None):
     if instrument.get('builtin'):
         return benchmark_quotes(instrument,start,end)
     if instrument['market']=='US':
-        from . import yahoo
-        return yahoo.quotes(instrument,start,end,adjusted_start=adjusted_start)
+        from . import tiingo, yahoo
+        try:
+            return yahoo.quotes(instrument, start, end, adjusted_start=adjusted_start)
+        except (ProviderError, ValueError, KeyError) as primary:
+            try:
+                result = tiingo.quotes(instrument, start, end, adjusted_start)
+            except (ProviderError, ValueError, KeyError) as backup:
+                raise ProviderError(f'Yahoo：{primary}；Tiingo：{backup}') from None
+            result['notes'].append(f'Yahoo：{primary}；已从独立备用源取得行情')
+            return result
     if instrument['market'] == 'CUSTOM':
         raise ProviderError('该自定义或非上市标的暂无适用的价格同步数据源')
     if instrument['market'] == 'FUND':

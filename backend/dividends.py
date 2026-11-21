@@ -175,7 +175,10 @@ def fetch_notices(instrument):
         return _fetch_notices(instrument)
     key=(instrument['market'],instrument['code'],instrument['currency']);cached=_NOTICE_CACHE.get(key)
     if cached and time.monotonic()-cached[0]<600:return copy.deepcopy(cached[1])
-    result=_fetch_notices(instrument);_NOTICE_CACHE[key]=(time.monotonic(),copy.deepcopy(result));return result
+    result = _fetch_notices(instrument)
+    if not getattr(result, 'coverage_error', None):
+        _NOTICE_CACHE[key] = (time.monotonic(), copy.deepcopy(result))
+    return result
 
 
 def reports(base,params):
@@ -210,23 +213,44 @@ def parse_stock(records,code):
     return rows
 
 
-def parse_hk(records,code):
-    rows=[]
+HK_CURRENCIES = {'港币': 'HKD', '港元': 'HKD', '美元': 'USD', '人民币': 'CNY'}
+_HK_AMOUNT = r'(港币|港元|美元|人民币)((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:[.][0-9]+)?)元'
+_HK_PLAN = re.compile(r'每股派(?:发)?' + _HK_AMOUNT
+                      + r'(?:[(]相当于' + _HK_AMOUNT + r'([(]计算值[)])?[)])?'
+                      + r'([(]可选择以股代息[)])?')
+
+
+def parse_hk(records, code):
+    rows = []
+    all_explicit_no_dividend = bool(records)
     for record in records:
-        if record.get('SECURITY_CODE')!=code:raise market.ProviderError('港股分红源代码不匹配')
-        text=re.sub(r'\s+','',record.get('PLAN_EXPLAIN') or '')
-        match=re.fullmatch(r'每股派(?:发)?(港币|港元|美元|人民币)([\d,.]+)元',text)
-        ex=date_or_none(record.get('EX_DIVIDEND_DATE'))
-        if not match or not ex:continue
-        value=dec(match[2].replace(',',''))
-        if value<=0:continue
-        rows.append({'source_ref':f'hk:{code}:{record.get("YEAR","")}:{record.get("REPORT_TYPE","")}:{ex}',
-            'code':code,'record_date':None,'ex_date':ex,'pay_date':date_or_none(record.get('DIVIDEND_DATE')),
-            'per_share':ds(value),'currency':{'港币':'HKD','港元':'HKD','美元':'USD','人民币':'CNY'}[match[1]],
-            'source':'东方财富·港股现金分红公告','source_url':f'https://emweb.eastmoney.com/PC_HKF10/pages/home/index.html?code={code}&type=web&color=b',
-            'original_rate':ds(value),'original_unit':'每股','status':'published',
-            'coverage_note':'仅解析明确币种的现金方案；实物派股等未自动处理。港股按除息日前账本持仓估算权益，过户截止期间不当作登记日。'})
-    return rows if rows else None
+        if record.get('SECURITY_CODE') != code:
+            raise market.ProviderError('港股分红源代码不匹配')
+        text = ''.join((record.get('PLAN_EXPLAIN') or '').split()).translate(str.maketrans('（）', '()'))
+        if (str(record.get('IS_BFP')) == '1' and text == '未派发或宣派股息'
+                and not record.get('EX_DIVIDEND_DATE') and not record.get('DIVIDEND_DATE')):
+            continue
+        all_explicit_no_dividend = False
+        match = _HK_PLAN.fullmatch(text)
+        ex = date_or_none(record.get('EX_DIVIDEND_DATE'))
+        if not match or not ex:
+            continue
+        currency, value = HK_CURRENCIES[match[1]], ds(dec(match[2].replace(',', ''), positive=True))
+        note = '以公告列明的每股宣派币种和金额核对。'
+        extra = {}
+        if match[3]:
+            extra.update(equivalent_currency=HK_CURRENCIES[match[3]], equivalent_per_share=ds(dec(match[4].replace(',', ''), positive=True)),
+                         equivalent_calculated=bool(match[5]))
+            note += f'折合 {extra["equivalent_per_share"]} {extra["equivalent_currency"]}（仅参考）。'
+        if match[6]:
+            extra['scrip_option'] = True
+            note += '可选择以股代息，现金或股份选择须按实际交割单核对。'
+        rows.append(dict(source_ref=f'cash:HK:{code}:{ex}:{currency}', code=code, record_date=None,
+                         ex_date=ex, pay_date=date_or_none(record.get('DIVIDEND_DATE')), per_share=value,
+                         currency=currency, source='东方财富·港股现金分红公告',
+                         source_url=f'https://emweb.eastmoney.com/PC_HKF10/pages/home/index.html?code={code}&type=web&color=b',
+                         original_rate=value, original_unit='每股', status='published', coverage_note=note, **extra))
+    return rows if rows or all_explicit_no_dividend else None
 
 # Explicit issuer identities: no guessing URL slugs or mixing unlisted classes.
 GLOBALX_HK={
@@ -302,30 +326,96 @@ def parse_nasdaq(obj,code):
             'coverage_note':'仅接入源返回的Cash行，未知分派类型未自行归类；按已核实除息日前持仓估算，实际扣税与到账需核对。'})
     return rows
 
+class OverseasNotices(list):
+    """List-compatible result carrying provenance even for a verified empty table."""
+    def __init__(self, rows, source, coverage, coverage_error=None):
+        super().__init__(rows)
+        self.source = source
+        self.coverage = coverage
+        self.coverage_error = coverage_error
+
+
+def nasdaq_notices(inst):
+    categories = ('etf',) if inst.get('type') == 'etf' else ('stocks', 'etf')
+    base = 'https://api.nasdaq.com/api/quote/' + urllib.parse.quote(inst['code'], safe='') + '/dividends?assetclass='
+    for category in categories:
+        obj = market.parse_json(market.fetch(base + category, 'https://www.nasdaq.com/'))
+        data = obj.get('data') or {}
+        if data.get('symbol', inst['code']) != inst['code']:
+            raise market.ProviderError('Nasdaq 分派表代码不匹配')
+        if (obj.get('status') or {}).get('rCode', 200) != 200:
+            continue
+        rows = parse_nasdaq(obj, inst['code'])
+        if rows:
+            return rows
+    return None
+
+
+def is_overseas_reference(notice):
+    return notice.get('source', '').startswith(('Yahoo', 'Tiingo'))
+
+
+def us_reference_history(inst):
+    from . import tiingo, yahoo
+
+    try:
+        return yahoo.dividends(inst)
+    except (market.ProviderError, ValueError, KeyError) as primary:
+        try:
+            return OverseasNotices(tiingo.dividends(inst), 'Tiingo·现金分派参考', '已核对该上市证券覆盖区间的日线现金分派字段。')
+        except (market.ProviderError, ValueError, KeyError) as backup:
+            raise market.ProviderError(f'Yahoo：{primary}；Tiingo：{backup}') from None
+
+
+def issuer_notices(inst):
+    from . import us_distributions
+
+    official = us_distributions.notices(inst)
+    if inst['code'] != 'VIG':
+        return official
+    first = min(row['ex_date'] for row in official)
+    source = official[0]['source']
+    coverage = f'自 {first} 起使用发行方近期分派表。'
+    try:
+        past = us_reference_history(inst)
+    except market.ProviderError as exc:
+        return OverseasNotices(official, source, coverage, f'较早分派未能刷新，已有历史公告保留。{exc}')
+    official.extend(sorted((r for r in past if r['ex_date'] < first), key=lambda r: r['ex_date'], reverse=True))
+    return OverseasNotices(official, source, coverage + '更早日期已查询历史参考源。')
+
+
 def overseas_notices(inst):
-    from . import yahoo
+    from . import us_distributions, yahoo
     primary=None;errors=[]
     if inst['market']=='HK' and inst['code'] in GLOBALX_HK:
         try:primary=parse_globalx(market.fetch(GLOBALX_HK[inst['code']],GLOBALX_HK[inst['code']]),inst['code'])
         except (market.ProviderError,ValueError) as exc:errors.append(str(exc))
-    elif inst['market']=='US':
-        try:primary=parse_nasdaq(market.parse_json(market.fetch('https://api.nasdaq.com/api/quote/'+urllib.parse.quote(inst['code'],safe='')+'/dividends?assetclass=stocks','https://www.nasdaq.com/')),inst['code'])
-        except (market.ProviderError,ValueError,KeyError) as exc:errors.append(str(exc))
+    elif inst['market'] == 'US':
+        if inst['code'] in us_distributions.ISSUERS:
+            try:
+                return issuer_notices(inst)
+            except (market.ProviderError, ValueError, KeyError) as exc:
+                errors.append(f'发行方：{exc}')
+        try:
+            primary = nasdaq_notices(inst)
+        except (market.ProviderError, ValueError, KeyError) as exc:
+            errors.append(f'Nasdaq：{exc}')
     else:
         try:
-            records=reports('https://datacenter.eastmoney.com/securities/api/data/v1/get',{'reportName':'RPT_HKF10_MAIN_DIVBASIC','columns':'ALL','filter':f'(SECURITY_CODE="{inst["code"]}")(IS_BFP="0")','pageSize':100,'sortColumns':'NOTICE_DATE,EX_DIVIDEND_DATE','sortTypes':'-1,-1','source':'F10','client':'PC'})
+            records=reports('https://datacenter.eastmoney.com/securities/api/data/v1/get',{'reportName':'RPT_HKF10_MAIN_DIVBASIC','columns':'ALL','filter':f'(SECURITY_CODE="{inst["code"]}")','pageSize':100,'sortColumns':'NOTICE_DATE,EX_DIVIDEND_DATE','sortTypes':'-1,-1','source':'F10','client':'PC'})
             primary=parse_hk(records,inst['code']) if records is not None else None
         except (market.ProviderError,ValueError,KeyError) as exc:errors.append(str(exc))
     # A successful primary table is authoritative for its displayed coverage.
     # Avoid redundant Yahoo traffic and mixing rounded secondary amounts.
+    if inst['market'] == 'HK' and primary == []:
+        return OverseasNotices([], '东方财富·港股分红公告', '返回的全部公告均明确未派发或宣派股息。')
     if primary:
         return [dict(r,source_ref=f'cash:{inst["market"]}:{inst["code"]}:{r["ex_date"]}:{r["currency"]}') for r in primary]
-    # Never add amounts from two providers for the same ex-day.
-    try:fallback=yahoo.dividends(inst)
-    except (market.ProviderError,ValueError,KeyError) as exc:
-        errors.append(str(exc));fallback=None
-    if primary is None and fallback is None:raise market.ProviderError('港美股分派源暂不可用；'+'；'.join(errors)[:300])
-    chosen={r['ex_date']:dict(r,source_ref=f'cash:{inst["market"]}:{inst["code"]}:{r["ex_date"]}:{r["currency"]}') for r in (primary or [])}
-    for r in fallback or []:
-        if r['ex_date'] not in chosen:chosen[r['ex_date']]=r
-    return sorted(chosen.values(),key=lambda r:r['ex_date'],reverse=True)
+    # An empty Nasdaq table cannot prove that an ETF has no distributions.
+    try:
+        if inst['market'] == 'US':
+            return us_reference_history(inst)
+        return yahoo.dividends(inst)
+    except (market.ProviderError, ValueError, KeyError) as exc:
+        errors.append(str(exc) if inst['market'] == 'US' else f'Yahoo：{exc}')
+    raise market.ProviderError('港美股分派源暂不可用；' + '；'.join(errors))

@@ -13,6 +13,7 @@ from .common import dec,ds,day,today
 from . import market
 _CACHE={}
 _RETRY_AFTER=0
+_BLOCKED_STATUS=429
 
 def symbol_for(inst):
     if inst['market']=='HK':return str(int(inst['code'])).zfill(4)+'.HK'
@@ -20,10 +21,11 @@ def symbol_for(inst):
     raise market.ProviderError('该市场不使用港美股行情源')
 
 def chart(inst,start='1970-01-01'):
-    global _RETRY_AFTER
+    global _RETRY_AFTER, _BLOCKED_STATUS
     symbol=symbol_for(inst);key=(symbol,inst['currency'],str(today()));cached=_CACHE.get(key)
     if cached and time.monotonic()-cached[0]<600:return cached[1]
-    if time.monotonic()<_RETRY_AFTER:raise market.ProviderError('Yahoo暂时限流，10分钟内不重复请求；已保留缓存')
+    if time.monotonic() < _RETRY_AFTER:
+        raise market.ProviderError(f'Yahoo HTTP {_BLOCKED_STATUS} 冷却中，10分钟内不重复请求')
     period1=0 # one cached full history also supplies all subsequent split events
     period2=int(datetime.combine(today()+timedelta(days=2),datetime.min.time(),timezone.utc).timestamp())
     params={'period1':max(0,period1),'period2':period2,'interval':'1d','events':'div,splits','includeAdjustedClose':'true'}
@@ -40,9 +42,10 @@ def chart(inst,start='1970-01-01'):
             _CACHE[key]=(time.monotonic(),result);return result
         except (market.ProviderError,KeyError,ValueError) as exc:
             error=exc
-            if 'HTTP 429' in str(exc):
-                _RETRY_AFTER=time.monotonic()+600
-                raise market.ProviderError('Yahoo请求受限（HTTP 429），保留缓存；请稍后重试行情同步；分派可按实际交割单核对') from exc
+            if isinstance(exc, market.ProviderHTTPError) and exc.status in (403, 429):
+                _BLOCKED_STATUS = exc.status
+                _RETRY_AFTER = time.monotonic() + 600
+                raise
     raise market.ProviderError(str(error))
 
 def local_date(stamp,data):return datetime.fromtimestamp(int(stamp),ZoneInfo(data['meta']['exchangeTimezoneName'])).date().isoformat()

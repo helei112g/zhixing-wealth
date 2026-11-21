@@ -61,6 +61,7 @@ class Service:
         self.job_lock = threading.Lock()
         self.syncing = False
         self.pending_sync = {}
+        self.overseas_retries = {}
         self.upgrade_budget_model()
 
     def upgrade_budget_model(self):
@@ -721,10 +722,25 @@ class Service:
                 if source['code']!=inst['code']:raise DomainError('分红源返回代码不匹配')
                 notice_id=uuid.uuid5(uuid.UUID(self.store.get_id()),'dividend|'+instrument_id+'|'+source['source_ref']).hex
                 before=next((r for r in state['corporate_actions'] if r['id']==notice_id),None)
-                if not before and inst['market'] in ('HK','US'):
-                    matches=[r for r in state['corporate_actions'] if r.get('kind')=='dividend_notice' and r.get('instrument_id')==instrument_id and r.get('ex_date')==source['ex_date'] and r.get('currency')==source['currency']]
-                    if len(matches)>1:raise DomainError('同日多份分派存在歧义，请先人工核对')
-                    if matches:before=matches[0];notice_id=before['id']
+                if inst['market'] in ('HK', 'US'):
+                    same_day = [r for r in state['corporate_actions']
+                                if r.get('kind') == 'dividend_notice' and r['instrument_id'] == instrument_id
+                                and r.get('ex_date') == source['ex_date']]
+                    reference = dividends.is_overseas_reference(source)
+                    if reference and any(not dividends.is_overseas_reference(r) for r in same_day):
+                        # A secondary observation must not replace issuer dates or create
+                        # another entitlement in the alternate provider's trading currency.
+                        continue
+                    if not before:
+                        matches = [r for r in same_day if r.get('currency') == source['currency']]
+                        if not matches and source.get('equivalent_currency'):
+                            matches = [r for r in same_day if dividends.is_overseas_reference(r)
+                                       and r.get('currency') == source['equivalent_currency']]
+                        if len(matches) > 1:
+                            raise DomainError('同日多份分派存在歧义，请先人工核对')
+                        if matches:
+                            before = matches[0]
+                            notice_id = before['id']
                 item=dict(source,id=notice_id,kind='dividend_notice',instrument_id=instrument_id,
                           ex_date=str(day(source['ex_date'])),per_share=ds(dec(source['per_share'],'每份分红',positive=True)),
                           currency=currency(source['currency']),fetched_at=now())
@@ -742,6 +758,8 @@ class Service:
 
     def sync_dividend_notices(self, inst, notices):
         notes = ['公告只进入待核对列表，不自动记收益']
+        if getattr(notices, 'coverage', None):
+            notes.append(notices.coverage)
         missing = []
         withdrawn_dates = set()
         listed_fund = inst['market'] in ('SH', 'SZ') and inst['type'] in ('etf', 'lof')
@@ -765,9 +783,11 @@ class Service:
             notes.append('已撤下未入账的分红缓存：' + '、'.join(sorted(withdrawn)))
         item = dict(status='error' if missing else 'ok', count=len(notices),
                     date=max((row['ex_date'] for row in notices), default='—'),
-                    source=notices[0]['source'] if notices else '公开分红表', notes=notes)
+                    source=notices[0]['source'] if notices else getattr(notices, 'source', '公开分红表'), notes=notes)
         if missing:
             item['message'] = '同代码净值缺少现金分红标记，未同步：' + '、'.join(missing)
+        elif getattr(notices, 'coverage_error', None):
+            item.update(status='error', message=notices.coverage_error)
         return item
 
     def cache_actions(self,instrument_id,actions):
@@ -1286,6 +1306,68 @@ class Service:
             preserved=self.store.restore(data, files);self.upgrade_budget_model()
             return {'restored': True, 'preserved_backup': preserved}
 
+    def _sync_instrument_prices(self, inst, state, start, full, job):
+        try:
+            existing = [r['date'] for r in state['prices'] if r['instrument_id'] == inst['id'] and r['kind'] == inst.get('series_kind','raw') and not r.get('manual')]
+            first_purchase=min((e['date'] for e in state['events'] if e.get('instrument_id')==inst['id'] and e['kind']=='BUY'),default=None)
+            history_start=str(month_after(day(first_purchase),-6)) if first_purchase else start
+            requested=inst.get('quote_history_requested_start')
+            backfill=not requested or requested>history_start
+            beginning = history_start if full or backfill or not existing else max(history_start, (day(max(existing)) - timedelta(days=7)).isoformat())
+            result = market.quotes(inst, beginning, today().isoformat(), adjusted_start=history_start)
+            raw = [r for r in result['rows'] if r['kind'] == inst.get('series_kind','raw')]
+            if not raw:raise market.ProviderError('未返回该标的有效价格，历史请求范围未推进')
+            price_counts = self.cache_prices(inst['id'], result['rows'])
+            self.cache_actions(inst['id'],result.get('actions',[]))
+            # Remember the successful requested range, including a fund
+            # launched later than that range, to avoid daily full retries.
+            with self.store.transaction() as db:
+                fresh=db.execute('SELECT data FROM instruments WHERE id=?',(inst['id'],)).fetchone()
+                if fresh:
+                    obj=json.loads(fresh['data']);obj['quote_history_requested_start']=min(history_start,obj.get('quote_history_requested_start') or history_start)
+                    db.execute('UPDATE instruments SET data=? WHERE id=?',(json_dumps(obj),inst['id']))
+            if result.get('name') and not inst.get('custom_name') and not inst.get('builtin'):
+                with self.store.transaction() as db:
+                    fresh = db.execute('SELECT identity,data FROM instruments WHERE id=?', (inst['id'],)).fetchone()
+                    if fresh:
+                        obj = json.loads(fresh['data'])
+                        if not obj.get('custom_name'):
+                            obj['name'] = result['name']
+                            db.execute('UPDATE instruments SET data=? WHERE id=?', (json_dumps(obj), inst['id']))
+            job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name': inst['code'] + ' ' + (result.get('name') or inst['name']), 'status': 'ok', 'count': len(raw), 'saved':price_counts['saved'], 'unchanged':price_counts['unchanged'], 'date': max(r['date'] for r in raw), 'source': result['source'], 'notes': result['notes']})
+        except Exception as exc:
+            job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name': inst['code'], 'status': 'error', 'message': str(exc)[:500]})
+
+    def _overseas_retry_kinds(self, instrument_id, *, include_unknown=True):
+        latest = {}
+        for job in self.store.jobs():
+            for item in job.get('items', []):
+                if item.get('instrument_id') == instrument_id:
+                    latest.setdefault(item.get('source_kind'), item.get('status'))
+        return {kind for kind in ('prices', 'dividends')
+                if latest.get(kind) == 'error' or (include_unknown and kind not in latest)}
+
+    def _schedule_overseas_retry(self, instruments, items):
+        overseas = {i['id'] for i in instruments if i['market'] in ('US', 'HK')}
+        failed = {r['instrument_id'] for r in items if r.get('instrument_id') in overseas
+                  and r.get('source_kind') in ('prices', 'dividends') and r.get('status') == 'error'
+                  and any(status in r.get('message', '') for status in ('HTTP 403', 'HTTP 429'))}
+        with self.job_lock:
+            for target in failed:
+                self.overseas_retries.setdefault(target, time.monotonic() + 600)
+
+    def dispatch_overseas_retries(self, submit):
+        # The existing scheduler owns write guards, policy settings and shutdown.
+        with self.job_lock:
+            due = [k for k, deadline in self.overseas_retries.items() if deadline <= time.monotonic()]
+        for target in due:
+            with self.store.connection() as db:
+                exists = db.execute('SELECT 1 FROM instruments WHERE id=?', (target,)).fetchone()
+            if exists and self._overseas_retry_kinds(target, include_unknown=False):
+                submit(target)
+            with self.job_lock:
+                self.overseas_retries.pop(target, None)
+
     def start_sync(self, instrument_id=None, *, full=False, trigger='manual_update', _triggers=None, _queued=False, scopes=None, fx_currencies=None):
         fx_currencies=set(fx_currencies if fx_currencies is not None else ('HKD','USD'))
         if not fx_currencies or not fx_currencies.issubset({'HKD','USD'}): raise DomainError('汇率币种无效')
@@ -1318,10 +1400,13 @@ class Service:
             try:
                 state = self.store.state(); instruments = state['instruments']
                 if instrument_id: instruments = [i for i in instruments if i['id'] == instrument_id]
+                overseas_retry = (causes == {'retry'} and not full and instrument_id and len(instruments) == 1
+                                  and instruments[0]['market'] in ('HK', 'US') and 'quotes' in scopes)
+                retry_kinds = self._overseas_retry_kinds(instrument_id) if overseas_retry else {'prices', 'dividends'}
                 start = min((p['start_date'] for p in state['portfolios']), default=(today() - timedelta(days=90)).isoformat())
                 start = (day(start) - timedelta(days=14)).isoformat()
                 # Only public symbol/date queries leave the device. No portfolio data is transmitted.
-                for c in (sorted(fx_currencies) if 'fx' in scopes else ()):
+                for c in (sorted(fx_currencies) if 'fx' in scopes and not overseas_retry else ()):
                     try:
                         existing = [r['date'] for r in state['fx'] if r['currency'] == c and not r.get('manual')]
                         beginning = start if full or not existing else max(start, (day(max(existing)) - timedelta(days=7)).isoformat())
@@ -1347,37 +1432,9 @@ class Service:
                             job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 企业行动数据','status':'ok','count':len(actions),'source':'东方财富·已实施权益分派','notes':['仅生成待核对事项；确认后才调整份额，总成本不变',*review_notes]})
                         except Exception as exc:
                             job['items'].append({'source_kind':'corporate_actions','instrument_id':inst['id'],'name':inst['code']+' 企业行动数据','status':'error','message':str(exc)[:500]})
-                    try:
-                        existing = [r['date'] for r in state['prices'] if r['instrument_id'] == inst['id'] and r['kind'] == inst.get('series_kind','raw') and not r.get('manual')]
-                        first_purchase=min((e['date'] for e in state['events'] if e.get('instrument_id')==inst['id'] and e['kind']=='BUY'),default=None)
-                        history_start=str(month_after(day(first_purchase),-6)) if first_purchase else start
-                        requested=inst.get('quote_history_requested_start')
-                        backfill=not requested or requested>history_start
-                        beginning = history_start if full or backfill or not existing else max(history_start, (day(max(existing)) - timedelta(days=7)).isoformat())
-                        result = market.quotes(inst, beginning, today().isoformat(), adjusted_start=history_start)
-                        raw = [r for r in result['rows'] if r['kind'] == inst.get('series_kind','raw')]
-                        if not raw:raise market.ProviderError('未返回该标的有效价格，历史请求范围未推进')
-                        price_counts = self.cache_prices(inst['id'], result['rows'])
-                        self.cache_actions(inst['id'],result.get('actions',[]))
-                        # Remember the successful requested range, including a fund
-                        # launched later than that range, to avoid daily full retries.
-                        with self.store.transaction() as db:
-                            fresh=db.execute('SELECT data FROM instruments WHERE id=?',(inst['id'],)).fetchone()
-                            if fresh:
-                                obj=json.loads(fresh['data']);obj['quote_history_requested_start']=min(history_start,obj.get('quote_history_requested_start') or history_start)
-                                db.execute('UPDATE instruments SET data=? WHERE id=?',(json_dumps(obj),inst['id']))
-                        if result.get('name') and not inst.get('custom_name') and not inst.get('builtin'):
-                            with self.store.transaction() as db:
-                                fresh = db.execute('SELECT identity,data FROM instruments WHERE id=?', (inst['id'],)).fetchone()
-                                if fresh:
-                                    obj = json.loads(fresh['data'])
-                                    if not obj.get('custom_name'):
-                                        obj['name'] = result['name']
-                                        db.execute('UPDATE instruments SET data=? WHERE id=?', (json_dumps(obj), inst['id']))
-                        job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name': inst['code'] + ' ' + (result.get('name') or inst['name']), 'status': 'ok', 'count': len(raw), 'saved':price_counts['saved'], 'unchanged':price_counts['unchanged'], 'date': max(r['date'] for r in raw), 'source': result['source'], 'notes': result['notes']})
-                    except Exception as exc:
-                        job['items'].append({'source_kind':'prices','instrument_id':inst['id'],'name': inst['code'], 'status': 'error', 'message': str(exc)[:500]})
-                    if not inst.get('builtin') and inst['type']!='index':
+                    if 'prices' in retry_kinds:
+                        self._sync_instrument_prices(inst, state, start, full, job)
+                    if 'dividends' in retry_kinds and not inst.get('builtin') and inst['type']!='index':
                         try:
                             notices=dividends.fetch_notices(inst)
                             if notices is None:
@@ -1391,6 +1448,8 @@ class Service:
                     self.store.save_job(job)
                 job['status'] = 'partial' if any(r['status'] == 'error' for r in job['items']) else 'complete'
                 job['message'] = '部分数据未更新；旧缓存保留，可重试' if job['status'] == 'partial' else '更新完成'
+                if causes & {'startup', 'schedule'}:
+                    self._schedule_overseas_retry(instruments, job['items'])
             except Exception as exc:
                 job.update(status='error', message=str(exc)[:500])
             finally:

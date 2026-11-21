@@ -308,6 +308,10 @@ class UpdateJobs:
         with self.store.connection() as db:populated=any(db.execute('SELECT 1 FROM '+t+' LIMIT 1').fetchone() for t in ('portfolios','instruments',*TABLES))
         for p in self.research.settings()['policies']:
             if p['scope'] not in AUTOMATIC_SCOPES or not p['enabled'] or p['cadence']=='manual' or not populated:continue
+            if p['scope'] == 'quotes' and not self.legacy.syncing:
+                self.legacy.dispatch_overseas_retries(lambda iid: self.run(dict(
+                    scopes=['quotes'], resources=[dict(scope='quotes', instrument_id=iid)],
+                    request_id='overseas-retry:' + secrets.token_hex(16)), trigger='retry'))
             slot=d if clock>=p['time'] else d-timedelta(days=1)
             if p['cadence']=='trade_day':
                 while slot.weekday()>4:slot-=timedelta(days=1)

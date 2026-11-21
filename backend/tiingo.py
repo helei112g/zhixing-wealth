@@ -58,7 +58,7 @@ def request(path, params, token):
 
 def history(inst):
     if inst['market'] != 'US' or inst['currency'] != 'USD':
-        raise market.ProviderError('Tiingo 备用源仅支持美元美股')
+        raise market.ProviderError('Tiingo 仅支持美元美股')
     code = inst['code'].upper().replace('.', '-')
     current = datetime.now(ZONE).date()
     cached = _CACHE.get(code)
@@ -86,6 +86,8 @@ def history(inst):
     for record in records:
         # Tiingo labels the trading day at UTC midnight. A timezone conversion
         # here would move US sessions onto the previous calendar date.
+        if not isinstance(record, dict) or not isinstance(record.get('date'), str):
+            raise market.ProviderError('Tiingo 日线缺少有效交易日期')
         trade_date = day(record['date'].split('T')[0]).isoformat()
         if daily and trade_date <= daily[-1][0]:
             raise market.ProviderError('Tiingo 日线日期重复或乱序')

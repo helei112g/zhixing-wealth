@@ -496,6 +496,7 @@ class PortfolioOverviewRow(BaseModel):
     total_assets: str | None = Field(description='账面总资产，CNY')
     market_value: str | None = Field(description='实际持仓市值，CNY；不含现金、应收和在途款')
     cumulative: PortfolioReturnMetric
+    latest_trading_day: PortfolioPeriodReturn = Field(description='汇总所用交易日的本组合投资收益，收益率以本组合当日累计买入成本为分母')
 
 
 class PortfolioOverviewResponse(BaseModel):

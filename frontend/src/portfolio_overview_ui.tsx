@@ -63,10 +63,13 @@ export function PortfolioOverview({boot, version, onCreate, onEdit, onOpen}: Obj
     <p>区间涨跌为累计投资收益的变化。累计及期间收益率以对应期末累计买入成本为分母。年化金额为累计买入成本 × XIRR。</p>
    </div>
   </section> : !error && <div className="portfolio-overview-loading" role="status"><LoaderCircle size={18} className="spin"/>正在汇总组合收益…</div>}
-  <Panel title="投资组合" className="portfolio-overview-list">
+  <Panel title="投资组合" className="portfolio-overview-list" right={day && <small className="muted">
+   {day.end_date ? <>最近交易日 <time dateTime={day.end_date}>{day.end_date}</time></> : '暂无可用行情日期'}
+  </small>}>
    <ul>
     {boot.portfolios.map((portfolio: Obj) => {
      const row = byId.get(portfolio.id);
+     const daily = row?.latest_trading_day;
      return <li key={portfolio.id} data-portfolio-id={portfolio.id}>
       <div className="portfolio-overview-identity">
        <a href={portfolioHref(portfolio.id)} onClick={event => {
@@ -79,6 +82,10 @@ export function PortfolioOverview({boot, version, onCreate, onEdit, onOpen}: Obj
       <div className="portfolio-overview-row-value"><small>持仓市值 · CNY</small><b>{money(row?.market_value)}</b></div>
       <div className="portfolio-overview-row-value"><small>累计收益 · CNY</small>
        <b className={tone(row?.cumulative.amount)}>{signedMoney(row?.cumulative.amount)} <span>{percent(row?.cumulative.rate, true)}</span></b></div>
+      <div className="portfolio-overview-row-value"><small>最近交易日涨跌 · CNY</small>
+       <b className={tone(daily?.amount)}>{signedMoney(daily?.amount)} <span>{percent(daily?.rate, true)}</span></b>
+       {daily?.estimated && <small>含暂估</small>}
+      </div>
       <Button small aria-label={'编辑组合 '+portfolio.name} onClick={() => onEdit(portfolio)}><Edit3 size={14}/>编辑</Button>
      </li>;
     })}

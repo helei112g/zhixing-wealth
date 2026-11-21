@@ -69,6 +69,9 @@ class PortfolioOverviewTests(TestCase):
             self.assertEqual(row['total_assets'], detail['total_assets'])
             self.assertEqual(row['market_value'], detail['capital_summary']['market_value'])
             self.assertEqual(row['cumulative']['amount'], detail['capital_summary']['profit'])
+            daily = row['latest_trading_day']
+            self.assertEqual(daily['end_date'], '2025-02-07')
+            self.assertEqual((daily['amount'], daily['rate']), ('100', '0.1') if row['id'] == a['id'] else ('0', '0'))
         self.assertTrue(next(row for row in result['portfolios'] if row['id'] == b['id'])['archived'])
 
         self.service.save_portfolio(dict(a, planned_amount='6000'), a['id'])
@@ -132,10 +135,18 @@ class PortfolioOverviewTests(TestCase):
             self.assertEqual(result['latest_trading_day'], {
                 'amount': '100', 'rate': '0.05', 'start_date': '2026-11-12', 'end_date': '2026-11-12', 'estimated': True,
             })
-            self.quotes(j, [('2026-11-12', '105')])
-            day_return = self.overview()['latest_trading_day']
-            self.assertEqual(day_return['amount'], '150')
+            by_id = {row['id']: row['latest_trading_day'] for row in result['portfolios']}
+            self.assertFalse(by_id[a['id']]['estimated'])
+            self.assertEqual(by_id[b['id']], {
+                'amount': '0', 'rate': '0', 'start_date': '2026-11-12', 'end_date': '2026-11-12', 'estimated': True,
+            })
+            self.quotes(j, [('2026-11-12', '95')])
+            updated = self.overview()
+            day_return = updated['latest_trading_day']
+            self.assertEqual(day_return['amount'], '50')
             self.assertFalse(day_return['estimated'])
+            b_day = next(row['latest_trading_day'] for row in updated['portfolios'] if row['id'] == b['id'])
+            self.assertEqual((b_day['amount'], b_day['rate'], b_day['estimated']), ('-50', '-0.05', False))
 
     def test_latest_session_flags_missing_previous_close(self):
         with patch('backend.service.today', return_value=date(2026, 11, 12)):
@@ -185,7 +196,11 @@ class PortfolioOverviewTests(TestCase):
 
         a = self.service.save_portfolio(dict(name='组合甲', planned_amount='5000', start_date='2025-02-03'))
         i = self.buy(a, '2025-02-03', '600001', '10', '1000')
-        self.assertIsNone(self.overview()['latest_trading_day']['end_date'])
+        missing = self.overview()
+        self.assertEqual(missing['portfolios'][0]['latest_trading_day'], {
+            'amount': None, 'rate': None, 'start_date': None, 'end_date': None, 'estimated': False,
+        })
+        self.assertIsNone(missing['latest_trading_day']['end_date'])
         self.quotes(i, [('2025-02-07', '50')])
         self.service.cache_actions(i, [dict(kind='split_notice', date='2025-02-07', factor='2', source='synthetic')])
 
@@ -197,3 +212,16 @@ class PortfolioOverviewTests(TestCase):
             self.assertIsNone(result[key]['amount'])
             self.assertIsNone(result[key]['rate'])
         self.assertEqual(result['latest_trading_day']['end_date'], '2025-02-07')
+        self.assertEqual(result['portfolios'][0]['latest_trading_day'], result['latest_trading_day'])
+
+        b = self.service.save_portfolio(dict(name='组合乙', planned_amount='5000', start_date='2025-02-05'))
+        j = self.buy(b, '2025-02-05', '600002', '10', '1000')
+        self.quotes(j, [('2025-02-06', '100'), ('2025-02-07', '101')])
+        c = self.service.save_portfolio(dict(name='新组合', planned_amount='1000', start_date='2025-02-08'))
+        mixed = self.overview()
+        by_id = {row['id']: row['latest_trading_day'] for row in mixed['portfolios']}
+        self.assertIsNone(mixed['latest_trading_day']['amount'])
+        self.assertEqual((by_id[b['id']]['amount'], by_id[b['id']]['rate']), ('10', '0.01'))
+        self.assertEqual(by_id[c['id']], {
+            'amount': None, 'rate': None, 'start_date': '2025-02-07', 'end_date': '2025-02-07', 'estimated': False,
+        })

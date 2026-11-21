@@ -1,5 +1,8 @@
 """Read-only rollup of the same investment projections used by portfolio detail."""
 
+from decimal import Decimal
+from typing import NamedTuple
+
 from .common import ZERO, day, ratio
 from .trade_analytics import XIRR_BASIS, xirr
 
@@ -25,12 +28,21 @@ def is_provisional(summary):
     return summary['provisional'] or summary['pending_settlement']
 
 
-def period_summary(projections, investment_at, start, end, *, check_daily_close=False):
-    if end is None:
-        return return_metric(None, None, start_date=None, end_date=None, estimated=False)
+class PeriodChange(NamedTuple):
+    profit: Decimal | None
+    cost: Decimal
+    estimated: bool
 
-    profit, cost = ZERO, ZERO
-    incomplete, estimated = False, False
+    def metric(self, start, end):
+        rate = ratio(self.profit, self.cost) if self.profit is not None else None
+        return return_metric(self.profit, rate, start_date=str(start) if start else None,
+                             end_date=str(end) if end else None, estimated=self.estimated)
+
+
+def period_changes(projections, investment_at, start, end, *, check_daily_close=False):
+    changes = {}
+    if end is None:
+        return changes
     for portfolio, snapshot, current in projections:
         history = snapshot['history']
         origin = day(history[0]['date'])
@@ -38,6 +50,8 @@ def period_summary(projections, investment_at, start, end, *, check_daily_close=
         last = (end - origin).days
         if last < first:
             continue
+
+        incomplete, estimated = False, False
         # Include the baseline in the quality check because its value is
         # subtracted from the ending investment profit.
         for row in history[max(0, first - 1):last + 1]:
@@ -45,20 +59,27 @@ def period_summary(projections, investment_at, start, end, *, check_daily_close=
             incomplete |= row['investment_incomplete']
 
         ending = current if last == len(history) - 1 else investment_at(portfolio['id'], str(end))
-        cost += ending['cost']
         estimated |= is_provisional(ending)
         prior_profit = ZERO
         if first > 0:
             prior = investment_at(portfolio['id'], history[first - 1]['date'])
             estimated |= is_provisional(prior)
             prior_profit = prior['profit']
-        if ending['profit'] is None or prior_profit is None:
-            incomplete = True
-        else:
-            profit += ending['profit'] - prior_profit
+        profit = None
+        if not incomplete and ending['profit'] is not None and prior_profit is not None:
+            profit = ending['profit'] - prior_profit
+        changes[portfolio['id']] = PeriodChange(profit, ending['cost'], estimated)
 
-    return return_metric(None if incomplete else profit, None if incomplete else ratio(profit, cost),
-                         start_date=str(start), end_date=str(end), estimated=estimated)
+    return changes
+
+
+def combined_period(changes, start, end):
+    total = PeriodChange(
+        complete_sum(change.profit for change in changes.values()) if end else None,
+        sum((change.cost for change in changes.values()), ZERO),
+        any(change.estimated for change in changes.values()),
+    )
+    return total.metric(start, end)
 
 
 def portfolio_overview(projections, as_of, revision, *, investment_at):
@@ -81,14 +102,21 @@ def portfolio_overview(projections, as_of, revision, *, investment_at):
     latest_quote = max((next((row['date'] for row in reversed(snapshot['history'])
                              if row['has_investment_quote']), '') for snapshot in snapshots), default='')
     trading_day = day(latest_quote) if latest_quote else None
+    daily = period_changes(projections, investment_at, trading_day, trading_day, check_daily_close=True)
+    unavailable = PeriodChange(None, ZERO, False)
     rows = [
         {'id': portfolio['id'], 'name': portfolio['name'], 'archived': portfolio.get('archived', False),
          'start_date': portfolio['start_date'], 'running_days': (as_of - day(portfolio['start_date'])).days + 1,
          'total_assets': decimal_text(snapshot['total_assets']),
          'market_value': decimal_text(summary['market_value']),
-         'cumulative': return_metric(summary['profit'], summary['return_on_cost'])}
+         'cumulative': return_metric(summary['profit'], summary['return_on_cost']),
+         'latest_trading_day': daily.get(portfolio['id'], unavailable).metric(trading_day, trading_day)}
         for portfolio, snapshot, summary in projections
     ]
+
+    def period_since(start):
+        return combined_period(period_changes(projections, investment_at, start, as_of), start, as_of)
+
     return {
         'date': str(as_of), 'revision': revision, 'currency': 'CNY', 'portfolios': rows,
         'total_assets': decimal_text(assets) if rows else None,
@@ -101,7 +129,7 @@ def portfolio_overview(projections, as_of, revision, *, investment_at):
         'cumulative': return_metric(profit, ratio(profit, cost) if profit is not None else None),
         'annualized': return_metric(cost * rate if rate is not None else None, rate, status=annual['status'],
                                    xirr_basis=XIRR_BASIS),
-        'year_to_date': period_summary(projections, investment_at, as_of.replace(month=1, day=1), as_of),
-        'month_to_date': period_summary(projections, investment_at, as_of.replace(day=1), as_of),
-        'latest_trading_day': period_summary(projections, investment_at, trading_day, trading_day, check_daily_close=True),
+        'year_to_date': period_since(as_of.replace(month=1, day=1)),
+        'month_to_date': period_since(as_of.replace(day=1)),
+        'latest_trading_day': combined_period(daily, trading_day, trading_day),
     }

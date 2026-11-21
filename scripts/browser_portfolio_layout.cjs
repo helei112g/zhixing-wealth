@@ -4,6 +4,12 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const pw=require(process.env.PLAYWRIGHT_MODULE_PATH||'../frontend/node_modules/playwright');
 const root=path.resolve(__dirname,'..'),base=process.env.PORTFOLIO_TEST_URL;
 const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results');fs.mkdirSync(out,{recursive:true});
+function weekdayOnOrBefore(date, daysBack=0) {
+ const day=new Date(date+'T00:00:00Z');
+ day.setUTCDate(day.getUTCDate()-daysBack);
+ while ([0,6].includes(day.getUTCDay())) day.setUTCDate(day.getUTCDate()-1);
+ return day.toISOString().slice(0,10);
+}
 (async()=>{
  const browser=await pw.chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1600,height:1000}});
  page.setDefaultTimeout(20000);let csrf='',checks=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -19,7 +25,9 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
  const edit=async id=>{await nav('组合收益');await row(id).getByRole('button',{name:/^编辑组合/}).click();};
  try{
   const health=await api('/health');assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);assert.equal(path.resolve(health.data_directory),path.resolve(process.env.PORTFOLIO_TEST_DATA_DIR));
-  const boot=await api('/bootstrap');csrf=boot.csrf_token;const start=boot.today.slice(0,4)+'-01-01',month=boot.today.slice(0,7);
+  const boot=await api('/bootstrap');csrf=boot.csrf_token;
+  const latestClose=weekdayOnOrBefore(boot.today), previousClose=weekdayOnOrBefore(latestClose,1);
+  const start=[boot.today.slice(0,4)+'-01-01',previousClose].sort()[0],month=boot.today.slice(0,7);
   await page.goto(new URL('/?page=overview',base).href);await page.getByRole('button',{name:'创建第一个组合',exact:true}).click();
   const description='背景：为长期目标积累资金。\n\n策略：分批投入，定期检查计划。\n<b>这是纯文字示例</b>';
   await dialog().getByLabel('组合名称',{exact:true}).fill('合成组合介绍与明细验收');
@@ -61,7 +69,23 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
   const otherBuy=await api('/events',{portfolio_id:other.id,kind:'BUY',date:start,instrument:{market:'CN',code:'512880',name:'合成切换标的'},quantity:'1',gross_amount:'10',fx_rate:'1'});
   const events=[];for(let n=0;n<26;n++)events.push(await api('/events',{portfolio_id:p.id,kind:'BUY',date:start,instrument:{market:'CN',code:'510300',name:'合成宽基标的'},quantity:'1',gross_amount:String(10+n),fx_rate:'1'}));
   const dividend=await api('/events',{portfolio_id:p.id,kind:'DIVIDEND',date:start,pay_date:start,instrument_id:events[0].instrument_id,net_amount:'10',fx_rate:'1',tax_known:true,ex_date_known:true});
-  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',"import sys;from pathlib import Path;from backend.environment import claim_environment;from backend.service import Service;from backend.store import Store;d=Path(sys.argv[1]).resolve();assert d==Path(__import__('os').environ['PORTFOLIO_TEST_DATA_DIR']).resolve();claim_environment(d,'dev');Service(Store(d)).cache_prices(sys.argv[2],[{'date':sys.argv[3],'price':'40','source':'synthetic'},{'date':sys.argv[4],'price':'40','source':'synthetic'}])",process.env.PORTFOLIO_TEST_DATA_DIR,events[0].instrument_id,start,boot.today],{cwd:root,encoding:'utf8'});assert.equal(fixture.status,0,fixture.stderr);
+  const fixture=cp.spawnSync(path.join(root,'.venv/bin/python'),['-c',`
+import os, sys
+from pathlib import Path
+from backend.environment import claim_environment
+from backend.service import Service
+from backend.store import Store
+directory = Path(os.environ['PORTFOLIO_TEST_DATA_DIR']).resolve()
+assert (directory / '.synthetic-fixture').is_file()
+claim_environment(directory, 'dev')
+service = Service(Store(directory))
+for instrument, before, after in [(sys.argv[1], '39', '40'), (sys.argv[2], '11', '10')]:
+    service.cache_prices(instrument, [
+        {'date': sys.argv[3], 'price': before, 'source': 'synthetic'},
+        {'date': sys.argv[4], 'price': after, 'source': 'synthetic'},
+    ])
+`,events[0].instrument_id,otherBuy.instrument_id,previousClose,latestClose],{cwd:root,encoding:'utf8'});
+  assert.equal(fixture.status,0,fixture.stderr);
   await page.reload();
   await overview().waitFor();
   const aggregate=await api('/portfolios/overview');
@@ -71,6 +95,8 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
    'homepage displays only the current holdings market value');
   check(await overview().locator('.portfolio-return-metric').count()===5&&await overview().getByText(/运行|始于/).count()===0,
    'homepage summary displays the five return pairs without aggregate running dates');
+  check(await page.locator('.portfolio-overview-list time').innerText()===latestClose,
+   'the portfolio list labels daily changes with their common quote date');
   for(const portfolio of aggregate.portfolios){
    const expectedValue=portfolio.id===p.id?'1,040.00':'10.00';
    check(await row(portfolio.id).getByText('持仓市值 · CNY',{exact:true}).isVisible()
@@ -78,6 +104,10 @@ const out=path.join(process.env.PORTFOLIO_TEST_OUTPUT,'portfolio-layout-results'
     'the individual portfolio row excludes idle cash and shows its holdings market value');
    check(await row(portfolio.id).getByText('运行 '+portfolio.running_days+' 天 · 始于 '+portfolio.start_date,{exact:true}).isVisible(),
     'the individual portfolio row displays its own running time');
+   const dailyCell=row(portfolio.id).locator('.portfolio-overview-row-value').filter({hasText:'最近交易日涨跌'});
+   const expectedDaily=portfolio.id===p.id?'+26.00 +4.44%':'-1.00 -10.00%';
+   check(await dailyCell.locator('b').innerText()===expectedDaily,
+    'each row shows its own signed daily profit and return on cost');
   }
   check((await overview().locator('.portfolio-return-metric').last().innerText()).includes(aggregate.latest_trading_day.end_date),
    'latest trading day displays its actual observation date');

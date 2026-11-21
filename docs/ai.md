@@ -83,7 +83,7 @@ valuation 是该日完整余额，不是增减额。补录不覆盖后续日期�
 | 指数条件试算 | 当前analysis_id及用户指定假设 | `scenario INDEX_ID REQUEST.json`；只读，无需写入确认开关 |
 | 公共数据更新 | `/api/data-updates/history?area=portfolio` 或 `area=research`，详情按 job_id | 用 `expected_settings_revision` 保存更新策略。提交任务用 `request_id`，查看逐项结果与实际观测日 |
 
-组合收益总览返回 `cumulative`、`annualized`、`year_to_date`、`month_to_date` 和 `latest_trading_day`。区间金额是累计投资收益的期末变化，比例以期末累计买入成本为分母。年化按合并投资现金流重算 XIRR，年化金额为一年折算金额。最近交易日按返回的 `end_date` 报告，缺失与暂估保留原状态。 [接口字段](api.md#全部组合收益总览)
+组合收益总览返回 `cumulative`、`annualized`、`year_to_date`、`month_to_date` 和 `latest_trading_day`。区间金额是累计投资收益的期末变化，比例以期末累计买入成本为分母。年化按合并投资现金流重算 XIRR，年化金额为一年折算金额。逐组合最近交易日收益取同一响应的 `portfolios[].latest_trading_day`，按返回的 `end_date` 报告，缺失与暂估保留原状态。 [接口字段](api.md#全部组合收益总览)
 
 研究试算请求文件示例（合成假设，替换刚读取的真实analysis_id）：
 

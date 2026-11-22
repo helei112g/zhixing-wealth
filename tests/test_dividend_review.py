@@ -158,6 +158,30 @@ class DividendReviewTests(unittest.TestCase):
         self.service.cache_dividends(iid, [dict(notice, source='State Street·ETF分派表', per_share='.12449')])
         self.assertEqual(self.service.dividend_candidates(self.pid, iid)[0]['status'], 'needs_review')
 
+    def test_fallback_and_reminder_toggle_do_not_cancel_precise_correction(self):
+        buy = self.service.save_event(dict(portfolio_id=self.pid, kind='BUY', date='2024-01-02',
+            instrument=dict(market='US', code='VIG', name='合成美股ETF'), quantity='100', gross_amount='1000', fx_rate='7'))
+        iid = buy['instrument_id']
+        yahoo = dict(self.source, code='VIG', source_ref='synthetic-us', currency='USD', per_share='.120')
+        def publish(row):
+            self.service.cache_dividends(iid, [row])
+            return self.service.dividend_candidates(self.pid, iid)[0]
+        row = publish(yahoo)
+        self.service.confirm_dividend(row['notice']['id'], dict(row['suggested_event'], pay_date='2024-01-18', fx_rate='7'))
+        yahoo['per_share'] = '.125'
+        self.keep(publish(yahoo))
+        tiingo = dict(yahoo, source='Tiingo·现金分派参考', split_restore_factor=None, per_share='.12451')
+        self.assertEqual(publish(tiingo)['status'], 'confirmed')
+        for rate in ('.12549', '.12601'):
+            corrected = publish(dict(tiingo, per_share=rate))
+            self.assertEqual(corrected['status'], 'needs_review')
+            self.service.ignore_dividend(row['notice']['id'], dict(portfolio_id=self.pid, ignored=False))
+            self.assertEqual(self.service.dividend_candidates(self.pid, iid)[0]['status'], 'needs_review')
+            fallback = publish(yahoo)
+            self.assertEqual((fallback['status'], fallback['notice']['per_share']), ('needs_review', corrected['notice']['per_share']))
+        self.keep(fallback)
+        self.assertFalse(self.reminders())
+
     def test_pending_us_source_switch_preserves_notification(self):
         purchase = self.service.save_event(dict(portfolio_id=self.pid, kind='BUY', date='2024-01-02',
             instrument=dict(market='US', code='VIG', name='合成美股ETF'), quantity='100', gross_amount='1000', fx_rate='7'))

@@ -21,6 +21,7 @@ type ReturnSort={key:ReturnColumn;direction:'asc'|'desc'};
 
 export function ResearchPage({onData}:Obj){
  const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(''),[revision,R]=useState<number|null>(null),[running,Running]=useState(false),[error,E]=useState('');
+ const [revisionError,setRevisionError]=useState('');
  const [collectionDialog,setCollectionDialog]=useState<{profile?:Obj}|null>(null);
  const [initialSync, setInitialSync]=useState('');
  const [listPage,setListPage]=useState(1);
@@ -35,9 +36,9 @@ export function ResearchPage({onData}:Obj){
    busy=true;
    try{
     const value=await api('/research/revision', undefined, 'GET', AbortSignal.timeout(1000));
-    if(active){R(last=>Math.max(last??0,value.research_revision));Running(value.updating);}
+    if(active){setRevisionError('');R(last=>Math.max(last??0,value.research_revision));Running(value.updating);}
    }catch(error:any){
-    if(active){E(error.message);R(last=>last??0);}
+    if(active){setRevisionError(error.message);R(last=>last??0);}
    }finally{busy=false;}
   }
   refresh(true);
@@ -52,7 +53,7 @@ export function ResearchPage({onData}:Obj){
  }
 
  return <div className="research-page">
-  <ErrorBox error={error}/>
+  <ErrorBox error={error||revisionError}/>
   <div className="studio-heading">
    {selected?<button type="button" className="text-button back-link" onClick={()=>S('')}><ArrowLeft size={14}/>返回指数列表</button>
     :<p className="muted small">浏览已建档指数，选择名称查看详情。</p>}

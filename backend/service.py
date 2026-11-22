@@ -764,10 +764,12 @@ class Service:
                 current_basis=reference_basis(item,None,item.get('record_date'),anchor)
                 item['notification_basis']=current_basis if review_changes(anchor,current_basis,us_market=inst['market']=='US') else anchor
                 if inst['market'] == 'US' and before:
-                    previous_basis = reference_basis(before, None, before.get('record_date'))
                     if (before['source'] == 'Tiingo·现金分派参考' and item['source'] == 'Yahoo现金分派参考'
-                            and not review_changes(previous_basis, current_basis, us_market=True)):
-                        continue  # Keep the available precise observation on an equivalent fallback.
+                            and before['currency'] == item['currency'] == 'USD' and before['ex_date'] == item['ex_date']
+                            and dec(item.get('split_restore_factor') or '1') == 1):
+                        # Yahoo fills gaps. An unadjusted secondary quote for the same
+                        # distribution cannot undo an already published Tiingo correction.
+                        continue
                     if before['source'] == item['source'] and before['source'] != 'Yahoo现金分派参考' and before['per_share'] != item['per_share']:
                         item['notification_basis'] = current_basis
                 db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(notice_id,instrument_id,json_dumps(item)))

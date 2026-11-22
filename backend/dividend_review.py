@@ -93,7 +93,17 @@ def audited_us_basis(history, event, decision, notice, baseline):
     receipts = history.get(key)
     if not receipts:
         return baseline
-    accepted_at, receipt = receipts[-1]
+    if decision:
+        # Reminder toggles retain review_revision. The acceptance time belongs to
+        # the first audit entry for that revision, before those later toggles.
+        accepted_row = next((entry for entry in receipts
+                             if entry[1].get('review_revision') == decision.get('review_revision')
+                             and entry[1].get('mode') == 'keep_recorded'), None)
+        if accepted_row is None:
+            return baseline
+        accepted_at, receipt = accepted_row
+    else:
+        accepted_at, receipt = receipts[-1]
     accepted = (receipt.get('review_basis') if decision else receipt.get('dividend_basis')) or {}
     if (receipt.get('notice_id' if decision else 'source_dividend_id') != notice_id
             or receipt.get('portfolio_id') != event['portfolio_id'] or receipt.get('instrument_id') != event['instrument_id']

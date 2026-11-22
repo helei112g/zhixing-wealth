@@ -234,6 +234,7 @@ export function WaterlevelPage({today,onData}: Obj) {
   const [overviewWindow, setOverviewWindow] = useState(10);
   const [equityWindow, setEquityWindow] = useState(0);
   const [data, setData] = useState<Obj|null>(null);
+  const [revisionError, setRevisionError] = useState('');
   const [dataVersion, setDataVersion] = useState<string|null>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [running, setRunning] = useState(false);
@@ -258,8 +259,8 @@ export function WaterlevelPage({today,onData}: Obj) {
     async function refresh(initial=false) {
       if((!initial&&document.hidden)||busy)return;
       busy=true;
-      try {const result=await api('/market-waterlevel/revision', undefined, 'GET', AbortSignal.timeout(1000));if(active){setRunning(result.updating);setDataVersion(result.research_revision+'|'+result.errors_version);}}
-      catch(error:any){if(active){setError(error.message);setDataVersion(last=>last??'unknown');}}
+      try {const result=await api('/market-waterlevel/revision', undefined, 'GET', AbortSignal.timeout(1000));if(active){setRevisionError('');setRunning(result.updating);setDataVersion(result.research_revision+'|'+result.errors_version);}}
+      catch(error:any){if(active){setRevisionError(error.message);setDataVersion(last=>last??'unknown');}}
       finally{busy=false;}
     }
     refresh(true);
@@ -295,7 +296,7 @@ export function WaterlevelPage({today,onData}: Obj) {
   const blocked=loading||saving||running;
   const lines=(keys:string[],window=0,zoom=false)=>data?.series.filter((item:Obj)=>keys.includes(item.id)).map((item:Obj)=><StatisticCard key={item.id} label={item.label} statistics={item.statistics} unit={item.unit} window={window} zoom={zoom} asof={asof} zero={['money_gap','repo_spread','cn_term','us_term','erp'].includes(item.id)}/>);
   return <div className="waterlevel-page">
-    <ErrorBox error={error}/>
+    <ErrorBox error={error||revisionError}/>
     <div className="inline-actions"><Button onClick={onData}>数据管理</Button></div>
     {running&&<p className="muted small" role="status">更新正在执行，已有有效数据保留；结果与失败项可在研究工具的数据管理中核对。</p>}
     {loading&&!data&&<p role="status" className="muted small">正在读取本地市场数据…</p>}

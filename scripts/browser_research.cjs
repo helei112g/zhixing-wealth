@@ -131,10 +131,16 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   const counts=(await api('/settings/lixinger')).counts;
   check(Object.values(counts).some(value=>value>20),'full history collection continues past the former default cap');
 
+  const indexReads=[];
+  const countIndexRead=req=>indexReads.push(new URL(req.url()).pathname);
+  page.on('request',countIndexRead);
   await navigate('指数研究');
   const listing=page.getByRole('table',{name:'指数列表',exact:true});
   const indexLink=listing.getByRole('button',{name:'中证500',exact:true});
   await indexLink.waitFor();
+  page.off('request',countIndexRead);
+  check(['/api/research/indices','/api/research/catalog'].every(endpoint=>
+    indexReads.filter(path=>path===endpoint).length===1),'opening a published revision requests the list and catalog once');
   const indexListData=await api('/research/indices?method=mcw');
   const year=indexListData.calendar_year;
   check(JSON.stringify(await listing.getByRole('columnheader').allTextContents())===JSON.stringify([

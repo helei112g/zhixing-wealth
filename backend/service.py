@@ -762,7 +762,7 @@ class Service:
                 anchor=(before or {}).get('notification_basis')
                 if not anchor and before:anchor=reference_basis(before,None,before.get('record_date'))
                 current_basis=reference_basis(item,None,item.get('record_date'),anchor)
-                item['notification_basis']=current_basis if review_changes(anchor,current_basis) else anchor
+                item['notification_basis']=current_basis if review_changes(anchor,current_basis,us_market=inst['market']=='US') else anchor
                 db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(notice_id,instrument_id,json_dumps(item)))
                 old={k:v for k,v in (before or {}).items() if k!='fetched_at'}
                 current={k:v for k,v in item.items() if k!='fetched_at'}
@@ -842,6 +842,30 @@ class Service:
         return dict(result, status='available', quantity=ds(quantity),
                     note='再投总价（不含手续费）÷当日单位净值，四舍五入至两位小数；仅供估算，请按确认单核对。')
 
+    def legacy_us_dividend_notice(self, event, notice_id, basis):
+        """Read the notice version in effect when this receipt was last confirmed."""
+        with self.store.connection() as db:
+            confirmed = db.execute("""SELECT id,after_data FROM revisions
+                WHERE entity='event' AND entity_id=? AND reason IN
+                ('本人核对公开分红后确认入账','历史持仓变化后重新核对分红')
+                ORDER BY id DESC LIMIT 1""", (event['id'],)).fetchone()
+            if not confirmed or not confirmed[1]:
+                return {}
+            receipt = json.loads(confirmed[1])
+            if receipt.get('source_dividend_id') != notice_id or receipt.get('portfolio_id') != event['portfolio_id']:
+                return {}
+            accepted = receipt.get('dividend_basis') or {}
+            if any(accepted.get(k) != basis.get(k) for k in ('per_share', 'eligible_quantity', 'record_date')):
+                return {}
+            version = db.execute("""SELECT after_data FROM revisions
+                WHERE entity='dividend_notice' AND entity_id=? AND id < ?
+                ORDER BY id DESC LIMIT 1""", (notice_id, confirmed[0])).fetchone()
+        notice = json.loads(version[0]) if version and version[0] else {}
+        if (notice.get('instrument_id') != event['instrument_id'] or notice.get('currency') != event['currency']
+                or notice.get('per_share') != basis['per_share']):
+            return {}
+        return notice
+
     def dividend_candidates(self,portfolio_id,instrument_id=None,*,state=None,market_data=None):
         state=state or self.store.state();p=self.portfolio(state,portfolio_id)
         attached={a['instrument_id'] for a in state['allocations'] if a['portfolio_id']==portfolio_id}
@@ -869,6 +893,13 @@ class Service:
                 # Confirming a notice has always required matching currencies;
                 # the receipt therefore supplies this missing legacy basis fact.
                 baseline.setdefault('currency',recorded['currency'])
+                if inst['market'] == 'US' and existing and not reviewed and 'source' not in baseline:
+                    accepted_notice = self.legacy_us_dividend_notice(existing, notice['id'], baseline)
+                    for key in ('source', 'ex_date', 'split_restore_factor', 'pay_date'):
+                        if accepted_notice.get(key) is not None:
+                            baseline.setdefault(key, accepted_notice[key])
+                    if accepted_notice.get('record_date'):
+                        baseline.setdefault('notice_record_date', accepted_notice['record_date'])
             cutoff=(day(notice['ex_date'])-timedelta(days=1)).isoformat() if inst['market'] in ('HK','US') else notice.get('record_date')
             if not cutoff and recorded:cutoff=(baseline or {}).get('record_date') or recorded.get('record_date')
             qty=None
@@ -889,7 +920,8 @@ class Service:
             basis['estimated_gross']=ds(gross) if gross is not None else None
             changes = []
             if recorded and (baseline or existing):
-                changes = review_changes(baseline, basis, keep_yahoo_hkd=reviewed and inst['market'] == 'HK')
+                changes = review_changes(baseline, basis, keep_yahoo_hkd=reviewed and inst['market'] == 'HK',
+                                         us_market=inst['market'] == 'US')
             elif manual and gross is not None and dec(manual['gross_amount']) != gross:
                 changes = ['missing_basis']
             if reviewed and recorded['date']!=decision.get('event_date',baseline.get('ex_date',recorded['date'])):

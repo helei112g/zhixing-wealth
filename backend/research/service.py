@@ -12,7 +12,7 @@ from . import providers,price_chunks
 from .snapshots import encode,decode
 from .validation import validate as validate_snapshot,public_url
 from .updates import AUTOMATIC_SCOPES, UpdateJobs,SCOPES,MODULES
-from .metrics import WINDOWS, METHOD_VERSION, clean_prices, drawdown, valuation, financial_totals,price_changes,moving_averages
+from .metrics import WINDOWS, METHOD_VERSION, clean_prices, price_drawdown, valuation, financial_totals,price_changes,moving_averages
 from .metrics import PRIMARY_VALUATIONS, VALUATION_GROUPS, valuation_position
 from .lixinger_access import LocalAccess
 from .collection import Collection, subscription
@@ -175,7 +175,8 @@ class ResearchService:
             series=(v or {}).get('series',{}).get(metric,{}).get(method)
             if series:
                 valuations[metric]=valuation(series,str(today()),allow_zero=metric=='dividend_yield')
-        dd={str(w):drawdown(prices,asof,w,allow_partial=(price or {}).get('provider_id')=='lixinger') for w in (*WINDOWS,0)}
+        dd = {str(w): price_drawdown(prices, w, allow_partial=(price or {}).get('provider_id') == 'lixinger',
+                                     include_curve=not summary and w == window) for w in (*WINDOWS, 0)}
         sample=dd[str(window)]
         curve=sample.get('curve',[])
         # Keep complete data for math; only the display curve is downsampled.

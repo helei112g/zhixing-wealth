@@ -1,5 +1,5 @@
 """Comparison of source references, separate from the confirmed ledger facts."""
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from .common import dec, ds
 
@@ -45,16 +45,37 @@ def minor_yahoo_change(before, after):
     return old > 0 and delta <= YAHOO_PER_SHARE_TOLERANCE and delta <= old * YAHOO_RELATIVE_TOLERANCE
 
 
-def review_changes(before, after, *, keep_yahoo_hkd=False):
+def us_yahoo_source_switch(before, after):
+    # Yahoo publishes some US distributions rounded to a thousandth of a dollar.
+    # Compare the two observations at that precision only across a known source switch.
+    yahoo, detailed = (before, after) if before.get('source') == 'Yahoo现金分派参考' else (after, before)
+    return (yahoo.get('source') == 'Yahoo现金分派参考' and yahoo.get('currency') == 'USD'
+            and detailed.get('currency') == 'USD' and detailed.get('source') in {
+                'Tiingo·现金分派参考', 'Nasdaq现金派息表', 'State Street·ETF分派表', 'Vanguard·ETF分派表'})
+
+
+def same_us_payout_precision(before, after):
+    yahoo, detailed = (before, after) if before.get('source') == 'Yahoo现金分派参考' else (after, before)
+    # Split restoration can scale the published rounding unit. Do not infer a
+    # conversion for such distributions.
+    if any(dec(b.get('split_restore_factor') or '1') != 1 for b in (yahoo, detailed)):
+        return False
+    return dec(detailed['per_share']).quantize(Decimal('.001'), rounding=ROUND_HALF_UP) == dec(yahoo['per_share'])
+
+
+def review_changes(before, after, *, keep_yahoo_hkd=False, us_market=False):
     if not before or 'eligible_quantity' not in before or before.get('per_share') is None:
         return ['missing_basis']
     changes = []
+    us_switch = us_market and us_yahoo_source_switch(before, after)
     for key in ('eligible_quantity', 'record_date', 'notice_record_date', 'pay_date', 'ex_date', 'currency', 'split_restore_factor'):
         # Quantity is a computed entitlement, not an optional source field.
         # Losing a previously known quantity must keep the review open.
         if key not in before or (key!='eligible_quantity' and after.get(key) is None):
             continue
         old, new = before[key], after[key]
+        if us_switch and key == 'split_restore_factor' and old is None and dec(new) == 1:
+            continue
         if key in ('eligible_quantity', 'split_restore_factor') and old is not None and new is not None:
             equal = dec(old) == dec(new)
         else:
@@ -66,5 +87,6 @@ def review_changes(before, after, *, keep_yahoo_hkd=False):
         for basis in (before, after)
     )
     if dec(before['per_share']) != dec(after['per_share']) and not yahoo_hkd_reference and not minor_yahoo_change(before, after):
-        changes.append('per_share')
+        if not (us_switch and same_us_payout_precision(before, after)):
+            changes.append('per_share')
     return changes

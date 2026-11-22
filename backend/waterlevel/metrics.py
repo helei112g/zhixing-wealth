@@ -80,7 +80,8 @@ def analyze(rows, asof, *, positive=False, stale_days=14, frequency='daily'):
     chart_months = []
     if months:
         month = min(months)
-        while month <= max(months):
+        last_month = max(months)
+        while month <= last_month:
             chart_months.append(month)
             month = month_shift(month, 1)
     points = []

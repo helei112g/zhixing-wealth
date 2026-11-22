@@ -234,8 +234,7 @@ export function WaterlevelPage({today,onData}: Obj) {
   const [overviewWindow, setOverviewWindow] = useState(10);
   const [equityWindow, setEquityWindow] = useState(0);
   const [data, setData] = useState<Obj|null>(null);
-  const [revision, setRevision] = useState(0);
-  const [errorsVersion, setErrorsVersion] = useState('');
+  const [dataVersion, setDataVersion] = useState<string|null>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [running, setRunning] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -245,24 +244,25 @@ export function WaterlevelPage({today,onData}: Obj) {
   const [saving, setSaving] = useState(false);
 
   useEffect(()=>{
+    if(dataVersion===null)return;
     let active=true;
     setLoading(true);
     const request = api('/market-waterlevel?'+query({method,asof}));
     request.then(value=>{if(active){setData(value);setError('');}}).catch(error=>{if(active)setError(error.message);})
       .finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;};
-  },[method,asof,revision,errorsVersion,refreshRequest]);
+  },[method,asof,dataVersion,refreshRequest]);
 
   useEffect(()=>{
     let active=true, busy=false;
-    async function refresh() {
-      if(document.hidden||busy)return;
+    async function refresh(initial=false) {
+      if((!initial&&document.hidden)||busy)return;
       busy=true;
-      try {const result=await api('/market-waterlevel/revision');if(active){setRunning(result.updating);setRevision(result.research_revision);setErrorsVersion(result.errors_version);}}
-      catch(error:any){if(active)setError(error.message);}
+      try {const result=await api('/market-waterlevel/revision');if(active){setRunning(result.updating);setDataVersion(result.research_revision+'|'+result.errors_version);}}
+      catch(error:any){if(active){setError(error.message);setDataVersion(last=>last??'unknown');}}
       finally{busy=false;}
     }
-    refresh();
+    refresh(true);
     const timer=setInterval(refresh,3000);
     api('/market-waterlevel/snapshots').then(value=>{if(active)setReports(value.items);}).catch(error=>{if(active)setError(error.message);});
     return()=>{active=false;clearInterval(timer);};

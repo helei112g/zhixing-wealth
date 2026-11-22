@@ -346,6 +346,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                     'unknown_entitlement': 'a known quantity becoming null requires review',
                                     'audit': '/api/revisions/dividend_decision/{decision_id}',
                                     'reviewed_hk_yahoo_hkd_rate': 'two Yahoo HKD references do not reopen an explicitly kept receipt on rate alone',
+                                    'reviewed_hk_usd_declaration': 'match a retained HKD receipt to the first audited USD declaration by ex-date, actual pay date and corroborating HKD references; later changes reopen review',
                                     'yahoo_reference_tolerance': {'relative': '0.0001', 'per_share_absolute': '0.005',
                                                                  'both_required': True, 'anchor': 'last reviewed basis'},
                                     'entitlement_tolerance': 'none; quantity, dates, currency and split factors compare exactly'},

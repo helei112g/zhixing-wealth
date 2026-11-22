@@ -23,7 +23,8 @@ from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
 from .holding_analysis import HoldingAnalysis, label_map, resolve_labels, normalize_labels
 from .event_deletion import deletion_plan
-from .dividend_review import audited_us_basis, reference_basis, review_changes, us_review_history, CHANGE_LABELS
+from .dividend_review import (CHANGE_LABELS, audited_hk_basis, audited_us_basis, hk_usd_declaration_matches,
+                              overseas_review_history, reference_basis, review_changes)
 from . import market
 from . import dividends
 from .sync_meta import TRIGGERS, trigger_metadata
@@ -855,7 +856,7 @@ class Service:
         state=state or self.store.state();p=self.portfolio(state,portfolio_id)
         attached={a['instrument_id'] for a in state['allocations'] if a['portfolio_id']==portfolio_id}
         instruments={i['id']:i for i in state['instruments']};result=[]
-        us_history = None
+        review_history = None
         for notice in state['corporate_actions']:
             if notice.get('kind')!='dividend_notice' or notice.get('status')=='withdrawn' or notice['instrument_id'] not in attached:continue
             if instrument_id and notice['instrument_id']!=instrument_id:continue
@@ -881,11 +882,22 @@ class Service:
                 # the receipt therefore supplies this missing legacy basis fact.
                 baseline.setdefault('currency',recorded['currency'])
                 previous_basis = baseline
-                if inst['market'] == 'US' and (existing or reviewed) and baseline.get('source') in (None, 'Yahoo现金分派参考'):
-                    if us_history is None:
+                us_reference = (inst['market'] == 'US' and (existing or reviewed)
+                                and baseline.get('source') in (None, 'Yahoo现金分派参考'))
+                hk_declaration = (inst['market'] == 'HK' and reviewed and baseline.get('currency') == 'HKD'
+                                  and baseline.get('source') == 'Yahoo现金分派参考'
+                                  and hk_usd_declaration_matches(notice, recorded, baseline)
+                                  and not any(other['id'] != notice['id'] and other.get('kind') == 'dividend_notice'
+                                              and other.get('status') != 'withdrawn' and other['instrument_id'] == inst['id']
+                                              and other['ex_date'] == notice['ex_date'] for other in state['corporate_actions']))
+                if hk_declaration or us_reference:
+                    if review_history is None:
                         with self.store.connection() as db:
-                            us_history = us_review_history(db, state, portfolio_id, instruments)
-                    baseline = audited_us_basis(us_history, recorded, decision if reviewed else None, notice, baseline)
+                            review_history = overseas_review_history(db, state, portfolio_id, instruments)
+                    if hk_declaration:
+                        baseline = audited_hk_basis(review_history, recorded, decision, notice, baseline)
+                    else:
+                        baseline = audited_us_basis(review_history, recorded, decision if reviewed else None, notice, baseline)
             cutoff=(day(notice['ex_date'])-timedelta(days=1)).isoformat() if inst['market'] in ('HK','US') else notice.get('record_date')
             if not cutoff and recorded:cutoff=(baseline or {}).get('record_date') or recorded.get('record_date')
             qty=None

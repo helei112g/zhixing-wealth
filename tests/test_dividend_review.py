@@ -214,6 +214,69 @@ class DividendReviewTests(unittest.TestCase):
         self.assertEqual(row['status'],'needs_review')
         self.assertIn('每份分红实质变化',row['review_changes'])
 
+    def test_kept_hk_receipt_matches_first_usd_declaration_and_reopens_on_correction(self):
+        # A different provider, source ref and reporting currency for one payment.
+        self.source['per_share'] = '0.993'
+        event = self.confirm()
+        self.keep(self.notice(per_share='0.997'))
+        decision = self.candidate()['review_decision']
+        declaration = dict(self.source, source_ref='synthetic-usd-declaration', source='东方财富·港股现金分红公告',
+                           currency='USD', per_share='0.128', equivalent_currency='HKD', equivalent_per_share='1.0005',
+                           equivalent_calculated=True, pay_date=event['pay_date'], split_restore_factor=None)
+
+        def publish(**updates):
+            self.service.cache_dividends(self.iid, [dict(declaration, **updates)])
+            rows = self.service.dividend_candidates(self.pid, self.iid)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['recorded_event'], event)
+            self.assertEqual(rows[0]['review_decision'], decision)
+            return rows[0]
+
+        row = publish()
+        self.assertEqual((row['status'], row['review_changes']), ('confirmed', []))
+        self.assertFalse(self.reminders())
+        self.service = Service(Store(self.directory))
+        self.assertEqual(publish(equivalent_per_share='1.0007')['status'], 'confirmed')
+        self.assertEqual(publish(pay_date=None)['status'], 'confirmed')
+        self.assertEqual(publish(per_share='0.1279')['review_changes'], ['每份分红实质变化'])
+        self.assertIn('已入账分红待复核', self.reminders()[0]['title'])
+
+        for change in (dict(pay_date='2024-01-19'), dict(split_restore_factor='2'),
+                       dict(equivalent_per_share='1.20'), dict(equivalent_calculated=False),
+                       dict(equivalent_currency='USD'), dict(scrip_option=True)):
+            with self.subTest(change=change):
+                self.assertEqual(publish(**change)['status'], 'needs_review')
+        self.service.save_event(dict(portfolio_id=self.pid, instrument_id=self.iid, kind='BUY',
+                                     date='2024-01-03', quantity='1', gross_amount='10', fx_rate='.91'))
+        self.assertIn('权益份额变化', publish()['review_changes'])
+
+        # A second currency on the same day can represent a separate entitlement.
+        self.service.cache_dividends(self.iid, [dict(declaration, currency='CNY', source_ref='synthetic-cny')])
+        rows = self.service.dividend_candidates(self.pid, self.iid)
+        self.assertEqual({r['notice']['currency']: r['status'] for r in rows},
+                         {'CNY': 'pending', 'USD': 'needs_review'})
+
+    def test_hk_declaration_requires_matching_receipt_and_explicit_review(self):
+        row = self.notice()
+        self.assertEqual(row['status'], 'pending')
+        self.assertIn('分红待确认入账', self.reminders()[0]['title'])
+        event = self.confirm()
+        declaration = dict(self.source, source_ref='synthetic-declaration', source='东方财富·港股现金分红公告',
+                           pay_date=event['pay_date'], currency='USD', per_share='.128', equivalent_currency='HKD',
+                           equivalent_per_share='.999', equivalent_calculated=True)
+        self.service.cache_dividends(self.iid, [declaration])
+        self.assertEqual(self.service.dividend_candidates(self.pid, self.iid)[0]['status'], 'needs_review')
+
+    def test_first_incompatible_declaration_cannot_be_skipped(self):
+        event = self.confirm()
+        self.keep(self.notice(per_share='.998'))
+        declaration = dict(self.source, source_ref='synthetic-declaration', source='东方财富·港股现金分红公告',
+                           pay_date=event['pay_date'], currency='USD', per_share='.20', equivalent_currency='HKD',
+                           equivalent_per_share='1.56', equivalent_calculated=True)
+        for usd, hkd in (('.20', '1.56'), ('.128', '.998')):
+            self.service.cache_dividends(self.iid, [dict(declaration, per_share=usd, equivalent_per_share=hkd)])
+            self.assertEqual(self.service.dividend_candidates(self.pid, self.iid)[0]['status'], 'needs_review')
+
     def test_any_entitlement_change_and_known_date_currency_or_split_change_reopens(self):
         self.confirm()
         self.keep(self.notice(per_share='1.01'))
@@ -504,6 +567,7 @@ class DividendReviewTests(unittest.TestCase):
         row = self.candidate()
         self.assertEqual(row['status'],'needs_review')
         self.assertEqual(row['recorded_event']['kind'],'BUY')
+        self.assertIn('分红流水关联待核对', self.reminders()[0]['title'])
         before = self.store.state()
         with self.assertRaisesRegex(DomainError,'本标的的分红或再投'):
             self.keep(row)
@@ -516,6 +580,7 @@ class DividendReviewTests(unittest.TestCase):
         self.service.save_event(dict(event,instrument_id=other['instrument_id'],change_reason='合成标的更正'),event['id'])
         row = self.notice(per_share='1.01')
         self.assertEqual(row['status'],'needs_review')
+        self.assertIn('分红流水关联待核对', self.reminders()[0]['title'])
         before = self.store.state()
         with self.assertRaisesRegex(DomainError,'本标的的分红或再投'):
             self.keep(row)

@@ -34,7 +34,7 @@ export function ResearchPage({onData}:Obj){
    if((!initial&&document.hidden)||busy)return;
    busy=true;
    try{
-    const value=await api('/research/revision');
+    const value=await api('/research/revision', undefined, 'GET', AbortSignal.timeout(1000));
     if(active){R(last=>Math.max(last??0,value.research_revision));Running(value.updating);}
    }catch(error:any){
     if(active){E(error.message);R(last=>last??0);}

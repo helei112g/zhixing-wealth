@@ -21,6 +21,9 @@ def dividend_reminders(store, state):
             facts['per_share'] = (c['notice'].get('notification_basis') or c['notice'])['per_share']
             facts['entitlement'] = {k:c['review_basis'].get(k) for k in
                                     ('eligible_quantity','record_date','notice_record_date','ex_date','pay_date','currency','split_restore_factor')}
+            if (c['instrument']['market'] == 'US' and c['review_basis']['currency'] == 'USD'
+                    and facts['entitlement']['split_restore_factor'] is None):
+                facts['entitlement']['split_restore_factor'] = '1'
             fingerprint = hashlib.sha256((p['id']+c['notice']['id']+json_dumps(facts)).encode()).hexdigest()
             rows.append(dict(id='dividend:'+p['id']+':'+c['notice']['id'],source='dividend',kind='dividend',
                              title=c['instrument']['name']+' · 分红待核对',detail=p['name'],date=c['notice']['ex_date'],

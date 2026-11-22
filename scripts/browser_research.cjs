@@ -31,6 +31,8 @@ const out = process.env.PORTFOLIO_TEST_OUTPUT;
   assert.equal(health.environment,'dev');assert.equal(health.synthetic_fixture,true);
   assert.equal(health.data_directory,process.env.PORTFOLIO_TEST_DATA_DIR);
   csrf = (await api('/bootstrap')).csrf_token;
+  // A stalled initial version probe must not block the local data request.
+  await page.route('**/api/research/revision',()=>{}, {times:1});
   await page.goto(base);
   await navigate('指数研究');
   await page.getByRole('heading',{name:'还没有指数档案',exact:true}).waitFor();

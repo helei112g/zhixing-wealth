@@ -258,7 +258,7 @@ export function WaterlevelPage({today,onData}: Obj) {
     async function refresh(initial=false) {
       if((!initial&&document.hidden)||busy)return;
       busy=true;
-      try {const result=await api('/market-waterlevel/revision');if(active){setRunning(result.updating);setDataVersion(result.research_revision+'|'+result.errors_version);}}
+      try {const result=await api('/market-waterlevel/revision', undefined, 'GET', AbortSignal.timeout(1000));if(active){setRunning(result.updating);setDataVersion(result.research_revision+'|'+result.errors_version);}}
       catch(error:any){if(active){setError(error.message);setDataVersion(last=>last??'unknown');}}
       finally{busy=false;}
     }

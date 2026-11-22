@@ -1,4 +1,6 @@
 """Comparison of source references, separate from the confirmed ledger facts."""
+import json
+from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 
 from .common import dec, ds
@@ -61,6 +63,64 @@ def same_us_payout_precision(before, after):
     if any(dec(b.get('split_restore_factor') or '1') != 1 for b in (yahoo, detailed)):
         return False
     return dec(detailed['per_share']).quantize(Decimal('.001'), rounding=ROUND_HALF_UP) == dec(yahoo['per_share'])
+
+
+def us_review_history(db, state, portfolio_id, instruments):
+    """Read confirmation and notice versions together, once per candidate list."""
+    us_ids = {iid for iid, instrument in instruments.items() if instrument['market'] == 'US'}
+    ids = set()
+    for event in state['events']:
+        if (event['portfolio_id'] == portfolio_id and event.get('instrument_id') in us_ids
+                and event.get('source_dividend_id')):
+            ids.update((event['id'], event['source_dividend_id']))
+    for decision in state['corporate_actions']:
+        if (decision.get('portfolio_id') == portfolio_id and decision.get('instrument_id') in us_ids
+                and decision.get('mode') == 'keep_recorded'):
+            ids.update((decision['id'], decision['notice_id']))
+    versions = defaultdict(list)
+    for seq, entity, key, data in db.execute("""SELECT id,entity,entity_id,after_data FROM revisions
+            WHERE entity_id IN (SELECT value FROM json_each(?)) AND after_data IS NOT NULL AND
+            (entity IN ('dividend_notice','dividend_decision') OR (entity='event' AND reason IN
+            ('本人核对公开分红后确认入账','历史持仓变化后重新核对分红'))) ORDER BY id""", (json.dumps(sorted(ids)),)):
+        versions[(entity, key)].append((seq, json.loads(data)))
+    return versions
+
+
+def audited_us_basis(history, event, decision, notice, baseline):
+    """Recover the accepted source and its first equivalent precise observation from the audit."""
+    notice_id = notice['id']
+    key = ('dividend_decision', decision['id']) if decision else ('event', event['id'])
+    receipts = history.get(key)
+    if not receipts:
+        return baseline
+    accepted_at, receipt = receipts[-1]
+    accepted = (receipt.get('review_basis') if decision else receipt.get('dividend_basis')) or {}
+    if (receipt.get('notice_id' if decision else 'source_dividend_id') != notice_id
+            or receipt.get('portfolio_id') != event['portfolio_id'] or receipt.get('instrument_id') != event['instrument_id']
+            or (decision and receipt.get('event_id') != event['id'])
+            or any(accepted.get(k) != baseline.get(k) for k in ('per_share', 'eligible_quantity', 'record_date'))):
+        return baseline
+    versions = history.get(('dividend_notice', notice_id), ())
+    original = next((row for seq, row in reversed(versions) if seq < accepted_at), None)
+    if (not original or original.get('instrument_id') != event['instrument_id']
+            or original.get('currency') != baseline.get('currency') or original.get('per_share') != baseline.get('per_share')):
+        return baseline
+    basis = dict(baseline)
+    for key in ('source', 'ex_date', 'split_restore_factor', 'pay_date'):
+        if original.get(key) is not None:
+            basis.setdefault(key, original[key])
+    if original.get('record_date'):
+        basis.setdefault('notice_record_date', original['record_date'])
+
+    if not us_yahoo_source_switch(basis, notice) or basis.get('source') != 'Yahoo现金分派参考':
+        return basis
+    for seq, row in versions:
+        if (seq > accepted_at and row.get('instrument_id') == event['instrument_id'] and row.get('ex_date') == basis.get('ex_date')
+                and us_yahoo_source_switch(basis, row) and same_us_payout_precision(basis, row)):
+            # Freeze the first corroborating rate. A later precise correction, even
+            # within the same Yahoo rounding interval, must reopen this receipt.
+            return dict(basis, source=row['source'], per_share=row['per_share'])
+    return basis
 
 
 def review_changes(before, after, *, keep_yahoo_hkd=False, us_market=False):

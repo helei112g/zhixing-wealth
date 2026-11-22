@@ -35,6 +35,8 @@ const asof = '2026-10-30';
         await route.fulfill({response, json: {...await response.json(), today: asof}});
       });
     }
+    // A stalled initial version probe must not block the local data request.
+    await page.route('**/api/market-waterlevel/revision',()=>{}, {times:1});
     await page.goto(base);
     await page.getByRole('button', {name: '市场水位', exact: true}).click();
     await page.getByRole('heading', {name: '规则摘要', exact: true}).waitFor();

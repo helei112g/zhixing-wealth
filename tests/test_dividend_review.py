@@ -147,8 +147,32 @@ class DividendReviewTests(unittest.TestCase):
             row = self.service.dividend_candidates(self.pid, iid)[0]
             self.assertEqual((row['status'], row['recorded_event']), ('confirmed', event))
             self.assertFalse(self.reminders())
+        self.service.cache_dividends(iid, [dict(notice, source='State Street·ETF分派表', per_share='.12549')])
+        corrected = self.service.dividend_candidates(self.pid, iid)[0]
+        self.assertEqual(corrected['review_changes'], ['每份分红实质变化'])
+        self.assertEqual(corrected['recorded_event'], event)
+        self.assertEqual(corrected['previous_basis']['per_share'], '0.125')
+        self.assertEqual(len(self.reminders()), 1)
+        self.keep(corrected)
+        self.assertFalse(self.reminders())
         self.service.cache_dividends(iid, [dict(notice, source='State Street·ETF分派表', per_share='.12449')])
         self.assertEqual(self.service.dividend_candidates(self.pid, iid)[0]['status'], 'needs_review')
+
+    def test_pending_us_source_switch_preserves_notification(self):
+        purchase = self.service.save_event(dict(portfolio_id=self.pid, kind='BUY', date='2024-01-02',
+            instrument=dict(market='US', code='VIG', name='合成美股ETF'), quantity='100', gross_amount='1000', fx_rate='7'))
+        iid = purchase['instrument_id']
+        yahoo = dict(self.source, code='VIG', source_ref='synthetic-us', currency='USD', per_share='.125')
+        tiingo = dict(yahoo, source='Tiingo·现金分派参考', per_share='.12456', split_restore_factor=None)
+        fingerprints = []
+        for row in (yahoo, tiingo, yahoo, tiingo):
+            self.service.cache_dividends(iid, [row])
+            fingerprints.append(self.reminders()[0]['fingerprint'])
+        self.assertEqual(len(set(fingerprints)), 1)
+        self.service.cache_dividends(iid, [dict(tiingo, per_share='.12457')])
+        self.assertNotEqual(self.reminders()[0]['fingerprint'], fingerprints[0])
+        self.service.cache_dividends(iid, [dict(yahoo, split_restore_factor='2')])
+        self.assertEqual(self.service.dividend_candidates(self.pid, iid)[0]['review_basis']['split_restore_factor'], '2')
 
     def test_reviewed_yahoo_hkd_reference_can_vary_without_changing_receipt(self):
         event=self.confirm()

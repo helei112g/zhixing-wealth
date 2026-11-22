@@ -1,10 +1,11 @@
 export type Obj = Record<string, any>;
 let csrf = '';
 export class ApiError extends Error {constructor(message:string, public status:number){super(message);}}
-export async function api(path: string, body?: unknown, method?: string): Promise<any> {
+export async function api(path: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<any> {
   const response = await fetch('/api' + path, {
     method: method || (body === undefined ? 'GET' : 'POST'),
     credentials: 'same-origin',
+    signal,
     headers: body === undefined ? {} : {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
     body: body === undefined ? undefined : JSON.stringify(body),
   });

@@ -23,11 +23,15 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
   const buy=await api('/events',{portfolio_id:p.id,kind:'BUY',date:'2024-01-02',instrument:{market:'HK',code:'00700',name:'合成分红标的'},quantity:'100',gross_amount:'1000',fx_rate:'.91'});
   const candidates=()=>api('/portfolios/'+p.id+'/dividends'),events=()=>api('/portfolios/'+p.id+'/transactions');
   fixture(buy.instrument_id,'1');let candidate=(await candidates())[0];
+  await page.goto(base+'/?reminders=1');
+  await page.getByRole('row').filter({hasText:'分红待确认入账'}).getByRole('cell',{name:'待确认入账',exact:true}).waitFor();
   const saved=await api('/dividends/'+candidate.notice.id+'/confirm',{...candidate.suggested_event,gross_amount:'99.9876',tax:'1.2345',net_amount:'98.7531',tax_known:true,pay_date:'2024-01-18',fx_rate:'.9134',fx_source_date:'2024-01-10',pay_fx_rate:'.9234',pay_fx_source_date:'2024-01-17',expected_revision:candidate.revision});
   const original=await events();fixture(buy.instrument_id,'1.00005');
   check((await candidates())[0].status==='confirmed'&&!(await api('/reminders')).items.some(r=>r.kind==='dividend'),'Yahoo micro adjustment does not reopen confirmed receipt');
   fixture(buy.instrument_id,'1.01');candidate=(await candidates())[0];check(candidate.status==='needs_review','substantive reference correction opens review');
-  await page.goto(base+'/?reminders=1');await page.getByRole('button',{name:'核对分红',exact:true}).click();await keep().click();
+  await page.goto(base+'/?reminders=1');
+  await page.getByRole('row').filter({hasText:'已入账分红待复核'}).getByRole('cell',{name:'待复核',exact:true}).waitFor();
+  await page.getByRole('button',{name:'核对分红',exact:true}).click();await keep().click();
   const preview=dialog().getByLabel('保留实际到账核对');await preview.waitFor();
   check((await preview.innerText()).includes('99.9876 − 税费 1.2345 = 税后 98.7531 HKD')&&(await preview.innerText()).includes('2024-01-18')&&(await preview.innerText()).includes('0.9234'),'review displays exact receipt, tax, payment date and locked FX');
   check(JSON.stringify(await events())===JSON.stringify(original),'opening review leaves ledger unchanged');

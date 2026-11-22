@@ -32,8 +32,9 @@ def dividend_reminders(store, state, *, native=False):
                     legacy['legacy_fingerprint'] = identity()
                 facts['entitlement']['split_restore_factor'] = '1'
             fingerprint = identity()
+            title = '已入账分红待复核' if c['status'] == 'needs_review' else '分红待确认入账'
             rows.append(dict(id='dividend:'+p['id']+':'+c['notice']['id'],source='dividend',kind='dividend',
-                             title=c['instrument']['name']+' · 分红待核对',detail=p['name'],date=c['notice']['ex_date'],
+                             title=c['instrument']['name']+' · '+title,detail=p['name'],date=c['notice']['ex_date'],
                              amount=None,currency=c['notice']['currency'],days=None,severity='attention',
                              portfolio_id=p['id'],event_id=c['event_id'],fingerprint=fingerprint,**legacy,
                              action=dict(type='dividend',portfolio_id=p['id'],label='核对分红')))

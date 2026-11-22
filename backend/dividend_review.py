@@ -65,7 +65,7 @@ def same_us_payout_precision(before, after):
     return dec(detailed['per_share']).quantize(Decimal('.001'), rounding=ROUND_HALF_UP) == dec(yahoo['per_share'])
 
 
-def us_review_history(db, state, portfolio_id, instruments):
+def overseas_review_history(db, state, portfolio_id, instruments):
     """Read confirmation and notice versions together, once per candidate list."""
     us_ids = {iid for iid, instrument in instruments.items() if instrument['market'] == 'US'}
     ids = set()
@@ -74,8 +74,11 @@ def us_review_history(db, state, portfolio_id, instruments):
                 and event.get('source_dividend_id')):
             ids.update((event['id'], event['source_dividend_id']))
     for decision in state['corporate_actions']:
-        if (decision.get('portfolio_id') == portfolio_id and decision.get('instrument_id') in us_ids
-                and decision.get('mode') == 'keep_recorded'):
+        if decision.get('portfolio_id') != portfolio_id or decision.get('mode') != 'keep_recorded':
+            continue
+        instrument = instruments.get(decision.get('instrument_id'), {})
+        if instrument.get('market') == 'US' or (instrument.get('market') == 'HK'
+                and (decision.get('review_basis') or {}).get('source') == 'Yahoo现金分派参考'):
             ids.update((decision['id'], decision['notice_id']))
     versions = defaultdict(list)
     for seq, entity, key, data in db.execute("""SELECT id,entity,entity_id,after_data FROM revisions
@@ -86,6 +89,52 @@ def us_review_history(db, state, portfolio_id, instruments):
     return versions
 
 
+def accepted_review(receipts, decision):
+    # Reminder toggles retain review_revision. Use the original acceptance.
+    return next((entry for entry in receipts
+                 if entry[1].get('review_revision') == decision.get('review_revision')
+                 and entry[1].get('mode') == 'keep_recorded'), None)
+
+
+def hk_usd_declaration_matches(notice, event, baseline):
+    """Corroborate a USD declaration against an explicitly retained HKD receipt."""
+    if (notice.get('source') != '东方财富·港股现金分红公告' or notice.get('currency') != 'USD'
+            or notice.get('equivalent_currency') != 'HKD' or notice.get('equivalent_calculated') is not True
+            or not notice.get('equivalent_per_share') or not baseline.get('per_share')
+            or notice.get('components') or notice.get('scrip_option')
+            or notice.get('instrument_id') != event['instrument_id'] or event.get('currency') != 'HKD'
+            or notice['ex_date'] != baseline.get('ex_date') or notice['ex_date'] < '2005-06-20'
+            or not event.get('pay_date') or notice.get('pay_date') not in (None, event['pay_date'])
+            or dec(notice.get('split_restore_factor') or '1') != 1
+            or dec(baseline.get('split_restore_factor') or '1') != 1):
+        return False
+    quantity = dec(baseline.get('eligible_quantity') or '0')
+    if quantity <= 0:
+        return False
+
+    # HKMA's convertibility zone since June 2005. Use it only to corroborate
+    # three observations of the same payout, never to price or rewrite a receipt.
+    usd = dec(notice['per_share'])
+    low, high = usd * Decimal('7.75'), usd * Decimal('7.85')
+    return (low <= dec(baseline['per_share']) <= high
+            and low <= dec(notice['equivalent_per_share']) <= high
+            and low * quantity <= dec(event['gross_amount']) <= high * quantity)
+
+
+def audited_hk_basis(history, event, decision, notice, baseline):
+    accepted = accepted_review(history.get(('dividend_decision', decision['id']), ()), decision)
+    if not accepted or accepted[1].get('event_id') != event['id'] or accepted[1].get('review_basis') != baseline:
+        return baseline
+    # Anchor the first declaration after the review. A later correction must
+    # remain visible even when its USD rate implies a plausible HKD conversion.
+    first = next((row for seq, row in history.get(('dividend_notice', notice['id']), ())
+                  if seq > accepted[0] and row.get('source') != 'Yahoo现金分派参考'), None)
+    if not first or first.get('pay_date') != event.get('pay_date') or not hk_usd_declaration_matches(first, event, baseline):
+        return baseline
+    return dict(baseline, source=first['source'], currency=first['currency'], per_share=first['per_share'],
+                pay_date=baseline.get('pay_date') or first['pay_date'])
+
+
 def audited_us_basis(history, event, decision, notice, baseline):
     """Recover the accepted source and its first equivalent precise observation from the audit."""
     notice_id = notice['id']
@@ -94,11 +143,7 @@ def audited_us_basis(history, event, decision, notice, baseline):
     if not receipts:
         return baseline
     if decision:
-        # Reminder toggles retain review_revision. The acceptance time belongs to
-        # the first audit entry for that revision, before those later toggles.
-        accepted_row = next((entry for entry in receipts
-                             if entry[1].get('review_revision') == decision.get('review_revision')
-                             and entry[1].get('mode') == 'keep_recorded'), None)
+        accepted_row = accepted_review(receipts, decision)
         if accepted_row is None:
             return baseline
         accepted_at, receipt = accepted_row

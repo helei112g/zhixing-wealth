@@ -101,6 +101,9 @@ assert.ok(out&&process.env.PORTFOLIO_TEST_DATA_DIR);fs.mkdirSync(out,{recursive:
   await keep().waitFor();
   check(!await keep().isEnabled()&&(await keep().getAttribute('title')).includes('不是本标的的分红或再投'),'invalid source binding cannot use keep action in UI');
   await page.screenshot({path:path.join(out,'dividend-review-invalid-binding.png'),fullPage:true});
+  await dialog().getByRole('button',{name:'关闭',exact:true}).click();
+  await page.goto(base+'/?reminders=1');
+  await page.getByRole('row').filter({hasText:'分红流水关联待核对'}).getByRole('cell',{name:'待复核',exact:true}).waitFor();
   check(!errors.length,'no uncaught browser errors');
   fs.writeFileSync(path.join(out,'dividend-review-results.json'),JSON.stringify({checks:count,errors},null,2));
  }catch(error){await page.screenshot({path:path.join(out,'failure.png'),fullPage:true}).catch(()=>{});throw error;}finally{await browser.close();}

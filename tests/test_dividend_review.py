@@ -567,6 +567,7 @@ class DividendReviewTests(unittest.TestCase):
         row = self.candidate()
         self.assertEqual(row['status'],'needs_review')
         self.assertEqual(row['recorded_event']['kind'],'BUY')
+        self.assertIn('分红流水关联待核对', self.reminders()[0]['title'])
         before = self.store.state()
         with self.assertRaisesRegex(DomainError,'本标的的分红或再投'):
             self.keep(row)
@@ -579,6 +580,7 @@ class DividendReviewTests(unittest.TestCase):
         self.service.save_event(dict(event,instrument_id=other['instrument_id'],change_reason='合成标的更正'),event['id'])
         row = self.notice(per_share='1.01')
         self.assertEqual(row['status'],'needs_review')
+        self.assertIn('分红流水关联待核对', self.reminders()[0]['title'])
         before = self.store.state()
         with self.assertRaisesRegex(DomainError,'本标的的分红或再投'):
             self.keep(row)

@@ -17,7 +17,8 @@ def dividend_reminders(store, state, *, native=False):
             # A completed review advances review_revision, so a later substantive
             # correction gets a new dispatch even if its entitlement is unchanged.
             facts = {k:c[k] for k in ('status','event_id','review_revision')}
-            facts['event_date'] = (c['recorded_event'] or {}).get('date')
+            recorded = c['recorded_event'] or {}
+            facts['event_date'] = recorded.get('date')
             facts['per_share'] = (c['notice'].get('notification_basis') or c['notice'])['per_share']
             facts['entitlement'] = {k:c['review_basis'].get(k) for k in
                                     ('eligible_quantity','record_date','notice_record_date','ex_date','pay_date','currency','split_restore_factor')}
@@ -32,7 +33,12 @@ def dividend_reminders(store, state, *, native=False):
                     legacy['legacy_fingerprint'] = identity()
                 facts['entitlement']['split_restore_factor'] = '1'
             fingerprint = identity()
-            title = '已入账分红待复核' if c['status'] == 'needs_review' else '分红待确认入账'
+            if c['status'] == 'pending':
+                title = '分红待确认入账'
+            elif recorded.get('kind') in ('DIVIDEND', 'REINVEST') and recorded.get('instrument_id') == c['instrument']['id']:
+                title = '已入账分红待复核'
+            else:
+                title = '分红流水关联待核对'
             rows.append(dict(id='dividend:'+p['id']+':'+c['notice']['id'],source='dividend',kind='dividend',
                              title=c['instrument']['name']+' · '+title,detail=p['name'],date=c['notice']['ex_date'],
                              amount=None,currency=c['notice']['currency'],days=None,severity='attention',

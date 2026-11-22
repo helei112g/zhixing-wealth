@@ -157,13 +157,13 @@ def quotes(instrument, start, end, include_adjusted=True, adjusted_start=None):
     if instrument['market']=='US':
         from . import tiingo, yahoo
         try:
-            return yahoo.quotes(instrument, start, end, adjusted_start=adjusted_start)
+            return tiingo.quotes(instrument, start, end, adjusted_start=adjusted_start)
         except (ProviderError, ValueError, KeyError) as primary:
             try:
-                result = tiingo.quotes(instrument, start, end, adjusted_start)
+                result = yahoo.quotes(instrument, start, end, adjusted_start=adjusted_start)
             except (ProviderError, ValueError, KeyError) as backup:
-                raise ProviderError(f'Yahoo：{primary}；Tiingo：{backup}') from None
-            result['notes'].append(f'Yahoo：{primary}；已从独立备用源取得行情')
+                raise ProviderError(f'Tiingo：{primary}；Yahoo：{backup}') from None
+            result['notes'].append('Tiingo 暂不可用，本次行情取自 Yahoo。')
             return result
     if instrument['market'] == 'CUSTOM':
         raise ProviderError('该自定义或非上市标的暂无适用的价格同步数据源')

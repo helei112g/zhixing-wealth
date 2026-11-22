@@ -1,5 +1,6 @@
 """Deterministic Decimal calculations. Render sampling never determines extremes."""
 import calendar
+from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal
 from ..common import day, dec, ds
@@ -28,25 +29,39 @@ def clean_prices(rows, asof):
 
 def full_window(rows, at, years, frequency='daily'):
     start = years_before(at, years); end = day(at)
-    previous = [r for r in rows if start <= day(r['date']) < end]
-    if frequency == 'snapshot': return []
+    if frequency == 'snapshot':
+        return []
     if frequency == 'monthly':
-        # Only completed calendar months; never multiply sparse points into days.
-        stop = end.replace(day=1); start = years_before(stop, years)
+        stop = end.replace(day=1)
+        start = years_before(stop, years)
         months = {r['date'][:7]: r for r in rows if start <= day(r['date']) < stop}
         return list(months.values()) if len(months) == years * 12 else []
-    if not previous or len(previous) < 180 * years: return []
-    earlier = [r['date'] for r in rows if day(r['date']) <= start]
-    if not earlier or (day(previous[0]['date']) - day(max(earlier))).days > 45: return []
-    if (end-day(previous[-1]['date'])).days>45:return []
-    if any((day(b['date']) - day(a['date'])).days > 45 for a, b in zip(previous, previous[1:])): return []
-    for year in range(start.year + 1, end.year):
-        if sum(r['date'].startswith(str(year)) for r in previous) < 180: return []
+
+    previous, dates = [], []
+    anchor = None
+    for row in rows:
+        observed = day(row['date'])
+        if observed <= start and (anchor is None or observed > anchor):
+            anchor = observed
+        if start <= observed < end:
+            previous.append(row)
+            dates.append(observed)
+    if len(dates) < 180 * years or anchor is None or (dates[0] - anchor).days > 45:
+        return []
+    if (end - dates[-1]).days > 45 or any((b-a).days > 45 for a,b in zip(dates,dates[1:])):
+        return []
+    counts = Counter(d.year for d in dates)
+    if any(counts[y] < 180 for y in range(start.year+1,end.year)):
+        return []
     return previous
 
 
 def drawdown(rows, asof, years, allow_partial=False):
-    rows = clean_prices(rows, asof)
+    return price_drawdown(clean_prices(rows, asof), years, allow_partial=allow_partial)
+
+
+def price_drawdown(rows, years, *, allow_partial=False, include_curve=True):
+    """Drawdown from validated, ordered closes shared across analysis windows."""
     if not rows: return {'status': 'missing', 'high_date': None, 'high_close': None, 'drawdown_ratio': None}
     at = rows[-1]['date']; start = years_before(at, years) if years else day(rows[0]['date'])
     partial = bool(years and not full_window(rows, at, years))
@@ -58,23 +73,31 @@ def drawdown(rows, asof, years, allow_partial=False):
         v = dec(row['close'])
         if v >= peak: peak = v; high_date = row['date']
         ratio = v / peak - 1; low = min(low, ratio)
-        curve.append({'date': row['date'], 'close': row['close'], 'drawdown_ratio': ds(ratio)})
+        if include_curve:
+            curve.append({'date': row['date'], 'close': row['close'], 'drawdown_ratio': ds(ratio)})
     return {'status': 'available', 'partial':partial, 'from': sample[0]['date'], 'to': at, 'high_date': high_date,
             'high_close': ds(peak), 'drawdown_ratio': ds(dec(sample[-1]['close']) / peak - 1),
             'max_drawdown_ratio': ds(low), 'high_date_policy': 'latest_equal_high', 'curve': curve}
 
 
 def valuation(series, asof, allow_zero=False):
-    rows = sorted([r for r in series.get('rows', []) if r.get('value') is not None and day(r['date']) <= day(asof)], key=lambda r: r['date'])
+    cutoff = day(asof)
+    rows = sorted([r for r in series.get('rows', []) if r.get('value') is not None and day(r['date']) <= cutoff], key=lambda r: r['date'])
     if len({r['date'] for r in rows}) != len(rows): raise ValueError('估值观测重复')
     current = rows[-1] if rows else None
-    valid=lambda v: dec(v)>=0 if allow_zero else dec(v)>0
+    valid = []
+    for row in rows:
+        value = dec(row['value'])
+        if value > 0 or allow_zero and value == 0:
+            valid.append(dict(date=row['date'], value=value))
+    current_value = dec(current['value']) if current else None
     windows = {}
     for years in WINDOWS:
-        history = full_window([r for r in rows if valid(r['value'])], current['date'], years, series.get('frequency', 'daily')) if current else []
-        if not history or not valid(current['value']):
+        history = full_window(valid, current['date'], years, series.get('frequency', 'daily')) if current else []
+        if not history or current_value < 0 or current_value == 0 and not allow_zero:
             windows[str(years)] = {'status': 'insufficient_history', 'rank': None}; continue
-        v = dec(current['value']); vals = [dec(r['value']) for r in history if valid(r['value'])]
+        v = current_value
+        vals = [row['value'] for row in history]
         rank = (sum(x < v for x in vals) + Decimal('.5') * sum(x == v for x in vals)) / len(vals) if vals else None
         windows[str(years)] = {'status': 'available' if rank is not None else 'insufficient_history',
                                'rank': ds(rank) if rank is not None else None, 'count': len(vals),

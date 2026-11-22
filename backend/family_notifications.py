@@ -155,8 +155,8 @@ class FamilyNotifications:
         key = (state['revision'], now()[:10])
         if getattr(self,'dividend_cache_key',None)==key: return list(self.dividend_cache)
         from .reminders import dividend_reminders
-        rows = [dict(id=r['fingerprint'],reminder_id=r['id'],kind='dividend',portfolio_id=r['portfolio_id'],version=1,status='pending')
-                for r in dividend_reminders(self.store,state)]
+        rows = [dict(id=r['fingerprint'],legacy_id=r.get('legacy_fingerprint'),reminder_id=r['id'],kind='dividend',portfolio_id=r['portfolio_id'],version=1,status='pending')
+                for r in dividend_reminders(self.store,state,native=True)]
         self.dividend_cache_key=key;self.dividend_cache=rows
         return list(rows)
 
@@ -184,6 +184,10 @@ class FamilyNotifications:
                 if old.get('test_pending_until') and current < datetime.fromisoformat(old['test_pending_until']) and not imminent:
                     return self.status()
                 dispatched = old.get('dividend_dispatches', {})
+                # Keep the original native ID for a pending or delivered pre-upgrade
+                # notification whose only identity difference is the neutral split factor.
+                rows = [dict(r, id=r['legacy_id']) if r.get('legacy_id') in dispatched and r['id'] not in dispatched
+                        else r for r in rows]
                 active_dividends = {r['id'] for r in rows if r.get('kind') == 'dividend'}
                 dispatched = {k:v for k,v in dispatched.items() if k in active_dividends}
                 for row in rows:

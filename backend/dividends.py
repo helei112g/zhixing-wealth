@@ -442,12 +442,12 @@ def us_reference_history(inst):
     from . import tiingo, yahoo
 
     try:
-        return yahoo.dividends(inst)
+        return OverseasNotices(tiingo.dividends(inst), 'Tiingo·现金分派参考', '已核对该上市证券覆盖区间的日线现金分派字段。')
     except (market.ProviderError, ValueError, KeyError) as primary:
         try:
-            return OverseasNotices(tiingo.dividends(inst), 'Tiingo·现金分派参考', '已核对该上市证券覆盖区间的日线现金分派字段。')
+            return OverseasNotices(yahoo.dividends(inst), 'Yahoo现金分派参考', 'Tiingo 暂不可用，本次已查询 Yahoo 的现金分派记录。')
         except (market.ProviderError, ValueError, KeyError) as backup:
-            raise market.ProviderError(f'Yahoo：{primary}；Tiingo：{backup}') from None
+            raise market.ProviderError(f'Tiingo：{primary}；Yahoo：{backup}') from None
 
 
 def issuer_notices(inst):

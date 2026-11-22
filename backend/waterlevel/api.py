@@ -1,7 +1,7 @@
 from typing import Literal
 
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from .catalog import GROUPS, Group
@@ -40,7 +40,7 @@ def router(service, *, auto_sync):
 
     @api.get('', summary='只读本地数据；日期截取当前可得版本，不宣称历史时点已知')
     def dashboard(method: Method = 'mcw', asof: str | None = None):
-        return service.dashboard(method, asof)
+        return JSONResponse(service.dashboard(method, asof))
 
     @api.get('/activity', summary='只读沪深两融余额和 A 股全指成交额的逐交易日历史')
     def activity(asof: str | None = None):

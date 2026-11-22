@@ -235,6 +235,17 @@ class NotificationSchedulingTests(unittest.TestCase):
         self.assertEqual(set(self.pending), {original})
         self.assertNotIn('test_pending_until', self.native.status())
 
+    def test_neutral_split_upgrade_retains_existing_dispatch(self):
+        old = self.dividend()
+        self.dividends = [old]
+        self.reconcile()
+        self.dividends = [dict(old, id='normalized', legacy_id=old['id'])]
+        self.assertEqual(self.reconcile()['queued_request']['id'], old['id'])
+        self.current += timedelta(seconds=15)
+        result = self.reconcile()
+        self.assertEqual(result['desired_count'], 0)
+        self.assertEqual(set(result['dividend_dispatches']), {old['id']})
+
     def test_restarted_service_resumes_next_slot_and_keeps_dividend_deduplication(self):
         self.rows = [self.row(due='2026-11-10')]
         self.dividends = [self.dividend()]

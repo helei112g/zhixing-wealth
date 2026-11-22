@@ -20,15 +20,31 @@ type ReturnColumn=`annual_${typeof annualOffsets[number]}`|typeof recentReturnCo
 type ReturnSort={key:ReturnColumn;direction:'asc'|'desc'};
 
 export function ResearchPage({onData}:Obj){
- const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(''),[revision,R]=useState(0),[running,Running]=useState(false),[error,E]=useState('');
+ const [catalog,C]=useState<Obj|null>(null),[selected,S]=useState(''),[revision,R]=useState<number|null>(null),[running,Running]=useState(false),[error,E]=useState('');
+ const [revisionError,setRevisionError]=useState('');
  const [collectionDialog,setCollectionDialog]=useState<{profile?:Obj}|null>(null);
  const [initialSync, setInitialSync]=useState('');
  const [listPage,setListPage]=useState(1);
  const [group,setGroup]=useState<ValuationGroup>('all');
  const [listSort,setListSort]=useState<ReturnSort|null>(null);
  const [indexJob,setIndexJob]=useState<Obj|null>(null);
- useEffect(()=>{let active=true;api('/research/catalog').then(v=>{if(active){C(v);S(s=>v.subscriptions.some((p:Obj)=>p.id===s)?s:'');E('');}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[revision]);
- useEffect(()=>{let active=true,busy=false;const refresh=async()=>{if(document.hidden||busy)return;busy=true;try{const v=await api('/research/revision');if(active){R(v.research_revision);Running(v.updating);}}catch(e:any){if(active)E(e.message);}finally{busy=false;}};refresh();const timer=setInterval(refresh,2500);return()=>{active=false;clearInterval(timer);};},[]);
+ useEffect(()=>{if(revision===null)return;let active=true;api('/research/catalog').then(v=>{if(active){C(v);S(s=>v.subscriptions.some((p:Obj)=>p.id===s)?s:'');E('');}}).catch(e=>{if(active)E(e.message);});return()=>{active=false;};},[revision]);
+ useEffect(()=>{
+  let active=true,busy=false;
+  async function refresh(initial=false){
+   if((!initial&&document.hidden)||busy)return;
+   busy=true;
+   try{
+    const value=await api('/research/revision', undefined, 'GET', AbortSignal.timeout(1000));
+    if(active){setRevisionError('');R(last=>Math.max(last??0,value.research_revision));Running(value.updating);}
+   }catch(error:any){
+    if(active){setRevisionError(error.message);R(last=>last??0);}
+   }finally{busy=false;}
+  }
+  refresh(true);
+  const timer=setInterval(refresh,2500);
+  return()=>{active=false;clearInterval(timer);};
+ },[]);
  const profile=catalog?.subscriptions.find((p:Obj)=>p.id===selected);
 
  function sortList(key:ReturnColumn){
@@ -37,7 +53,7 @@ export function ResearchPage({onData}:Obj){
  }
 
  return <div className="research-page">
-  <ErrorBox error={error}/>
+  <ErrorBox error={error||revisionError}/>
   <div className="studio-heading">
    {selected?<button type="button" className="text-button back-link" onClick={()=>S('')}><ArrowLeft size={14}/>返回指数列表</button>
     :<p className="muted small">浏览已建档指数，选择名称查看详情。</p>}
@@ -74,6 +90,7 @@ function IndexList({revision,running,page,onPage,onSelect,onData,group,onGroup,s
  const pending=job&&activeJob(job);
 
  useEffect(()=>{
+  if(revision===null)return;
   let active=true;
   setListError('');
   api('/research/indices?'+query({method:'mcw',page,valuation_group:group,sort_by:sort?.key,sort_direction:sort?.direction})).then(value=>{

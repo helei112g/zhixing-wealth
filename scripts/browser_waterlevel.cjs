@@ -35,6 +35,8 @@ const asof = '2026-10-30';
         await route.fulfill({response, json: {...await response.json(), today: asof}});
       });
     }
+    // A stalled initial version probe must not block the local data request.
+    await page.route('**/api/market-waterlevel/revision',()=>{}, {times:1});
     await page.goto(base);
     await page.getByRole('button', {name: '市场水位', exact: true}).click();
     await page.getByRole('heading', {name: '规则摘要', exact: true}).waitFor();
@@ -96,9 +98,14 @@ const asof = '2026-10-30';
     check(indexBatch.state==='complete' && targets.length>1 && JSON.stringify(targets)===JSON.stringify(enabled) &&
       indexBatch.resources.every(resource=>resource.scope==='valuations' && !resource.full),
       'index batch updates every enabled subscription and skips paused indices');
+    let dashboards=0;
+    const countDashboard=req=>{if(new URL(req.url()).pathname==='/api/market-waterlevel')dashboards++;};
+    page.on('request', countDashboard);
     await openWaterlevel();
     await page.getByRole('tab', {name: '水位总览', exact: true}).click();
     await page.getByText('有效大类 3/3', {exact: true}).waitFor({timeout: 30000});
+    page.off('request', countDashboard);
+    check(dashboards===1,'opening the current market revision requests one dashboard');
     const first = await api('/market-waterlevel?asof=' + asof);
     check(first.scores.categories.equity.included === 7, 'fixed index mcw and full-market median factors enter the score');
     const comparison = page.locator('.waterlevel-comparison').first();

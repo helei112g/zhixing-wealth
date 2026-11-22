@@ -23,7 +23,7 @@ from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
 from .holding_analysis import HoldingAnalysis, label_map, resolve_labels, normalize_labels
 from .event_deletion import deletion_plan
-from .dividend_review import reference_basis, review_changes, CHANGE_LABELS
+from .dividend_review import audited_us_basis, reference_basis, review_changes, us_review_history, CHANGE_LABELS
 from . import market
 from . import dividends
 from .sync_meta import TRIGGERS, trigger_metadata
@@ -762,7 +762,16 @@ class Service:
                 anchor=(before or {}).get('notification_basis')
                 if not anchor and before:anchor=reference_basis(before,None,before.get('record_date'))
                 current_basis=reference_basis(item,None,item.get('record_date'),anchor)
-                item['notification_basis']=current_basis if review_changes(anchor,current_basis) else anchor
+                item['notification_basis']=current_basis if review_changes(anchor,current_basis,us_market=inst['market']=='US') else anchor
+                if inst['market'] == 'US' and before:
+                    if (before['source'] == 'Tiingo·现金分派参考' and item['source'] == 'Yahoo现金分派参考'
+                            and before['currency'] == item['currency'] == 'USD' and before['ex_date'] == item['ex_date']
+                            and dec(item.get('split_restore_factor') or '1') == 1):
+                        # Yahoo fills gaps. An unadjusted secondary quote for the same
+                        # distribution cannot undo an already published Tiingo correction.
+                        continue
+                    if before['source'] == item['source'] and before['source'] != 'Yahoo现金分派参考' and before['per_share'] != item['per_share']:
+                        item['notification_basis'] = current_basis
                 db.execute('INSERT OR REPLACE INTO corporate_actions VALUES (?,?,?)',(notice_id,instrument_id,json_dumps(item)))
                 old={k:v for k,v in (before or {}).items() if k!='fetched_at'}
                 current={k:v for k,v in item.items() if k!='fetched_at'}
@@ -846,6 +855,7 @@ class Service:
         state=state or self.store.state();p=self.portfolio(state,portfolio_id)
         attached={a['instrument_id'] for a in state['allocations'] if a['portfolio_id']==portfolio_id}
         instruments={i['id']:i for i in state['instruments']};result=[]
+        us_history = None
         for notice in state['corporate_actions']:
             if notice.get('kind')!='dividend_notice' or notice.get('status')=='withdrawn' or notice['instrument_id'] not in attached:continue
             if instrument_id and notice['instrument_id']!=instrument_id:continue
@@ -864,11 +874,18 @@ class Service:
             # an explicit notice confirmation/review advances the decision.
             reviewed=bool(bound and recorded and bound['id']==recorded['id'] and decision.get('mode')=='keep_recorded')
             baseline=decision.get('review_basis') if reviewed else (recorded or {}).get('dividend_basis')
+            previous_basis = baseline
             if baseline:
                 baseline=dict(baseline)
                 # Confirming a notice has always required matching currencies;
                 # the receipt therefore supplies this missing legacy basis fact.
                 baseline.setdefault('currency',recorded['currency'])
+                previous_basis = baseline
+                if inst['market'] == 'US' and (existing or reviewed) and baseline.get('source') in (None, 'Yahoo现金分派参考'):
+                    if us_history is None:
+                        with self.store.connection() as db:
+                            us_history = us_review_history(db, state, portfolio_id, instruments)
+                    baseline = audited_us_basis(us_history, recorded, decision if reviewed else None, notice, baseline)
             cutoff=(day(notice['ex_date'])-timedelta(days=1)).isoformat() if inst['market'] in ('HK','US') else notice.get('record_date')
             if not cutoff and recorded:cutoff=(baseline or {}).get('record_date') or recorded.get('record_date')
             qty=None
@@ -889,7 +906,8 @@ class Service:
             basis['estimated_gross']=ds(gross) if gross is not None else None
             changes = []
             if recorded and (baseline or existing):
-                changes = review_changes(baseline, basis, keep_yahoo_hkd=reviewed and inst['market'] == 'HK')
+                changes = review_changes(baseline, basis, keep_yahoo_hkd=reviewed and inst['market'] == 'HK',
+                                         us_market=inst['market'] == 'US')
             elif manual and gross is not None and dec(manual['gross_amount']) != gross:
                 changes = ['missing_basis']
             if reviewed and recorded['date']!=decision.get('event_date',baseline.get('ex_date',recorded['date'])):
@@ -912,7 +930,7 @@ class Service:
                 'estimated_gross':gross,'status':status,'event_id':(existing or manual or {}).get('id'),'suggested_event':suggested,
                 'revision':state['revision'],'review_basis':basis,'review_changes':[CHANGE_LABELS[k] for k in changes],
                 'review_revision':(decision or {}).get('review_revision',0),'review_decision':decision if reviewed else None,
-                'recorded_event':recorded,'previous_basis':baseline,'gross_difference':gross-dec(recorded['gross_amount']) if recorded and gross is not None else None,
+                'recorded_event':recorded,'previous_basis':previous_basis,'gross_difference':gross-dec(recorded['gross_amount']) if recorded and gross is not None else None,
                 'note':(('按登记日账本份额估算，税费、实际到账金额和再投确认份额须本人核对。' if notice['currency']==inst['currency'] else '派息币种与标的币种不一致，请先按实际到账核对并折算，未自动估算金额。')+notice.get('coverage_note',''))})
         return wire(sorted(result,key=lambda r:r['notice']['ex_date'],reverse=True))
 

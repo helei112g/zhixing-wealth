@@ -12,10 +12,10 @@ TABLES = ('family_items', 'family_values', 'family_links', 'family_schedules', '
           'family_reconciliations', 'family_closures', 'family_notification_state', 'family_income', 'family_expense_plans', 'family_expense_months')
 CATEGORIES = {'cash': '现金', 'fixed': '固定资产', 'investment': '投资理财', 'receivable': '应收款（别人欠我的钱）', 'insurance': '保单现金价值', 'debt': '负债'}
 REASONS = ('opening', 'balance', 'valuation', 'income_expense', 'transfer', 'correction', 'scope')
-DEBT_REMINDER_WORKDAYS = 10
+DEBT_REMINDER_DAYS = 10
 INSURANCE_REMINDER_DAYS = 35
-REMINDER_WINDOW = (f'还款显示至今天之后的第 {DEBT_REMINDER_WORKDAYS} 个工作日（周一至周五），'
-                   f'保费和续保显示未来 {INSURANCE_REMINDER_DAYS} 个自然日。均含今天和截止日，days 为距到期的自然日数。')
+REMINDER_WINDOW = (f'还款提前 {DEBT_REMINDER_DAYS} 天显示，保费和续保提前 {INSURANCE_REMINDER_DAYS} 天显示。'
+                   '均按自然日计算，含今天和截止日。days 为距到期的自然日数。')
 
 
 def text(value, field, limit=120, required=False):
@@ -208,19 +208,10 @@ def snapshot(state, family, date, *, market=None):
 
 def reminder_schedules(family, date, *, projected=None):
     """Select visible reminders from unpaid schedules projected on or after date."""
-    start = day(date)
-    debt_end = start
-    remaining = DEBT_REMINDER_WORKDAYS
-    while remaining:
-        debt_end += timedelta(days=1)
-        if debt_end.weekday() < 5:
-            remaining -= 1
-
-    debt_days = (debt_end - start).days
     if projected is None:
-        projected = schedule_projection(family, date, max(debt_days, INSURANCE_REMINDER_DAYS))
+        projected = schedule_projection(family, date, max(DEBT_REMINDER_DAYS, INSURANCE_REMINDER_DAYS))
     return [row for row in projected
-            if row['days'] <= (debt_days if row['kind'] == 'debt' else INSURANCE_REMINDER_DAYS)]
+            if row['days'] <= (DEBT_REMINDER_DAYS if row['kind'] == 'debt' else INSURANCE_REMINDER_DAYS)]
 
 
 def schedule_projection(family, date, horizon):

@@ -166,7 +166,7 @@ if(page.viewportSize().width<=760&&!await page.locator('.sidebar.mobile-nav-open
 const debtReminders=page.locator('.system-reminder-center tbody tr').filter({hasText:'合成自动房贷 · 还款'});
 await debtReminders.getByText('第 1 / 12 期',{exact:true}).waitFor();
 check(await debtReminders.count()===1,'only the next installment of the monthly loan appears');
-check(await page.locator('.system-reminder-center').getByText(/10 个工作日/).isVisible(),'repayment reminder explains its weekday window');
+check(await page.locator('.system-reminder-center').getByText(/还款提前 10 天显示.*按自然日计算/).isVisible(),'repayment reminder explains its calendar-day window');
 await shot('family-reminders');
 // Legacy failed jobs must read as data checks and disappear after a successful
 // retry; retain the old job and leave the synthetic ledger revision unchanged.

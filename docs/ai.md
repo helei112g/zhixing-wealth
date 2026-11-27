@@ -54,7 +54,7 @@ python3 scripts/ai_client.py write POST /api/family/commands ../local/work/reque
 python3 scripts/ai_client.py read /api/family/catalog
 ```
 
-valuation 是该日完整余额，不是增减额。补录不覆盖后续日期；早于首笔时要显式 extend_start。item 编辑保留类别/币种；计划只产生提醒，不扣款。links/unlink 只改变资产引用，不修改组合。income 更正用原 record_id，收入不会自动增加现金。全系统提醒复用 `/api/reminders`。还款显示至今天之后的第 10 个工作日（周一至周五），保费和续保提前 35 个自然日显示。
+valuation 是该日完整余额，不是增减额。补录不覆盖后续日期；早于首笔时要显式 extend_start。item 编辑保留类别/币种；计划只产生提醒，不扣款。links/unlink 只改变资产引用，不修改组合。income 更正用原 record_id，收入不会自动增加现金。全系统提醒复用 `/api/reminders`。还款提前 10 天显示，保费和续保提前 35 天显示，均按自然日计算。
 
 金额为精确十进制字符串，null为未知，0为已知零；UI的万/亿不改变API原值。总览默认月比上月末、年比上年末，趋势分析使用 comparison=previous（月比上月末、年比上年末）；只有明确要求同比时才用 comparison=yoy。所有余额是时点量，不能把月末余额相加当总资产。
 

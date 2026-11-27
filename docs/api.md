@@ -10,12 +10,12 @@
 
 | 接口 | 内容 |
 |---|---|
-| `GET /api/family/overview?date=YYYY-MM-DD` | 当前／历史资产投影：总资产、负债、净资产、分类、来源日、关联；schedules 从查询日算起，含随后第 10 个工作日内的还款、35 个自然日内的保费和续保 |
+| `GET /api/family/overview?date=YYYY-MM-DD` | 当前／历史资产投影：总资产、负债、净资产、分类、来源日、关联；schedules 包含查询日到未来 10 天的还款、未来 35 天的保费和续保，均按自然日计算并含截止日 |
 | `GET /api/family/catalog` | 资产记录所有版本、金额历史、关联、旧计划／设置及组合可选项、revision |
 | `GET /api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD` | 月／年期末金额与变化额、变化率；逐期保留 missing、warnings 和 reconciliation_todos，资金未核对时 quality 为待核对；资产页面使用 previous（月比上月末、年比上年末）；接口兼容 previous/year_start/yoy，yoy 未结束期间比上年同日，最大30年 |
 | `GET /api/family/income?year=2026` | 指定年份12个月收入与分类合计、年度累计 summary、明细、revision；默认当年，不支持未来年份 |
 | `GET /api/family/revision` | 只读revision和today（上海日期），用于可见页面的2秒增量刷新判断；即使没有业务写入，跨日也会重新读取 |
-| `GET /api/family/reminders` | 从今天至随后第 10 个工作日（周一至周五）的还款、35 个自然日内的保费和续保，以及本机通知状态。均含截止日，逾期移出 |
+| `GET /api/family/reminders` | 从今天到未来 10 天的还款、未来 35 天的保费和续保，以及本机通知状态。均按自然日计算，含截止日，逾期移出 |
 | `POST /api/family/preview` | 执行同一校验与投影，SAVEPOINT 回滚，不增加修订和审计 |
 | `POST /api/family/commands` | 原子校验修订并提交，返回 result 与新 revision；提交后回读 |
 | `GET /api/notifications` | 全局本机授权、启用状态、待发数量、覆盖日期与错误；旧 `/api/family/notifications` 为兼容别名 |

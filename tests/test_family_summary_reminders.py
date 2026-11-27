@@ -195,9 +195,9 @@ class SummaryReminderTests(unittest.TestCase):
             self.assertEqual(self.center.read()['items'],[])
 
     def test_repayment_window_is_shared_and_does_not_shorten_payment_forecasts(self):
-        # Wednesday 28 Oct: the 10th weekday is Wednesday 11 Nov.
+        # The 10th and 11th calendar days after 28 Oct fall on a weekend.
         loan = self.item('debt', '500')
-        for due in ('2026-10-31', '2026-11-11', '2026-11-12'):
+        for due in ('2026-10-31', '2026-11-07', '2026-11-08'):
             self.write('schedule', dict(item_id=loan['id'], kind='debt', due_date=due, amount='25'))
         self.item('insurance', '0', policy_end='2026-12-02',
                   payment_plan=dict(mode='once', first_due='2026-12-02', amount='50'))
@@ -210,7 +210,7 @@ class SummaryReminderTests(unittest.TestCase):
             center = client.get('/api/reminders').json()
             family = client.get('/api/family/reminders').json()
             overview = client.get('/api/family/overview').json()
-        expected = [('debt', 3), ('debt', 14), ('premium', 35), ('renewal', 35)]
+        expected = [('debt', 3), ('debt', 10), ('premium', 35), ('renewal', 35)]
         for rows in (center['items'], family['items'], overview['schedules']):
             self.assertEqual(sorted((r['kind'], r['days']) for r in rows), expected)
         self.assertEqual((center['count'], family['count']), (4, 4))
@@ -218,16 +218,7 @@ class SummaryReminderTests(unittest.TestCase):
 
         with patch('backend.reminders.today', return_value=date(2026, 10, 29)):
             dates = [r['date'] for r in self.center.read()['items'] if r['kind'] == 'debt']
-            self.assertIn('2026-11-12', dates)
-
-    def test_weekend_start_counts_from_monday_and_keeps_weekend_due_date(self):
-        loan = self.item('debt', '500')
-        for due in ('2026-10-31', '2026-11-13', '2026-11-14'):
-            self.write('schedule', dict(item_id=loan['id'], kind='debt', due_date=due, amount='25'))
-        with patch('backend.reminders.today', return_value=date(2026, 10, 31)):
-            rows = self.center.read()['items']
-            self.assertEqual([(r['date'], r['days']) for r in rows],
-                             [('2026-10-31', 0), ('2026-11-13', 13)])
+            self.assertIn('2026-11-08', dates)
 
     def test_global_dividends_cover_all_portfolios_and_share_native_ids(self):
         portfolios=[self.service.save_portfolio(dict(name='合成组合'+str(i),planned_amount='10000',start_date='2026-01-01')) for i in range(2)]

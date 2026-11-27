@@ -10,12 +10,12 @@
 
 | 接口 | 内容 |
 |---|---|
-| `GET /api/family/overview?date=YYYY-MM-DD` | 当前／历史资产投影：总资产、负债、净资产、分类、来源日、关联；schedules 仅今天至未来35天 |
+| `GET /api/family/overview?date=YYYY-MM-DD` | 当前／历史资产投影：总资产、负债、净资产、分类、来源日、关联；schedules 包含查询日到未来 10 天的还款、未来 35 天的保费和续保，均按自然日计算并含截止日 |
 | `GET /api/family/catalog` | 资产记录所有版本、金额历史、关联、旧计划／设置及组合可选项、revision |
 | `GET /api/family/history?grain=month&comparison=previous&start=YYYY-MM-DD&end=YYYY-MM-DD` | 月／年期末金额与变化额、变化率；逐期保留 missing、warnings 和 reconciliation_todos，资金未核对时 quality 为待核对；资产页面使用 previous（月比上月末、年比上年末）；接口兼容 previous/year_start/yoy，yoy 未结束期间比上年同日，最大30年 |
 | `GET /api/family/income?year=2026` | 指定年份12个月收入与分类合计、年度累计 summary、明细、revision；默认当年，不支持未来年份 |
 | `GET /api/family/revision` | 只读revision和today（上海日期），用于可见页面的2秒增量刷新判断；即使没有业务写入，跨日也会重新读取 |
-| `GET /api/family/reminders` | 今天至未来35天的还款／保费／续保提醒及本机通知状态，逾期移出列表 |
+| `GET /api/family/reminders` | 从今天到未来 10 天的还款、未来 35 天的保费和续保，以及本机通知状态。均按自然日计算，含截止日，逾期移出 |
 | `POST /api/family/preview` | 执行同一校验与投影，SAVEPOINT 回滚，不增加修订和审计 |
 | `POST /api/family/commands` | 原子校验修订并提交，返回 result 与新 revision；提交后回读 |
 | `GET /api/notifications` | 全局本机授权、启用状态、待发数量、覆盖日期与错误；旧 `/api/family/notifications` 为兼容别名 |
@@ -50,7 +50,7 @@ payment_plan 为对象：mode=none 表示不设置；债务支持 once/fixed/ann
 
 overview.known_assets 为已知小计；有金额／汇率缺失时 total_assets/net_assets/debt_ratio=null。组合资金变化仅给出检查手工现金的提示，不要求额外确认才显示合计。分类占比针对正资产合计；负债单列。history.values 是期末金额，changes.amount 是差额、changes.rate 是比例；缺比较期、基期非正或缺值时 rate=null；范围变化计入总金额变化，scope_changed=true 且 reason 标注含新增、移除或份额调整，不再因此把 rate 置空。partial 表示未结束期间。历史按当前资料重算，旧盘点快照仍保留。
 
-macOS 排程计算未来366天候选，每次仅登记最近一条，到期事项提前7天、1天及当天09:00（上海时区）提醒；页面只显示未来35天。分红候选出现 pending/needs_review 时发送一次泛化通知；相同候选重复刷新不重发，确认／忽略后取消，资料实质变化后重新提醒。所有通知点击使用 `?reminders=1&focus=reminder_id` 定位全局提醒中心；旧分红 URL 保留兼容。
+macOS 排程计算未来366天候选，每次仅登记最近一条，到期事项提前7天、1天及当天09:00（上海时区）提醒。分红候选出现 pending/needs_review 时发送一次泛化通知；相同候选重复刷新不重发，确认／忽略后取消，资料实质变化后重新提醒。所有通知点击使用 `?reminders=1&focus=reminder_id` 定位全局提醒中心；旧分红 URL 保留兼容。
 
 通知授权是本机 OS 状态，不是付款状态。排程模式 `scheduling_mode=single_next`：系统仅登记最近一条，同一时刻的事项合并。`pending_count` 是系统回读的待发通知数，`desired_count` 是未来候选提醒数，`selected_count` 是本次选择的提醒数（合并后只提交一条），`deferred_count` 是等待后续排程的提醒数，不计为失败。`missing_count/error` 只检查本次选中的提醒；`missing_requests` 保留合并通知内各事项的错误详情。`next_notification_at` 和兼容字段 `coverage_until` 只表示已受理的最近一条通知时刻，未受理时为null，不代表未来一年全部覆盖。`test_pending_until` 仅在测试通知临时占位时返回，后台随后恢复业务提醒。后续排程需要本机服务运行。不能据此声称用户已看到或已付款。开发／测试默认关闭真实通知，须显式 enable；所有写操作要求本地会话和CSRF。
 
@@ -307,7 +307,7 @@ health 的 `read_only=true` 表示发布只读验收阶段：所有非 GET/HEAD/
 
 ## 统一期间统计与提醒中心
 
-完整约定见 [设计规范](design.md)。`GET /api/reminders` 是前端提醒唯一聚合接口；`GET /api/family/reminders` 仅作旧客户端资产子集兼容。新来源通过 provider 注册复用。响应 items 包含 id/source/kind/title/detail/date/days/amount/currency/severity/action，金额为 Decimal 字符串，未知为 null；action 是业务导航描述，不执行写入。全局读取包含所有未归档组合。
+完整约定见 [设计规范](design.md)。`GET /api/reminders` 是前端提醒唯一聚合接口；`GET /api/family/reminders` 仅作旧客户端资产子集兼容。新来源通过 provider 注册复用。响应 items 包含 id/source/kind/title/detail/date/days/amount/currency/severity/action，资产到期项的 days 为剩余自然日数，显示范围同 /api/family/reminders。金额为 Decimal 字符串，未知为 null；action 是业务导航描述，不执行写入。全局读取包含所有未归档组合。
 
 `GET /api/family/summary?grain=year&period=2026`、`?grain=month&period=2026-09` 或 `?grain=custom&start=2026-01-01&end=2026-09-30`：
 

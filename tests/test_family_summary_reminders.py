@@ -188,10 +188,38 @@ class SummaryReminderTests(unittest.TestCase):
         self.item('debt','100','2026-10-28',payment_plan=dict(mode='fixed',amount='10',first_due='2026-10-28',periods=3))
         self.item('insurance','0','2026-10-28',policy_end='2026-12-30')
         self.item('receivable','100','2026-10-28',due_on='2026-11-01')
-        rows=self.center.read()['items'];self.assertEqual(len(rows),2)
-        self.assertTrue(all(0<=r['days']<=35 and r['action'] is None for r in rows));self.assertEqual(self.center.read()['today'],1)
+        rows=self.center.read()['items']
+        self.assertEqual([(r['days'], r['action']) for r in rows], [(0, None)])
+        self.assertEqual(self.center.read()['today'],1)
         with patch('backend.reminders.today',return_value=date(2026,10,29)):
-            self.assertEqual(len(self.center.read()['items']),1)
+            self.assertEqual(self.center.read()['items'],[])
+
+    def test_repayment_window_is_shared_and_does_not_shorten_payment_forecasts(self):
+        # The 10th and 11th calendar days after 28 Oct fall on a weekend.
+        loan = self.item('debt', '500')
+        for due in ('2026-10-31', '2026-11-07', '2026-11-08'):
+            self.write('schedule', dict(item_id=loan['id'], kind='debt', due_date=due, amount='25'))
+        self.item('insurance', '0', policy_end='2026-12-02',
+                  payment_plan=dict(mode='once', first_due='2026-12-02', amount='50'))
+        self.write('item', dict(name='合成远期保险', category='insurance', currency='CNY',
+                                effective_on='2026-10-28', household_amount='0', policy_end='2026-12-03'))
+        self.write('settings', dict(effective_on='2026-10-28', living_expense='100',
+                                    debt_plan_complete=True, policy_plan_complete=True))
+
+        with TestClient(create_app(self.store.directory, testing=True, auto_sync=False)) as client:
+            center = client.get('/api/reminders').json()
+            family = client.get('/api/family/reminders').json()
+            overview = client.get('/api/family/overview').json()
+        expected = [('debt', 3), ('debt', 10), ('premium', 35), ('renewal', 35)]
+        for rows in (center['items'], family['items'], overview['schedules']):
+            self.assertEqual(sorted((r['kind'], r['days']) for r in rows), expected)
+        self.assertEqual((center['count'], family['count']), (4, 4))
+        self.assertEqual(overview['safety']['debt_month'], '75')
+
+        with patch('backend.reminders.today', return_value=date(2026, 10, 29)):
+            dates = [r['date'] for r in self.center.read()['items'] if r['kind'] == 'debt']
+            self.assertIn('2026-11-08', dates)
+
     def test_global_dividends_cover_all_portfolios_and_share_native_ids(self):
         portfolios=[self.service.save_portfolio(dict(name='合成组合'+str(i),planned_amount='10000',start_date='2026-01-01')) for i in range(2)]
         for p in portfolios:

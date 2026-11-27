@@ -30,6 +30,7 @@ from .environment import LABELS, claim_environment, cookie_name, workspace_for
 from .version import VERSION, NAME, release_info
 
 from .family_api import NotificationCommand
+from .family_domain import REMINDER_WINDOW
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -164,7 +165,7 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
     def api_guide():
         return FileResponse(ROOT / 'docs' / 'api.md', media_type='text/plain; charset=utf-8')
 
-    @app.get('/api/reminders')
+    @app.get('/api/reminders', description=REMINDER_WINDOW)
     def reminders(): return reminder_service.read()
 
     @app.get('/api/notifications', description='系统最多登记最近一条通知；同一时刻合并。selected_count为本条包含的提醒数，deferred_count为等待后续排程数，不计入missing_count。后续排程需本机服务运行，排程不等于已送达。')
@@ -290,7 +291,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                            'savings_basis':'only confirmed matched months; (sum income - sum actual expense) / sum income; zero or missing income yields null; actual replaces plan',
                            'income': '/api/family/income', 'income_summary': {'field': 'summary', 'groups': ['salary','rent','fund','custom'], 'shares': '0–1; null when total is unknown or nonpositive'}, 'history_default_comparison': 'previous', 'summary': '/api/family/summary', 'recurring_payments': True,
                            'portfolio_operations': ['links', 'unlink'], 'receivables': True},
-                'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system']},
+                'reminders': {'read': '/api/reminders', 'scope': 'system', 'providers': ['family','dividend','portfolio','sync','system'],
+                              'family_window': REMINDER_WINDOW},
                 'pagination': {'endpoint': '/api/portfolios/{portfolio_id}/transactions', 'page_size': 20, 'max_page_size': 100,
                                'filters': ['instrument_id', 'kind', 'market', 'asset_class', 'region'],
                                'sort': ['date desc', 'sequence desc', 'id desc'], 'tag_basis': 'current portfolio allocation'},

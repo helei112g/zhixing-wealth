@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from .common import ConflictError, DomainError, ZERO, day, dec, ds, now, today, month_after, json_dumps, wire
 from .family_domain import (TABLES, CATEGORIES, REASONS, text, money, past, fraction, currency,
-                            read_state, at_item, active, event_signatures, snapshot, schedule_projection)
+                            read_state, at_item, active, event_signatures, snapshot, reminder_schedules)
 from .family_ledger import recording_bounds, debt_summary, balance_history
 from .family_archive import archive_entries, lifecycle
 from .ledger import Market
@@ -491,7 +491,7 @@ class FamilyService:
     def reminders(self):
         with self.store.connection() as db:
             family, state = read_state(db), self.store.state(db)
-            rows = schedule_projection(family, str(today()))
+            rows = reminder_schedules(family, str(today()))
             return {'revision': state['revision'], 'items': wire(rows), 'count': len(rows),
                     'overdue': 0, 'today': sum(r['days'] == 0 for r in rows)}
 

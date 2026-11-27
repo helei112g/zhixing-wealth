@@ -430,11 +430,11 @@ class FamilyTests(unittest.TestCase):
 
     def test_payment_reminders_window_expiry_replacement_and_no_balance_changes(self):
         d=self.item('debt','12000',payment_plan=dict(mode='fixed',first_due='2026-10-27',periods=12,amount='1000'))
-        rows=self.family.reminders()['items'];self.assertEqual([r['due_date'] for r in rows],['2026-10-27','2026-11-27'])
+        rows=self.family.reminders()['items'];self.assertEqual([r['due_date'] for r in rows],['2026-10-27'])
         ids={r['id'] for r in rows}
         self.write('item',dict(category='debt',name='合成debt',currency='CNY',effective_on='2026-10-27',payment_plan=dict(mode='fixed',first_due='2026-11-01',periods=12,amount='1500')),d['id'])
         rows=self.family.reminders()['items'];self.assertFalse(ids & {r['id'] for r in rows})
-        self.assertTrue(all(0<=r['days']<=35 for r in rows));self.assertEqual(D(self.family.read()['total_debt']),12000)
+        self.assertEqual([r['due_date'] for r in rows],['2026-11-01']);self.assertEqual(D(self.family.read()['total_debt']),12000)
         self.assertEqual(self.family.read('2026-10-26')['schedules'][0]['amount'],'1000')
         with patch('backend.family_service.today',return_value=date(2027,12,1)),patch('backend.family_domain.today',return_value=date(2027,12,1)):
             self.assertEqual(self.family.reminders()['items'],[])
@@ -445,7 +445,8 @@ class FamilyTests(unittest.TestCase):
         d=self.item('debt','12000');self.write('schedule',dict(item_id=d['id'],kind='debt',due_date='2026-11-01',amount='5'))
         self.write('item',dict(category='debt',name='合成debt',currency='CNY',effective_on='2026-10-27',payment_plan=dict(mode='fixed',first_due='2026-11-01',periods=12,amount='1000')),d['id'])
         self.item('receivable','500',due_on='2026-11-01')
-        rows=self.family.reminders()['items'];self.assertEqual(len(rows),2);self.assertTrue(all(r['kind']=='debt' for r in rows))
+        rows=self.family.reminders()['items']
+        self.assertEqual([(r['kind'], r['amount']) for r in rows], [('debt', '1000')])
         self.assertEqual(len(self.family.catalog()['schedules']),1)
 
     def test_income_monthly_categories_and_correction_do_not_change_assets(self):

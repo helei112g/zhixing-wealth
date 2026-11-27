@@ -118,7 +118,7 @@ class FamilyNotifications:
         return dict(result, enabled=enabled, supported=platform.system() == 'Darwin',
                     environment=self.environment, authorization=result.get('authorization', 'not_requested'),
                     pending_count=len(result.get('pending_ids', [])),
-                    note='每次仅安排最近一条，同一时刻的事项合并提醒；后续排程需要本机服务运行。服务停止后仅保留已登记的一条。勿扰或关机可能影响通知；页面显示未来35天的到期提醒，分红仍需在组合中核对。')
+                    note='每次仅安排最近一条，同一时刻的事项合并提醒；后续排程需要本机服务运行。服务停止后仅保留已登记的一条。勿扰或关机可能影响通知。')
 
     def _helper(self, command, requests=None, active_schedules=None):
         if platform.system() != 'Darwin': raise DomainError('系统通知当前仅支持 macOS')

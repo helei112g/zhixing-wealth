@@ -1,7 +1,7 @@
 """System reminder registry. Business providers own their facts and completion rules."""
 import hashlib
 from .common import now, today, json_dumps, wire
-from .family_domain import read_state, schedule_projection
+from .family_domain import read_state, reminder_schedules
 from .service import Service
 
 
@@ -53,7 +53,7 @@ def family_provider(store, state, family):
                  detail=('第 '+str(r['period'])+' / '+str(r['periods'])+' 期') if r.get('period') else '到期提醒',
                  date=r['due_date'],days=r['days'],amount=None if r['kind']=='renewal' else r['household_amount'],
                  currency=r['currency'],estimated=r.get('estimated',False),severity='today' if r['days']==0 else 'upcoming',action=None)
-            for r in schedule_projection(family, str(today()))]
+            for r in reminder_schedules(family, str(today()))]
 
 
 def portfolio_provider(store, state, family):

@@ -189,7 +189,9 @@ def main():
     check(debt['payment_preview']['periods']==12 and debt['payment_preview']['total']=='12000','debt rule calculates installments')
     policy,_=command('item',dict(category='insurance',currency='CNY',name='AI合成保费规则',effective_on=str(date.today()),household_amount='0',insured='合成被保人',coverage_amount='1000000',payment_plan={'mode':'annual','first_due':str(date.today()),'periods':3,'amount':'100'}))
     check(policy['payment_preview']['periods']==3 and policy['payment_preview']['total']=='300','policy rule calculates annual premiums')
-    check('items' in client.request('/api/reminders'),'all reminders use shared system endpoint')
+    debt_rows = [r for r in client.request('/api/reminders')['items'] if r['title'] == 'AI合成还款规则 · 还款']
+    check(len(debt_rows) == 1 and debt_rows[0]['date'] == debt['payment_preview']['first']['due_date'],
+          'shared reminder endpoint shows only the near installment')
     # Exercise CLI parsing and explicit confirmation, not only the imported client.
     request_file=output/'synthetic-ai-request.json'
     request_file.write_text(json.dumps(dict(operation='valuation',payload=dict(item_id=asset['id'],effective_on=str(date.today()),household_amount='210000'),expected_revision=revision())))

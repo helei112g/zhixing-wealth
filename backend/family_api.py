@@ -3,6 +3,7 @@ from typing import Any, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 from .common import wire, today
+from .family_domain import REMINDER_WINDOW
 from .family_service import FamilyService
 from .family_notifications import FamilyNotifications
 
@@ -60,7 +61,7 @@ def family_router(store, environment):
     @router.get('/income', summary='读取年度收入：月度 rows、最新 records、累计与分类占比 summary', description='summary 含 total/known_total/recorded_months/missing_count 和 groups；每组含 amount/share。金额为 Decimal 字符串，share 为 0–1 比例；无记录、缺汇率或非正分母保留未知，详见 docs/api.md。')
     def income(year: int | None = None): return family.income_summary(year)
 
-    @router.get('/reminders')
+    @router.get('/reminders', description=REMINDER_WINDOW)
     def reminders(): return dict(family.reminders(), notification=notifications.status())
 
     @router.get('/notifications')

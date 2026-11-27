@@ -12,6 +12,10 @@ TABLES = ('family_items', 'family_values', 'family_links', 'family_schedules', '
           'family_reconciliations', 'family_closures', 'family_notification_state', 'family_income', 'family_expense_plans', 'family_expense_months')
 CATEGORIES = {'cash': '现金', 'fixed': '固定资产', 'investment': '投资理财', 'receivable': '应收款（别人欠我的钱）', 'insurance': '保单现金价值', 'debt': '负债'}
 REASONS = ('opening', 'balance', 'valuation', 'income_expense', 'transfer', 'correction', 'scope')
+DEBT_REMINDER_WORKDAYS = 10
+INSURANCE_REMINDER_DAYS = 35
+REMINDER_WINDOW = (f'还款显示至今天之后的第 {DEBT_REMINDER_WORKDAYS} 个工作日（周一至周五），'
+                   f'保费和续保显示未来 {INSURANCE_REMINDER_DAYS} 个自然日。均含今天和截止日，days 为距到期的自然日数。')
 
 
 def text(value, field, limit=120, required=False):
@@ -194,7 +198,7 @@ def snapshot(state, family, date, *, market=None):
                 provisional_assets=provisional_assets, total_debt=debts, net_assets=provisional_net if confirmed else None,
                 provisional_net=provisional_net, debt_ratio=debts / provisional_assets if confirmed and debts is not None and provisional_assets and provisional_assets > 0 else None,
                 incomplete=bool(missing), provisional=not confirmed, missing_items=missing, warnings=warnings,
-                reconciliation_todos=pending, links=links, settings=settings, schedules=[r for r in due if r['days'] <= 35],
+                reconciliation_todos=pending, links=links, settings=settings, schedules=reminder_schedules(family, date, projected=due),
                 safety={'available_cash': available, 'living_expense': living, 'debt_month': debt_month,
                         'annual_premiums': premiums, 'monthly_total': monthly, 'coverage_months': coverage,
                         'target': monthly * dec(settings['reserve_months']) if monthly is not None else None,
@@ -202,7 +206,24 @@ def snapshot(state, family, date, *, market=None):
                 oldest_source_date=min((r['source_date'] for r in rows if r.get('source_date')), default=None))
 
 
-def schedule_projection(family, date, horizon=35):
+def reminder_schedules(family, date, *, projected=None):
+    """Select visible reminders from unpaid schedules projected on or after date."""
+    start = day(date)
+    debt_end = start
+    remaining = DEBT_REMINDER_WORKDAYS
+    while remaining:
+        debt_end += timedelta(days=1)
+        if debt_end.weekday() < 5:
+            remaining -= 1
+
+    debt_days = (debt_end - start).days
+    if projected is None:
+        projected = schedule_projection(family, date, max(debt_days, INSURANCE_REMINDER_DAYS))
+    return [row for row in projected
+            if row['days'] <= (debt_days if row['kind'] == 'debt' else INSURANCE_REMINDER_DAYS)]
+
+
+def schedule_projection(family, date, horizon):
     from .family_plans import installments
     end = str(day(date) + timedelta(days=horizon))
     rows = []

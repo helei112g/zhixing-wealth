@@ -13,11 +13,11 @@ from functools import wraps
 from inspect import signature
 from pathlib import Path
 
+from . import backup_archive
 from .common import ConflictError, DomainError, json_dumps, now, today
 from .notes import NoteFiles, references, decode_note, MAX_NOTES_BYTES
 
 from .migration import SCHEMA, migrate, schema_version
-MAX_BACKUP_DATABASE_BYTES = 512 * 1024 * 1024
 JOB_HISTORY_LIMIT = 20
 READ_CACHE_LIMIT = 48
 
@@ -246,12 +246,23 @@ class Store:
             db.commit()
 
     def validate_backup(self, data: bytes):
-        if not data.startswith(b'SQLite format 3\x00') or len(data) > MAX_BACKUP_DATABASE_BYTES:
-            raise DomainError('不是受支持的SQLite账本，或解压后文件超过512 MiB')
+        backup_archive.check_size(len(data), '备份解压后的SQLite')
         temp = self.directory / ('restore-check-' + uuid.uuid4().hex + '.sqlite')
         try:
             temp.write_bytes(data)
-            db = sqlite3.connect(f'file:{temp}?mode=ro', uri=True)
+            self._validate_backup_file(temp)
+            return temp
+        except Exception:
+            temp.unlink(missing_ok=True)
+            raise
+
+    def _validate_backup_file(self, path):
+        backup_archive.check_size(path.stat().st_size, '备份解压后的SQLite')
+        with path.open('rb') as handle:
+            if handle.read(16) != b'SQLite format 3\x00':
+                raise DomainError('不是受支持的SQLite账本')
+        try:
+            db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
             db.row_factory = sqlite3.Row
             try:
                 if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
@@ -298,20 +309,18 @@ class Store:
                     Ledger(state, portfolio).validate()
             finally:
                 db.close()
-            return temp
         except (sqlite3.DatabaseError, KeyError, TypeError, ValueError) as exc:
-            temp.unlink(missing_ok=True)
             if isinstance(exc, DomainError):
                 raise
             raise DomainError('备份结构或记录无效，现有账本未替换') from None
-        except Exception:
-            temp.unlink(missing_ok=True)
-            raise
 
     def restore(self, data, note_files=None):
+        """Restore bytes or consume a database already staged on this filesystem."""
         with self.lock:
-            temp = self.validate_backup(data)
+            temp = data if isinstance(data, Path) else self.validate_backup(data)
             try:
+                if isinstance(data, Path):
+                    self._validate_backup_file(temp)
                 files = note_files or {}
                 check = sqlite3.connect(temp)
                 try:

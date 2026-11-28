@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'scripts')]
+from backend.backup_archive import COPY_CHUNK_BYTES, extract_database, file_sha256
 from backend.common import DomainError, now
 from backend.environment import LABELS, PORTS, LedgerProcessLock, claim_environment, config_path, read_config, workspace_for
 from backend.migration import SCHEMA, schema_version
@@ -209,13 +210,18 @@ def backup(workspace,environment):
     target=values['data_dir']/'backups'/('full-'+now().replace(':','-')+'.zip')
     target.parent.mkdir(parents=True,exist_ok=True)
     if health(values):
-        with urllib.request.urlopen(f"http://127.0.0.1:{values['port']}/api/backup",timeout=120) as response:data=response.read()
-        checksum=hashlib.sha256(data).hexdigest()
-        for saved in sorted(target.parent.glob('manual-*.zip'), key=lambda p:p.stat().st_mtime_ns, reverse=True):
-            if not saved.is_symlink() and saved.stat().st_size==len(data) and hashlib.sha256(saved.read_bytes()).hexdigest()==checksum:
-                return {'backup':str(saved),'sha256':checksum}
-        with target.open('xb') as handle:handle.write(data)
-        return {'backup':str(target),'sha256':hashlib.sha256(data).hexdigest()}
+        with tempfile.TemporaryDirectory(prefix='download-', dir=target.parent) as staging:
+            download = Path(staging) / 'backup.zip'
+            url = f"http://127.0.0.1:{values['port']}/api/backup"
+            with urllib.request.urlopen(url, timeout=120) as response, download.open('xb') as handle:
+                shutil.copyfileobj(response, handle, COPY_CHUNK_BYTES)
+            size = download.stat().st_size
+            checksum = file_sha256(download)
+            for saved in sorted(target.parent.glob('manual-*.zip'), key=lambda path: path.stat().st_mtime_ns, reverse=True):
+                if not saved.is_symlink() and saved.stat().st_size == size and file_sha256(saved) == checksum:
+                    return {'backup': str(saved), 'sha256': checksum}
+            os.link(download, target)
+            return {'backup': str(target), 'sha256': checksum}
     from maintenance import snapshot
     with LedgerProcessLock(values['data_dir']):return snapshot(values['data_dir'],target)
 
@@ -299,10 +305,10 @@ def unpack_rehearsal(archive, directory):
     directory=Path(directory);directory.mkdir(mode=0o700)
     with zipfile.ZipFile(archive) as saved:
         manifest=json.loads(saved.read('manifest.json'))
-        payload=saved.read('portfolio.sqlite')
-        if hashlib.sha256(payload).hexdigest()!=manifest['sha256']:
+        database = directory / 'portfolio.sqlite'
+        info = saved.getinfo('portfolio.sqlite')
+        if extract_database(saved, database, info) != manifest['sha256']:
             raise DomainError('演练备份数据库校验失败')
-        (directory/'portfolio.sqlite').write_bytes(payload)
         for name,checksum in manifest['note_files'].items():
             validate_path(name)
             data=saved.read(name)

@@ -4,6 +4,7 @@ import json
 import secrets
 from copy import deepcopy
 
+from ..backup_archive import check_database_capacity
 from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, today
 from ..research.collection import subscription
 from ..research.snapshots import encode, decode
@@ -49,11 +50,11 @@ class WaterlevelService:
         sid = secrets.token_hex(16)
         sha, raw = encode(value)
         with self.research.transaction(bump=True) as db:
-            if db.execute('PRAGMA page_count').fetchone()[0] * db.execute('PRAGMA page_size').fetchone()[0] > 400 * 1024 * 1024:
-                raise DomainError('数据库接近备份容量限制，保留原数据')
+            check_database_capacity(db)
             db.execute('INSERT INTO market_snapshots VALUES (?,?,?,?,?)', (sid, group, now(), sha, raw))
             db.execute('''INSERT INTO market_heads VALUES (?,?) ON CONFLICT(group_id)
                           DO UPDATE SET snapshot_id=excluded.snapshot_id''', (group, sid))
+            check_database_capacity(db)
         updated = [value['series'][series]] if series else value['series'].values()
         latest = max((row['date'] for rows in updated for row in rows if row['value'] is not None), default=None)
         return [dict(scope='market', resource=dict(scope='market', group=group), name=SERIES[series][1] if series else GROUPS[group]['label'],
@@ -302,9 +303,9 @@ class WaterlevelService:
                 raise ConflictError('市场研究输入已变化，请重新读取核对')
             digest, raw = encode(value)
             with self.research.transaction(expected=body['expected_research_revision']) as db:
-                if db.execute('PRAGMA page_count').fetchone()[0] * db.execute('PRAGMA page_size').fetchone()[0] > 400 * 1024 * 1024:
-                    raise DomainError('数据库接近备份容量限制，未保存新的研究报告')
+                check_database_capacity(db)
                 db.execute('INSERT OR IGNORE INTO market_reports VALUES (?,?,?,?)', (value['analysis_id'], now(), digest, raw))
+                check_database_capacity(db)
         return self.frozen(value['analysis_id'])
 
     def reports(self):

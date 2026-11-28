@@ -2,16 +2,15 @@
 """Offline ledger maintenance. Never run against a running instance."""
 from __future__ import annotations
 import argparse
-import hashlib
 import json
 import os
 import sqlite3
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from backend.backup_archive import file_sha256, write_archive
 from backend.common import DomainError, now
 from backend.environment import LABELS, LedgerProcessLock, claim_environment
 from backend.migration import SCHEMA, schema_version
@@ -39,25 +38,14 @@ def snapshot(directory, target):
             schema = int(dest.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0])
         finally:
             dest.close(); source.close()
-        payload = copy.read_bytes()
-        manifest = {'format':2,'schema':schema,'created_at':now(),'application':'知行财富',
-                    'sha256':hashlib.sha256(payload).hexdigest(),'note_files':{}}
         partial = Path(temp) / 'backup.zip'
-        with zipfile.ZipFile(partial, 'x', zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr('portfolio.sqlite', payload)
-            notes = NoteFiles(directory)
-            for name in sorted(paths):
-                data = notes.read_bytes(name)
-                archive.writestr(name, data)
-                manifest['note_files'][name] = hashlib.sha256(data).hexdigest()
-            archive.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False))
-        with zipfile.ZipFile(partial) as archive:
-            if archive.testzip() is not None:
-                raise DomainError('备份压缩校验失败')
+        notes = NoteFiles(directory)
+        write_archive(partial, copy, ((name, notes.read_bytes(name)) for name in sorted(paths)),
+                      schema=schema, application='知行财富')
         with partial.open('rb') as handle: os.fsync(handle.fileno())
         os.link(partial, target)
     return {'backup': str(target), 'schema': schema, 'notes':len(paths),
-            'sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
+            'sha256':file_sha256(target)}
 
 
 def inspect(directory):
@@ -92,7 +80,7 @@ def main():
             result=inspect(args.data_dir)
         elif args.action=='restore':
             if not args.archive:parser.error('restore 需要 --archive')
-            result=Service(Store(args.data_dir)).restore(args.archive.read_bytes())
+            result=Service(Store(args.data_dir)).restore(args.archive)
         else:
             before=None
             audit_before=None

@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-import io
 import zipfile
 from unittest.mock import patch
 from decimal import Decimal as D
@@ -10,7 +9,7 @@ from backend.app import create_app
 from backend.common import DomainError
 from backend.service import Service
 from backend.store import Store
-from backend.store import MAX_BACKUP_DATABASE_BYTES
+from backend.backup_archive import MAX_BACKUP_BYTES, check_database_capacity, check_size
 
 
 class EventEntryTests(unittest.TestCase):
@@ -73,15 +72,24 @@ class EventEntryTests(unittest.TestCase):
             self.assertEqual(c.get('/api/reference-rate?currency=USD&date=2999-01-01').status_code,422)
 
     def test_backup_capacity_guards_reject_before_replacing_current_data(self):
-        self.assertEqual(MAX_BACKUP_DATABASE_BYTES,512*1024*1024)
-        archive=self.s.backup_download()
-        raw=zipfile.ZipFile(io.BytesIO(archive)).read('portfolio.sqlite')
-        before=self.s.store.state()
-        for boundary in ('backend.service.MAX_BACKUP_DATABASE_BYTES','backend.store.MAX_BACKUP_DATABASE_BYTES'):
-            with patch(boundary,len(raw)-1):
-                with self.assertRaises(DomainError):self.s.restore(archive)
-            self.assertEqual(self.s.store.state(),before)
-        result=self.s.restore(archive)
+        self.assertEqual(MAX_BACKUP_BYTES, 5 * 1024 ** 3)
+        check_size(MAX_BACKUP_BYTES, '备份')
+        with self.assertRaisesRegex(DomainError, '超过5 GiB'):
+            check_size(MAX_BACKUP_BYTES + 1, '备份')
+        archive = self.s.export_backup()
+        with zipfile.ZipFile(archive) as zipped:
+            database_size = zipped.getinfo('portfolio.sqlite').file_size
+        before = self.s.store.state()
+        with patch('backend.backup_archive.MAX_BACKUP_BYTES', archive.stat().st_size - 1):
+            with self.assertRaisesRegex(DomainError, '备份ZIP'):
+                self.s.restore(archive)
+        with patch('backend.backup_archive.MAX_BACKUP_BYTES', database_size - 1):
+            with self.assertRaisesRegex(DomainError, '备份解压后的SQLite'):
+                self.s.restore(archive)
+            with self.s.store.connection() as db, self.assertRaisesRegex(DomainError, '数据库'):
+                check_database_capacity(db)
+        self.assertEqual(self.s.store.state(), before)
+        result = self.s.restore(archive)
         self.assertTrue(result['restored'])
         self.assertEqual(self.s.store.state()['events'],before['events'])
         self.assertTrue((self.s.store.backups/result['preserved_backup']).exists())

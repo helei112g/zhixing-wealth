@@ -5,6 +5,7 @@ import base64
 import hmac
 import os
 import secrets
+import tempfile
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,9 +14,11 @@ from typing import Literal
 from fastapi import FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
+from . import backup_archive
 from .common import ConflictError, DomainError, now, today, wire
 from .service import Service
 from .store import SCHEMA, Store
@@ -360,7 +363,8 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
                                                     'withdrawal': 'preserve cached notices during sync; no automatic withdrawal'},
                 'storage': {'schema': SCHEMA, 'prices': 'skip identical latest automatic quote; preserve changed versions',
                             'jobs_visible': 5, 'jobs_total_retained': 20, 'jobs_finished_retained': 20, 'jobs_running_retained': True,
-                            'automatic_backup_dates_retained': 30},
+                            'automatic_backup_dates_retained': 30,
+                            'max_full_backup_bytes': backup_archive.MAX_BACKUP_BYTES},
                 'write_workflow': 'read → preview or display exact changes → confirm intent → write with original domain revision/request_id → read back',
                 'idempotency': 'No automatic mutation retry. Ledger/settings commits make their original revision stale. Research creation and data updates replay the same request_id and payload; a changed payload conflicts.'}
 
@@ -599,23 +603,68 @@ def create_app(data_dir=None, *, testing=False, auto_sync=True, frontend_directo
         return Response(service.csv_export(portfolio_id), media_type='text/csv; charset=utf-8',
                         headers={'Content-Disposition': 'attachment; filename="portfolio-transactions.csv"'})
 
-    @app.get('/api/backup')
+    @app.get('/api/backup', response_class=FileResponse, summary='下载完整备份ZIP，最大5 GiB')
     def backup():
-        return Response(service.backup_download(), media_type='application/zip',
-                        headers={'Content-Disposition': f'attachment; filename="portfolio-backup-{today()}.zip"'})
+        return FileResponse(service.export_backup(), media_type='application/zip',
+                            filename=f'portfolio-backup-{today()}.zip',
+                            headers={'Content-Encoding': 'identity'})
 
-    @app.post('/api/restore')
-    def restore(payload: dict):
-        if payload.get('confirm') != 'RESTORE': raise DomainError('恢复备份需要明确确认')
-        try: content = base64.b64decode(payload.get('content', ''), validate=True)
-        except ValueError: raise DomainError('备份文件编码无效') from None
+    def restore_archive(content):
         with research.worker_lock, store.lock:
-            if research.updating(): raise DomainError('研究数据仍在更新，请结束后恢复备份')
+            if research.updating():
+                raise DomainError('研究数据仍在更新，请结束后恢复备份')
             value = service.restore(content)
             research.cache.clear()
         household_notifications.invalidate()
         value['notifications'] = household_notifications.reconcile(True)
         return reply(value)
+
+    @app.post('/api/restore', summary='恢复完整备份ZIP，最大5 GiB', openapi_extra={'requestBody': {
+        'required': True,
+        'content': {
+            'application/zip': {'schema': {'type': 'string', 'format': 'binary'},
+                                'description': '请求头 X-Confirm-Restore: RESTORE'},
+            'application/json': {'schema': {'type': 'object', 'required': ['content', 'confirm'],
+                'properties': {'content': {'type': 'string', 'format': 'byte'},
+                               'confirm': {'type': 'string', 'const': 'RESTORE'}}}},
+        },
+    }})
+    async def restore(request: Request):
+        media_type = request.headers.get('content-type', '').partition(';')[0].strip().lower()
+        if media_type == 'application/zip':
+            if request.headers.get('x-confirm-restore') != 'RESTORE':
+                raise DomainError('恢复备份需要明确确认')
+            length = request.headers.get('content-length')
+            if length is not None:
+                if not length.isascii() or not length.isdecimal():
+                    raise DomainError('备份ZIP请求长度无效')
+                backup_archive.check_size(int(length), '备份ZIP')
+            with tempfile.TemporaryDirectory(prefix='restore-upload-', dir=store.directory) as staging:
+                path = Path(staging) / 'backup.zip'
+                size = 0
+                with path.open('xb') as target:
+                    async for chunk in request.stream():
+                        size += len(chunk)
+                        backup_archive.check_size(size, '备份ZIP')
+                        await run_in_threadpool(target.write, chunk)
+                return await run_in_threadpool(restore_archive, path)
+
+        try:
+            payload = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            raise DomainError('备份文件编码无效') from None
+        if not isinstance(payload, dict) or payload.get('confirm') != 'RESTORE':
+            raise DomainError('恢复备份需要明确确认')
+        encoded = payload.get('content')
+        if not isinstance(encoded, str):
+            raise DomainError('备份文件编码无效')
+        if len(encoded) > (backup_archive.MAX_BACKUP_BYTES + 2) // 3 * 4:
+            raise DomainError('备份ZIP超过5 GiB')
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            raise DomainError('备份文件编码无效') from None
+        return await run_in_threadpool(restore_archive, content)
 
     @app.get('/{path:path}')
     def frontend(path: str):

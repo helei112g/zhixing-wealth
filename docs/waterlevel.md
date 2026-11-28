@@ -68,7 +68,7 @@ Leo · 2026.11.09
 
 ## 版本、迁移与验收
 
-schema11→12只新增空的market_snapshots、market_heads、market_reports、market_settings四表，不改既有账本、研究修订及笔记。来源发布递增研究revision，设置保存核对设置revision；两者都不递增账本revision。冻结核对原analysis_id与research_revision，保存不可变的结果、来源ID及方法版本；报告最近50条可列出，已知ID仍可回读。报告和来源随现有完整ZIP备份，恢复验证压缩摘要和引用。v6增加两融与成交额，沿用现有数据表。v1至v5冻结报告仍可读取、导出、备份和恢复。400MiB容量保护同样适用于新增市场来源与报告。
+schema11→12只新增空的market_snapshots、market_heads、market_reports、market_settings四表，不改既有账本、研究修订及笔记。来源发布递增研究revision，设置保存核对设置revision；两者都不递增账本revision。冻结核对原analysis_id与research_revision，保存不可变的结果、来源ID及方法版本；报告最近50条可列出，已知ID仍可回读。报告和来源随现有完整ZIP备份，恢复验证压缩摘要和引用。v6增加两融与成交额，沿用现有数据表。v1至v5冻结报告仍可读取、导出、备份和恢复。新增市场来源和报告与指数快照共用 5 GiB 数据库保护阈值，超过时回滚写入。
 
 自动回归使用合成历史和替换后的供应商适配器，覆盖日期、缺口、同日差值、负估值、固定评分、手动任务、版本冲突、备份/迁移及浏览器真实渲染。公开来源只读连通性测试与合成回归分开报告；真实开发环境采集与自动回归分别记录；不据此声称已验证正式运行或生产迁移。相关入口：`tests/test_waterlevel.py`、`scripts/browser_waterlevel.cjs`、包含empty场景的`python scripts/verify.py --browser`。
 

@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {api, decimalSum, exactMoney, amount, downloadText, kindNames, money, units, query, Obj, signedMoney, regionOptions, regionValue} from './api';
+import {api, decimalSum, exactMoney, amount, downloadText, kindNames, money, units, query, Obj, signedMoney, regionOptions, regionValue, restoreBackup} from './api';
 import {Button, Chips, ErrorBox, Field, Modal, Notice} from './components';
 import {DatedRateField,useDatedRate} from './fx_ui';
 import {HoldingLabelFields} from './holding_labels_ui';
@@ -171,7 +171,44 @@ export function CsvForm({boot,portfolio,onClose,onSaved,instrumentId}:BaseProps&
  return <Modal title="CSV导入 / 导出" subtitle="预览校验后整批写入，不修改原CSV文件" onClose={onClose} wide busy={busy}><fieldset disabled={busy}><div className="form-grid"><Field label="导入类型"><select value={category} onChange={e=>{C(e.target.value);P(null);}}><option value="events">当前组合流水</option><option value="fx">历史汇率</option></select></Field><Field label="固定模板"><Button onClick={template}>下载空白CSV模板</Button></Field><Field label="选择UTF-8 CSV文件" wide><input type="file" accept=".csv,text/csv" onChange={async e=>{const file=e.target.files?.[0];if(file){T(await file.text());P(null);}}}/></Field><Field label="或粘贴CSV内容" wide><textarea rows={8} value={text} onChange={e=>{T(e.target.value);P(null);}} placeholder="保留模板标题行，按真实记录填写。"/></Field></div><small className="muted">流水kind使用BUY、SELL、DIVIDEND等；买入填code、gross_amount总价（不含费税）和quantity，market填CN/FUND/HK/US/CUSTOM，沪深自动识别。行情价格仅通过数据源同步。</small><ErrorBox error={error}/>{preview&&<div className="preview-box"><h3>{preview.count}行 · {preview.duplicates}行重复</h3>{preview.errors.length>0?<ul className="error-list">{preview.errors.map((e:Obj)=><li key={e.line}>第{e.line}行：{e.message}</li>)}</ul>:<p>校验通过；重复行将跳过。导入前自动建立受保护备份。</p>}<div className="table-wrap"><table><thead><tr><th>行</th><th>日期</th><th>类型 / 值</th><th>状态</th></tr></thead><tbody>{preview.rows.slice(0,20).map((r:Obj)=><tr key={r.line}><td>{r.line}</td><td>{r.data.date}</td><td>{r.data.kind||r.data.currency} {r.data.amount||r.data.price||r.data.rate||r.data.quantity}</td><td>{r.duplicate?'重复，跳过':'可导入'}</td></tr>)}</tbody></table></div></div>}<footer className="form-actions">{portfolio&&<a className="button" href={'/api/portfolios/'+portfolio.id+'/export.csv'} download>导出本组合流水</a>}<Button onClick={onClose}>关闭</Button>{preview&&!preview.errors.length?<Button primary onClick={save}>确认整批导入</Button>:<Button primary disabled={!text.trim()||category==='events'&&!portfolio} onClick={check}>{busy?'校验中…':'预览与校验'}</Button>}</footer></fieldset></Modal>;
 }
 
-export function RestoreForm({onClose,onSaved}:BaseProps){const[file,F]=useState<File|null>(null),[yes,Y]=useState(false),[error,E]=useState(''),[busy,B]=useState(false);async function restore(){if(!file)return;B(true);try{const buffer=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<buffer.length;i+=32768)binary+=String.fromCharCode(...buffer.subarray(i,i+32768));const r=await api('/restore',{confirm:'RESTORE',content:btoa(binary)});onSaved(r);}catch(e:any){E(e.message);}finally{B(false);}}
- return <Modal title="从完整备份恢复" subtitle="选择本工具或历史版本导出的ZIP文件" onClose={onClose} busy={busy}><Field label="完整备份文件"><input type="file" accept=".zip,application/zip" onChange={e=>F(e.target.files?.[0]||null)}/></Field><Notice>恢复会替换当前账本。服务先保存当前账本快照，校验备份版本、校验码和账务完整性后再替换。</Notice><label className="check"><input type="checkbox" checked={yes} onChange={e=>Y(e.target.checked)}/>我确认恢复所选备份，当前账本先另存备份。</label><ErrorBox error={error}/><footer className="form-actions"><Button onClick={onClose}>取消</Button><Button primary disabled={!yes||!file||busy} onClick={restore}>{busy?'恢复中…':'确认恢复'}</Button></footer></Modal>;
-}
+export function RestoreForm({onClose, onSaved}: BaseProps) {
+  const [file, setFile] = useState<File | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
+  async function restore() {
+    if (!file || !confirmed || busy) return;
+    setError('');
+    setBusy(true);
+    try {
+      onSaved(await restoreBackup(file));
+    } catch (error: any) {
+      setError(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <Modal title="从完整备份恢复" subtitle="选择本工具或历史版本导出的 ZIP 文件" onClose={onClose} busy={busy}>
+    <fieldset disabled={busy}>
+      <Field label="完整备份文件">
+        <input type="file" accept=".zip,application/zip" onChange={event => {
+          setFile(event.target.files?.[0] || null);
+          setError('');
+          setConfirmed(false);
+        }}/>
+      </Field>
+      <Notice>恢复会替换当前账本。服务校验备份后，先保存当前账本快照，再替换账本。</Notice>
+      <label className="check">
+        <input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)}/>
+        我确认恢复所选备份，当前账本先另存备份。
+      </label>
+      <ErrorBox error={error}/>
+      <footer className="form-actions">
+        <Button onClick={onClose}>取消</Button>
+        <Button primary disabled={!confirmed || !file || busy} onClick={restore}>{busy ? '恢复中…' : '确认恢复'}</Button>
+      </footer>
+    </fieldset>
+  </Modal>;
+}

@@ -7,6 +7,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime,timedelta
+from ..backup_archive import check_database_capacity
 from ..common import ConflictError, DomainError, day, dec, ds, json_dumps, now, today, wire
 from . import providers,price_chunks
 from .snapshots import encode,decode
@@ -140,7 +141,7 @@ class ResearchService:
         if current and meaningful(current)==meaningful(value): return current['snapshot_id']
         sid=secrets.token_hex(16)
         with self.transaction(bump=True) as db:
-            if db.execute('PRAGMA page_count').fetchone()[0]*db.execute('PRAGMA page_size').fetchone()[0]>400*1024*1024: raise DomainError('数据库接近备份容量限制，请先导出并检查存储；旧快照保留')
+            check_database_capacity(db)
             # Older snapshots used the query cutoff as effective_date for these
             # modules. Compare their actual observations, retaining the originals.
             def observed(v):
@@ -153,6 +154,7 @@ class ResearchService:
             for sha,block in blocks.items():db.execute('INSERT OR IGNORE INTO research_price_chunks VALUES (?,?)',(sha,block))
             db.execute('INSERT INTO research_snapshots VALUES (?,?,?,?,?,?)',(sid,iid,module,now(),digest,content))
             db.execute('INSERT INTO research_heads VALUES (?,?,?) ON CONFLICT(index_id,module) DO UPDATE SET snapshot_id=excluded.snapshot_id',(iid,module,sid))
+            check_database_capacity(db)
         return sid
 
     def detail(self, iid, basis='price', method='overall', window=3, *, summary=False):

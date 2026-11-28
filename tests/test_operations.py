@@ -1,4 +1,5 @@
 import hashlib
+from http.client import HTTPResponse
 import io
 import json
 import socket
@@ -6,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zipfile
 from pathlib import Path
 
@@ -20,6 +21,16 @@ from backend.service import Service
 from backend.store import Store, SCHEMA
 
 
+def backup_response(body, length=None):
+    headers = b'HTTP/1.1 200 OK\r\n'
+    if length is not None:
+        headers += f'Content-Length: {length}\r\n'.encode('ascii')
+    socket_file = io.BytesIO(headers + b'\r\n' + body)
+    response = HTTPResponse(Mock(makefile=Mock(return_value=socket_file)))
+    response.begin()
+    return response
+
+
 class OperationsTests(unittest.TestCase):
     def test_running_backup_reuses_verified_compressed_export(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -27,11 +38,41 @@ class OperationsTests(unittest.TestCase):
             service=Service(Store(values['data_dir']))
             content=service.backup_download()
             with patch.object(manage,'health',return_value={'environment':'dev'}), \
-                    patch.object(manage.urllib.request,'urlopen',return_value=io.BytesIO(content)):
+                    patch.object(manage.urllib.request,'urlopen',return_value=backup_response(content, len(content))):
                 result=manage.backup(root,'dev')
             self.assertEqual(Path(result['backup']).read_bytes(),content)
             self.assertTrue(Path(result['backup']).name.startswith('manual-'))
             self.assertFalse(list((values['data_dir']/'backups').glob('full-*')))
+
+    def test_running_backup_rejects_truncated_download(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _, values = manage.init_environment(root, 'dev')
+            content = Service(Store(values['data_dir'])).backup_download()
+            before = set((values['data_dir'] / 'backups').iterdir())
+            truncated = content[:-16]
+            for expected_length, error in ((len(content), '下载长度不符'), (None, '下载校验失败')):
+                with self.subTest(expected_length=expected_length), \
+                        patch.object(manage, 'health', return_value={'environment': 'dev'}), \
+                        patch.object(manage.urllib.request, 'urlopen',
+                                     return_value=backup_response(truncated, expected_length)):
+                    with self.assertRaisesRegex(DomainError, error):
+                        manage.backup(root, 'dev')
+                    self.assertEqual(set((values['data_dir'] / 'backups').iterdir()), before)
+
+    def test_protected_upgrade_snapshot_remains_available_above_export_limit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = Store(root / 'source')
+            size = store.path.stat().st_size
+            protected = root / 'protected.zip'
+            with patch('backend.backup_archive.MAX_BACKUP_BYTES', size - 1):
+                with self.assertRaisesRegex(DomainError, '备份数据库'):
+                    snapshot(store.directory, root / 'regular.zip')
+                self.assertFalse((root / 'regular.zip').exists())
+                snapshot(store.directory, protected, protected=True)
+                manage.unpack_rehearsal(protected, root / 'rehearsal')
+            self.assertEqual((root / 'rehearsal' / 'portfolio.sqlite').stat().st_size, size)
 
     def test_start_existing_instance_opens_browser_without_starting_another_process(self):
         with tempfile.TemporaryDirectory() as temp:

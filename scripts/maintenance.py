@@ -2,16 +2,15 @@
 """Offline ledger maintenance. Never run against a running instance."""
 from __future__ import annotations
 import argparse
-import hashlib
 import json
 import os
 import sqlite3
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from backend.backup_archive import check_size, file_sha256, write_archive
 from backend.common import DomainError, now
 from backend.environment import LABELS, LedgerProcessLock, claim_environment
 from backend.migration import SCHEMA, schema_version
@@ -20,8 +19,8 @@ from backend.service import Service
 from backend.store import Store
 
 
-def snapshot(directory, target):
-    """Caller holds the ledger lock. Includes every referenced immutable note version."""
+def snapshot(directory, target, *, protected=False):
+    """Snapshot under the ledger lock. Protected upgrade copies preserve the current database at any size."""
     directory, target = Path(directory), Path(target)
     if target.exists() or target.is_symlink():
         raise DomainError('备份目标已存在，拒绝覆盖')
@@ -39,25 +38,18 @@ def snapshot(directory, target):
             schema = int(dest.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0])
         finally:
             dest.close(); source.close()
-        payload = copy.read_bytes()
-        manifest = {'format':2,'schema':schema,'created_at':now(),'application':'知行财富',
-                    'sha256':hashlib.sha256(payload).hexdigest(),'note_files':{}}
+        if not protected:
+            check_size(copy.stat().st_size, '备份数据库')
         partial = Path(temp) / 'backup.zip'
-        with zipfile.ZipFile(partial, 'x', zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr('portfolio.sqlite', payload)
-            notes = NoteFiles(directory)
-            for name in sorted(paths):
-                data = notes.read_bytes(name)
-                archive.writestr(name, data)
-                manifest['note_files'][name] = hashlib.sha256(data).hexdigest()
-            archive.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False))
-        with zipfile.ZipFile(partial) as archive:
-            if archive.testzip() is not None:
-                raise DomainError('备份压缩校验失败')
+        notes = NoteFiles(directory)
+        write_archive(partial, copy, ((name, notes.read_bytes(name)) for name in sorted(paths)),
+                      schema=schema, application='知行财富')
+        if not protected:
+            check_size(partial.stat().st_size, '备份ZIP')
         with partial.open('rb') as handle: os.fsync(handle.fileno())
         os.link(partial, target)
     return {'backup': str(target), 'schema': schema, 'notes':len(paths),
-            'sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
+            'sha256':file_sha256(target)}
 
 
 def inspect(directory):
@@ -92,13 +84,13 @@ def main():
             result=inspect(args.data_dir)
         elif args.action=='restore':
             if not args.archive:parser.error('restore 需要 --archive')
-            result=Service(Store(args.data_dir)).restore(args.archive.read_bytes())
+            result=Service(Store(args.data_dir)).restore(args.archive)
         else:
             before=None
             audit_before=None
             if (args.data_dir/'portfolio.sqlite').exists():
                 label='protected-upgrade-'+now().replace(':','-')+'.zip'
-                before=snapshot(args.data_dir,args.data_dir/'backups'/label)
+                before=snapshot(args.data_dir,args.data_dir/'backups'/label, protected=True)
                 if schema_version(args.data_dir/'portfolio.sqlite') == 6:
                     from backend.storage_audit import capture
                     audit_before=capture(args.data_dir)

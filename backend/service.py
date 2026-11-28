@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import base64
 import csv
 import hashlib
 import io
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -14,10 +14,12 @@ import zipfile
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from functools import cache
+from pathlib import Path
 
 from .common import CURRENCIES, DomainError, ONE, ZERO, currency, day, dec, ds, json_dumps, month_after, now, ratio, classification, canonical_region, today, wire
 from .ledger import Ledger, Market, normalize_event, periods, split_notice_records, split_notice_confirmed
-from .store import SCHEMA, Store, MAX_BACKUP_DATABASE_BYTES, cached_query
+from . import backup_archive
+from .store import SCHEMA, Store, cached_query
 from .version import VERSION, NAME
 from .notes import MAX_NOTE_BYTES, MAX_NOTES_BYTES, validate_path
 from .investment_notes import InvestmentNotes
@@ -1279,60 +1281,79 @@ class Service:
                 writer.writerow(dict(e, event_id=e['id'], market=inst.get('market',''),code=inst.get('code',''),name=inst.get('name',''),sell_lots=json_dumps(e.get('sell_lots',[])) if e.get('sell_lots') else '',dividend_basis=json_dumps(e['dividend_basis']) if e.get('dividend_basis') else ''))
         return '\ufeff' + buf.getvalue()
 
-    def backup_download(self):
+    def export_backup(self):
         with self.store.lock:
-            path = self.store.backup(); data = path.read_bytes()
-            manifest = {'format': 2, 'schema': SCHEMA, 'created_at': now(), 'sha256': hashlib.sha256(data).hexdigest(),
-                        'application': NAME, 'note_files': {}}
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
-                z.writestr('portfolio.sqlite', data)
-                with zipfile.ZipFile(path.with_suffix('.notes.zip')) as notes:
-                    for name in notes.namelist():
-                        content = notes.read(name)
-                        manifest['note_files'][name] = hashlib.sha256(content).hexdigest()
-                        z.writestr(name, content)
-                z.writestr('manifest.json', json_dumps(manifest))
-            content = buf.getvalue()
-            with zipfile.ZipFile(io.BytesIO(content)) as check:
-                if check.testzip() is not None:
-                    raise DomainError('完整备份压缩校验失败，原始备份已保留')
-            target = path.with_suffix('.zip')
+            with self.store.connection() as db:
+                backup_archive.check_database_capacity(db)
+            snapshot = self.store.backup()
+            sidecar = snapshot.with_suffix('.notes.zip')
+            target = snapshot.with_suffix('.zip')
             pending = target.with_name(target.name + '.pending-' + uid())
             try:
-                with pending.open('xb') as handle:
-                    handle.write(content); handle.flush(); os.fsync(handle.fileno())
+                backup_archive.check_size(snapshot.stat().st_size, '备份数据库')
+                with zipfile.ZipFile(sidecar) as notes:
+                    backup_archive.write_archive(
+                        pending, snapshot, ((name, notes.read(name)) for name in notes.namelist()),
+                        schema=SCHEMA, application=NAME,
+                    )
+                backup_archive.check_size(pending.stat().st_size, '备份ZIP')
+                with pending.open('rb') as handle:
+                    os.fsync(handle.fileno())
                 os.link(pending, target)
                 directory_fd = os.open(self.store.backups, os.O_RDONLY)
-                try: os.fsync(directory_fd)
-                finally: os.close(directory_fd)
-                # A durable full ZIP now includes the same DB and every note version.
-                path.unlink()
-                path.with_suffix('.notes.zip').unlink()
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+                snapshot.unlink()
+                sidecar.unlink()
             finally:
                 pending.unlink(missing_ok=True)
-            return content
+            return target
+
+    def backup_download(self):
+        return self.export_backup().read_bytes()
 
     def restore(self, content):
-        if len(content) > 100 * 1024 * 1024: raise DomainError('备份超过100MB')
+        if isinstance(content, bytes):
+            backup_archive.check_size(len(content), '备份ZIP')
+            source = io.BytesIO(content)
+        else:
+            backup_archive.check_size(content.stat().st_size, '备份ZIP')
+            source = content
+
+        with tempfile.TemporaryDirectory(prefix='restore-db-', dir=self.store.directory) as staging:
+            database = Path(staging) / 'portfolio.sqlite'
+            files = self._extract_backup(source, database)
+            with self.job_lock:
+                if self.syncing:
+                    raise DomainError('行情仍在更新，请更新结束后恢复备份，避免写入相互覆盖')
+                preserved = self.store.restore(database, files)
+                self.upgrade_budget_model()
+        return {'restored': True, 'preserved_backup': preserved}
+
+    def _extract_backup(self, source, database):
         try:
-            with zipfile.ZipFile(io.BytesIO(content)) as z:
+            with zipfile.ZipFile(source) as z:
                 entries = z.infolist()
                 if len(entries) > 10000 or len({i.filename for i in entries}) != len(entries):
                     raise DomainError('备份包含重复文件名或文件数超过10000')
                 if any((i.external_attr >> 16) & 0o170000 == 0o120000 or i.flag_bits & 1 for i in entries):
                     raise DomainError('备份不能包含符号链接或加密文件')
                 info = z.getinfo('portfolio.sqlite')
-                if info.file_size > MAX_BACKUP_DATABASE_BYTES: raise DomainError('备份解压后超过512 MiB')
-                if z.getinfo('manifest.json').file_size > 1024 * 1024: raise DomainError('备份清单过大')
-                data = z.read(info); manifest = json.loads(z.read('manifest.json'))
+                backup_archive.check_size(info.file_size, '备份解压后的SQLite')
+                if z.getinfo('manifest.json').file_size > 1024 * 1024:
+                    raise DomainError('备份清单过大')
+                manifest = json.loads(z.read('manifest.json'))
                 if not isinstance(manifest, dict) or manifest.get('format', 1) not in (1, 2):
                     raise DomainError('备份格式不受支持')
-                if hashlib.sha256(data).hexdigest() != manifest['sha256']: raise DomainError('备份校验码不匹配')
                 expected = manifest.get('note_files', {})
                 if not isinstance(expected, dict) or set(z.namelist()) != {'portfolio.sqlite', 'manifest.json', *expected}:
                     raise DomainError('备份文件与清单不一致')
-                files = {}; total = 0
+                if backup_archive.extract_database(z, database, info) != manifest.get('sha256'):
+                    raise DomainError('备份校验码不匹配')
+                files = {}
+                total = 0
                 for name, checksum in expected.items():
                     validate_path(name)
                     size = z.getinfo(name).file_size
@@ -1341,13 +1362,10 @@ class Service:
                         raise DomainError('笔记文件超过单篇1 MiB或总计128 MiB限制')
                     files[name] = z.read(name)
                     if hashlib.sha256(files[name]).hexdigest() != checksum:
-                        raise DomainError('笔记文件校验码不匹配，现有账本未替换')
-        except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as exc:
-            raise DomainError('请选择本应用导出的完整ZIP备份') from exc
-        with self.job_lock:
-            if self.syncing: raise DomainError('行情仍在更新，请更新结束后恢复备份，避免写入相互覆盖')
-            preserved=self.store.restore(data, files);self.upgrade_budget_model()
-            return {'restored': True, 'preserved_backup': preserved}
+                        raise DomainError('备份笔记文件校验码不匹配，现有账本未替换')
+                return files
+        except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, json.JSONDecodeError):
+            raise DomainError('请选择本应用导出的完整ZIP备份') from None
 
     def _sync_instrument_prices(self, inst, state, start, full, job):
         try:

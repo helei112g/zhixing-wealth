@@ -4,9 +4,11 @@ import io
 import json
 import tempfile
 import unittest
+import zipfile
 from datetime import date
 from decimal import Decimal as D
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -348,6 +350,35 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(r.status_code,200,r.text)
         bad=self.client.post('/api/portfolios',headers=self.headers,json={'name':'','planned_amount':'-1'})
         self.assertEqual(bad.status_code,422)
+    def test_zip_upload_streaming_restore_and_size_guard(self):
+        # Force ZIP64 on a small synthetic archive to exercise that format in CI.
+        with patch('zipfile.ZIP64_LIMIT', 65536):
+            response = self.client.get('/api/backup')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers['content-type'], 'application/zip')
+            self.assertEqual(int(response.headers['content-length']), len(response.content))
+            body = response.content
+            with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                self.assertGreaterEqual(archive.getinfo('portfolio.sqlite').extract_version, 45)
+            headers = {**self.headers, 'content-type': 'application/zip'}
+            unconfirmed = self.client.post('/api/restore', headers=headers, content=body)
+            self.assertEqual(unconfirmed.status_code, 422)
+            headers['x-confirm-restore'] = 'RESTORE'
+            def chunks():
+                for start in range(0, len(body), 1024):
+                    yield body[start:start + 1024]
+
+            with patch('backend.backup_archive.MAX_BACKUP_BYTES', len(body) - 1):
+                over_limit = self.client.post('/api/restore', headers=headers, content=chunks())
+            self.assertEqual(over_limit.status_code, 422)
+            self.assertIn('备份ZIP超过5 GiB', over_limit.json()['error'])
+            self.assertFalse(list(Path(self.tmp.name).glob('restore-upload-*')))
+
+            restored = self.client.post('/api/restore', headers=headers, content=chunks())
+            self.assertEqual(restored.status_code, 200, restored.text)
+            self.assertTrue(restored.json()['restored'])
+            self.assertFalse(list(Path(self.tmp.name).glob('restore-*-*')))
+
     def test_backup_restore_confirmation(self):
         data=self.client.get('/api/backup').content
         r=self.client.post('/api/restore',headers=self.headers,json={'content':base64.b64encode(data).decode()})

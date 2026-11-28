@@ -203,7 +203,7 @@ UI选择红利再投后自动填入估算，日期/金额/标的变化立即撤�
 - `POST /api/dividends/{notice_id}/ignore`：portfolio_id；仅隐藏候选，不计收益。
 - `POST /api/csv/preview`：text、category=`events/fx`、portfolio_id。只读校验。`POST /api/csv/import` 同参数整批写入；根据 event_id/指纹查重。没有 expected_revision 保护，AI 客户端不暴露此写入；导入前重新预览并确认整个批次。
 - `POST /api/fx`：currency、date、mode=`daily/manual/auto`，非auto时提供 rate；人工估值汇率，不回写交易锁定率。该接口不提供 expected_revision 保护。
-- `POST /api/restore`：content（ZIP的base64）、confirm=`RESTORE`。覆盖当前账本，先保留保护快照。必须获明确恢复授权，普通升级不要调用。
+- `POST /api/restore`：用 `Content-Type: application/zip` 直接上传 ZIP，带 `X-Confirm-Restore: RESTORE` 请求头。兼容旧 JSON 请求的 `content`（ZIP 的 Base64）和 `confirm: "RESTORE"`。覆盖当前账本，先保留保护快照。必须获明确恢复授权，普通升级不要调用。
 - `POST /api/instruments`、`POST/PUT /api/reservations`、`POST /api/transfers`：兼容旧功能，不属于推荐 AI 日常写入；不要以特殊资金事件替代预算模式。
 - 手工价格、价格CSV、`/api/prices` 不存在。
 
@@ -249,7 +249,7 @@ HTTP 403：同源/会话不匹配，重新建会话，不放宽校验。409：�
 
 交易 facts 增加 `unit_after_costs` 和 `unit_after_costs_label`：买入/再投为含费税每份成本，卖出为扣费税每份净回款；与 `unit_price`（未含费税）并列。不适用时为 null，不据此把分红扣税重复加入再投成本。
 
-备份恢复限制：ZIP最大100 MiB，解压后SQLite最大512 MiB。`POST /api/restore` 要求 confirm="RESTORE"，会验证校验码、数据库与账务，并返回 `preserved_backup`。真实备份演练必须指向独立数据目录和代码副本；恢复提升revision，原预览应废弃并重新读取。
+完整备份 ZIP 与解压后的 SQLite 上限均为 5 GiB，由 `capabilities.storage.max_full_backup_bytes` 提供字节数。`GET /api/backup` 流式下载 ZIP。恢复大文件使用二进制 ZIP 请求，服务逐块接收，不经 Base64。恢复会验证校验码、数据库与账务，并返回 `preserved_backup`。真实备份演练必须指向独立数据目录和代码副本；恢复提升revision，原预览应废弃并重新读取。
 
 ## 投资笔记（0.6.6）
 

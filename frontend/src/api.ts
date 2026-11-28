@@ -9,6 +9,24 @@ export async function api(path: string, body?: unknown, method?: string, signal?
     headers: body === undefined ? {} : {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  return readResponse(response);
+}
+
+export async function restoreBackup(file: File) {
+  const response = await fetch('/api/restore', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/zip',
+      'X-CSRF-Token': csrf,
+      'X-Confirm-Restore': 'RESTORE',
+    },
+    body: file,
+  });
+  return readResponse(response);
+}
+
+async function readResponse(response: Response) {
   const value = await response.json().catch(() => ({error: '本地服务返回了无法读取的响应'}));
   if (!response.ok) throw new ApiError(value.error || value.detail || '操作未完成，请重试',response.status);
   if (value.csrf_token) csrf = value.csrf_token;

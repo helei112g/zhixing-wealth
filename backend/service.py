@@ -1283,16 +1283,20 @@ class Service:
 
     def export_backup(self):
         with self.store.lock:
+            with self.store.connection() as db:
+                backup_archive.check_database_capacity(db)
             snapshot = self.store.backup()
             sidecar = snapshot.with_suffix('.notes.zip')
             target = snapshot.with_suffix('.zip')
             pending = target.with_name(target.name + '.pending-' + uid())
             try:
+                backup_archive.check_size(snapshot.stat().st_size, '备份数据库')
                 with zipfile.ZipFile(sidecar) as notes:
                     backup_archive.write_archive(
                         pending, snapshot, ((name, notes.read(name)) for name in notes.namelist()),
                         schema=SCHEMA, application=NAME,
                     )
+                backup_archive.check_size(pending.stat().st_size, '备份ZIP')
                 with pending.open('rb') as handle:
                     os.fsync(handle.fileno())
                 os.link(pending, target)

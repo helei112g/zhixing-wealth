@@ -26,7 +26,6 @@ def file_sha256(path):
 
 
 def write_archive(target, database, notes, *, schema, application):
-    check_size(database.stat().st_size, '备份数据库')
     manifest = {
         'format': 2, 'schema': schema, 'created_at': now(), 'application': application,
         'sha256': file_sha256(database), 'note_files': {},
@@ -38,14 +37,12 @@ def write_archive(target, database, notes, *, schema, application):
             manifest['note_files'][name] = hashlib.sha256(content).hexdigest()
             archive.writestr(name, content)
         archive.writestr('manifest.json', json_dumps(manifest))
-    check_size(target.stat().st_size, '备份ZIP')
     with zipfile.ZipFile(target) as archive:
         if archive.testzip() is not None:
             raise DomainError('完整备份压缩校验失败')
 
 
 def extract_database(archive, database, info):
-    check_size(info.file_size, '备份解压后的SQLite')
     with archive.open(info) as source, database.open('xb') as target:
         shutil.copyfileobj(source, target, COPY_CHUNK_BYTES)
     return file_sha256(database)

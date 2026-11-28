@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from backend.backup_archive import file_sha256, write_archive
+from backend.backup_archive import check_size, file_sha256, write_archive
 from backend.common import DomainError, now
 from backend.environment import LABELS, LedgerProcessLock, claim_environment
 from backend.migration import SCHEMA, schema_version
@@ -19,8 +19,8 @@ from backend.service import Service
 from backend.store import Store
 
 
-def snapshot(directory, target):
-    """Caller holds the ledger lock. Includes every referenced immutable note version."""
+def snapshot(directory, target, *, protected=False):
+    """Snapshot under the ledger lock. Protected upgrade copies preserve the current database at any size."""
     directory, target = Path(directory), Path(target)
     if target.exists() or target.is_symlink():
         raise DomainError('备份目标已存在，拒绝覆盖')
@@ -38,10 +38,14 @@ def snapshot(directory, target):
             schema = int(dest.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0])
         finally:
             dest.close(); source.close()
+        if not protected:
+            check_size(copy.stat().st_size, '备份数据库')
         partial = Path(temp) / 'backup.zip'
         notes = NoteFiles(directory)
         write_archive(partial, copy, ((name, notes.read_bytes(name)) for name in sorted(paths)),
                       schema=schema, application='知行财富')
+        if not protected:
+            check_size(partial.stat().st_size, '备份ZIP')
         with partial.open('rb') as handle: os.fsync(handle.fileno())
         os.link(partial, target)
     return {'backup': str(target), 'schema': schema, 'notes':len(paths),
@@ -86,7 +90,7 @@ def main():
             audit_before=None
             if (args.data_dir/'portfolio.sqlite').exists():
                 label='protected-upgrade-'+now().replace(':','-')+'.zip'
-                before=snapshot(args.data_dir,args.data_dir/'backups'/label)
+                before=snapshot(args.data_dir,args.data_dir/'backups'/label, protected=True)
                 if schema_version(args.data_dir/'portfolio.sqlite') == 6:
                     from backend.storage_audit import capture
                     audit_before=capture(args.data_dir)

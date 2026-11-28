@@ -83,7 +83,11 @@ class EventEntryTests(unittest.TestCase):
         with patch('backend.backup_archive.MAX_BACKUP_BYTES', archive.stat().st_size - 1):
             with self.assertRaisesRegex(DomainError, '备份ZIP'):
                 self.s.restore(archive)
+        backups_before = set(self.s.store.backups.iterdir())
         with patch('backend.backup_archive.MAX_BACKUP_BYTES', database_size - 1):
+            with self.assertRaisesRegex(DomainError, '数据库'):
+                self.s.export_backup()
+            self.assertEqual(set(self.s.store.backups.iterdir()), backups_before)
             with self.assertRaisesRegex(DomainError, '备份解压后的SQLite'):
                 self.s.restore(archive)
             with self.s.store.connection() as db, self.assertRaisesRegex(DomainError, '数据库'):

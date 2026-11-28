@@ -214,12 +214,21 @@ def backup(workspace,environment):
             download = Path(staging) / 'backup.zip'
             url = f"http://127.0.0.1:{values['port']}/api/backup"
             with urllib.request.urlopen(url, timeout=120) as response, download.open('xb') as handle:
+                expected_size = response.getheader('Content-Length')
                 shutil.copyfileobj(response, handle, COPY_CHUNK_BYTES)
             size = download.stat().st_size
+            if expected_size is not None and (not expected_size.isdecimal() or int(expected_size) != size):
+                raise DomainError('完整备份下载长度不符，请重新导出')
             checksum = file_sha256(download)
             for saved in sorted(target.parent.glob('manual-*.zip'), key=lambda path: path.stat().st_mtime_ns, reverse=True):
                 if not saved.is_symlink() and saved.stat().st_size == size and file_sha256(saved) == checksum:
                     return {'backup': str(saved), 'sha256': checksum}
+            try:
+                with zipfile.ZipFile(download) as archive:
+                    if archive.testzip() is not None:
+                        raise DomainError('完整备份下载校验失败，请重新导出')
+            except zipfile.BadZipFile:
+                raise DomainError('完整备份下载校验失败，请重新导出') from None
             os.link(download, target)
             return {'backup': str(target), 'sha256': checksum}
     from maintenance import snapshot
@@ -352,7 +361,10 @@ def apply(workspace,name,*,rollback=False):
             with LedgerProcessLock(values['data_dir']):
                 if (values['data_dir']/'portfolio.sqlite').exists():
                     baseline=capture_ledger(values['data_dir'])
-                    evidence['before_backup']=snapshot(values['data_dir'],values['data_dir']/'backups'/('protected-before-deployment-'+label+'.zip'))
+                    evidence['before_backup']=snapshot(
+                        values['data_dir'], values['data_dir']/'backups'/('protected-before-deployment-'+label+'.zip'),
+                        protected=True,
+                    )
                 else:
                     if (values['data_dir']/'notes').exists() and any((values['data_dir']/'notes').rglob('*')):
                         raise DomainError('缺少数据库但存在笔记；禁止作为空白安装继续')
@@ -382,7 +394,10 @@ def apply(workspace,name,*,rollback=False):
                 evidence['startup']=verify_ledger(migrated,accepted)
                 evidence['after_fingerprint']=accepted
                 if baseline is None:require_empty(values['data_dir'])
-                evidence['after_backup']=snapshot(values['data_dir'],values['data_dir']/'backups'/('protected-after-deployment-'+label+'.zip'))
+                evidence['after_backup']=snapshot(
+                    values['data_dir'], values['data_dir']/'backups'/('protected-after-deployment-'+label+'.zip'),
+                    protected=True,
+                )
             evidence['status']='verified';atomic_json(receipt,evidence)
             guard.unlink()
             found=start(workspace,'production')

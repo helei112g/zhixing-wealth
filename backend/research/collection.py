@@ -27,6 +27,12 @@ def collection_modules(profile, modules=None):
     return enabled
 
 
+def merge_evidence(evidence, records):
+    # A reused snapshot can already cite the same upstream response through several paths.
+    for record in records:
+        evidence.setdefault(json_dumps(record), record)
+
+
 def official_prices(profile, basis, start, end):
     # The CSI endpoint includes an artificial start row, so request one extra day.
     request_start = str(day(start) - timedelta(days=1)) if profile['provider'] == 'csi' else start
@@ -326,19 +332,19 @@ class Collection:
         annual = [deepcopy(b) for b in baskets if b['period'].endswith('12-31')]
         known = {}
         observations = []
-        evidence = []
+        evidence = {}
         for profile in (() if full else self.research.profiles()):
             cached = self.research.module(profile['id'], 'historical_financials') or {}
             if cached.get('collection_cutoff') == end:
                 known.update({(r['period'], r['code']): r for r in cached.get('industry_observations', [])})
-                evidence.extend(cached.get('industry_evidence', []))
+                merge_evidence(evidence, cached.get('industry_evidence', []))
 
         for basket in annual:
             period = basket['period']
             missing = [m for m in basket['members'] if (period, m['code']) not in known]
             if missing:
                 fresh = providers.historical_industries(missing, period)
-                evidence.extend(fresh['evidence'])
+                merge_evidence(evidence, fresh['evidence'])
                 known.update({
                     (period, m['code']): dict(code=m['code'], period=period, date=None, industry=None)
                     for m in missing
@@ -350,11 +356,11 @@ class Collection:
                 if record:
                     observations.append(record)
 
-        return annual, observations, evidence
+        return annual, observations, list(evidence.values())
 
     def shared_companies(self, module, members, end, *, full=False):
         """Reuse immutable company observations for the same query cutoff across indices."""
-        wanted={m['code'] for m in members}; known=set(); rows={}; evidence=[]; periods=set(); refs=[]
+        wanted={m['code'] for m in members}; known=set(); rows={}; evidence={}; periods=set(); refs=[]
         names=('financials','historical_financials') if module=='financials' else ('stock_valuations',)
         for p in (() if full else self.research.profiles()):
             for name in names:
@@ -362,15 +368,19 @@ class Collection:
                 if not cached or cached.get('collection_cutoff')!=end: continue
                 reusable=wanted & set(cached.get('collected_codes',[])) - known
                 if not reusable: continue
-                known.update(reusable); refs.append(cached['snapshot_id']); evidence.extend(cached.get('evidence',[])); periods.update(cached.get('periods',[]))
+                known.update(reusable)
+                refs.append(cached['snapshot_id'])
+                merge_evidence(evidence, cached.get('evidence', []))
+                periods.update(cached.get('periods', []))
                 for row in cached['rows']:
                     if row['code'] in reusable: rows[(row['code'],row.get('period',row.get('date')))]=row
         missing=[m for m in members if m['code'] not in known]
         fresh=(providers.stock_valuations if module=='stock_valuations' else providers.financials)(missing,end) if missing else {}
         for row in fresh.get('rows',[]): rows[(row['code'],row.get('period',row.get('date')))]=row
-        periods.update(fresh.get('periods',[])); evidence.extend(fresh.get('evidence',[]))
+        periods.update(fresh.get('periods', []))
+        merge_evidence(evidence, fresh.get('evidence', []))
         dates=[r[k] for r in rows.values() for k in r if k=='date' or k.endswith('_published_at') if r[k]]
-        return dict(fresh,rows=list(rows.values()),periods=sorted(periods),evidence=evidence,
+        return dict(fresh,rows=list(rows.values()),periods=sorted(periods),evidence=list(evidence.values()),
                     effective_date=max(dates,default=None),collection_cutoff=end,collected_codes=sorted({r['code'] for r in rows.values()} if module=='stock_valuations' else wanted),source_snapshot_ids=refs)
 
 

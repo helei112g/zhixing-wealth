@@ -365,6 +365,73 @@ class ResearchTests(unittest.TestCase):
         with self.store.connection() as db:
             db.execute("UPDATE research_snapshots SET sha256='bad'");db.commit()
             with self.assertRaises(DomainError):validate_backup(db)
+    def test_reused_company_financial_evidence_fits_snapshot_budget(self):
+        period = '2026-09-30'
+        members = [dict(code=code, market='SH') for code in ('600201', '600202', '600203')]
+        rows = [dict(code=item['code'], period=period, profit=str(index), profit_published_at='2026-10-30')
+                for index, item in enumerate(members, 1)]
+        evidence = dict(url='https://datacenter-web.eastmoney.com/api/data/v1/get?pageNumber=1',
+                        sha256='a' * 64, fetched_at='2026-11-04T10:00:00+08:00')
+        other_observation = dict(evidence, fetched_at='2026-11-04T10:01:00+08:00')
+        new_source = dict(evidence, url=evidence['url'].replace('Number=1', 'Number=2'))
+        profiles = [dict(id='synthetic-1'), dict(id='synthetic-2')]
+        caches = {
+            ('synthetic-1', 'financials'): dict(
+                snapshot_id='first', collection_cutoff=ASOF, collected_codes=['600201'],
+                rows=rows[:1], periods=[period], evidence=[evidence] * 50,
+            ),
+            ('synthetic-2', 'historical_financials'): dict(
+                snapshot_id='second', collection_cutoff=ASOF, collected_codes=['600202'],
+                rows=rows[1:2], periods=[period], evidence=[evidence, other_observation],
+            ),
+        }
+
+        with patch.object(self.r, 'profiles', return_value=profiles), \
+                patch.object(self.r, 'module', side_effect=lambda iid, module: caches.get((iid, module))), \
+                patch.object(providers, 'financials', return_value=dict(
+                    rows=rows[2:], periods=[period], evidence=[evidence, new_source],
+                )) as fetch:
+            value = self.r.collection.shared_companies('financials', members, ASOF)
+        fetch.assert_called_once_with(members[2:], ASOF)
+        self.assertEqual(value['rows'], rows)
+        self.assertEqual(value['source_snapshot_ids'], ['first', 'second'])
+        self.assertEqual(value['evidence'], [evidence, other_observation, new_source])
+
+        # Keep the real codec and exercise the budget with a small synthetic limit.
+        with patch('backend.research.snapshots.MAX_PAYLOAD', 4096):
+            with self.assertRaises(DomainError):
+                encode(dict(value, evidence=[evidence] * 50 + [other_observation, new_source]))
+            digest, packed = encode(value)
+            self.assertEqual(decode(packed, digest), value)
+
+    def test_industry_evidence_does_not_grow_when_reused_by_another_index(self):
+        period = '2025-12-31'
+        existing = dict(code='600201', period=period, date='2025-12-30', industry='信息技术')
+        newest = dict(code='600202', date='2025-12-31', industry='有色金属')
+        members = [dict(code=row['code'], market='SH') for row in (existing, newest)]
+        baskets = [dict(period=period, members=members)]
+        evidence = dict(url='https://www.lixinger.com/api/cn/company/fundamental',
+                        sha256='a' * 64, fetched_at='2026-11-04T10:00:00+08:00')
+        new_source = dict(evidence, sha256='b' * 64)
+        cached = dict(collection_cutoff=ASOF, industry_observations=[existing],
+                      industry_evidence=[evidence, dict(reversed(list(evidence.items())))])
+        profiles = [dict(id='synthetic-1'), dict(id='synthetic-2')]
+
+        def fetch_industries(wanted, asof):
+            self.assertEqual(wanted, members[1:])
+            self.assertEqual(asof, period)
+            return dict(rows=[newest], evidence=[new_source, new_source])
+
+        with patch.object(self.r, 'profiles', return_value=profiles), \
+                patch.object(self.r, 'module', return_value=cached), \
+                patch.object(providers, 'historical_industries', side_effect=fetch_industries) as fetch:
+            annual, observations, sources = self.r.collection.historical_industry_baskets(baskets, ASOF)
+        fetch.assert_called_once()
+        self.assertEqual(observations, [existing, dict(newest, period=period)])
+        self.assertEqual([row['industry'] for row in annual[0]['members']], ['信息技术', '有色金属'])
+        self.assertNotIn('industry', baskets[0]['members'][0])
+        self.assertEqual(sources, [evidence, new_source])
+
     def test_compressed_payload_tamper_and_size_limit(self):
         digest,content=encode(dict(rows=[dict(date=ASOF,close='100')]*1000));self.assertLess(len(content),1000);self.assertEqual(len(decode(content,digest)['rows']),1000)
         with self.assertRaises(DomainError):decode(content,'bad')
